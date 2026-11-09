@@ -116,6 +116,8 @@ use super::{
 struct InflightPiece {
     peer: PeerHandle,
     started: Instant,
+    // Extra peers that may also fetch this piece. The first completion wins.
+    hedged: Vec<PeerHandle>,
 }
 
 fn make_piece_bitfield(lengths: &Lengths) -> BF {
@@ -1266,6 +1268,7 @@ impl PeerHandler {
                     InflightPiece {
                         peer: self.addr,
                         started: Instant::now(),
+                        hedged: Vec::new(),
                     },
                 );
                 g.get_chunks_mut()?.reserve_needed_piece(n);
@@ -1273,6 +1276,49 @@ impl PeerHandler {
             })
             .transpose()
             .map(|r| r.flatten())
+    }
+
+    /// Duplicate the blocking piece to another peer without cancelling the
+    /// original request. The first completion wins; late duplicate chunks are
+    /// ignored by the write path once the piece is complete.
+    fn try_hedge_blocking_piece(&self) -> Option<ValidPieceIndex> {
+        const BLOCKING_HEDGE: Duration = Duration::from_millis(750);
+        let blocking = self.state.streams.blocking_pieces(&self.state.lengths);
+        if blocking.is_empty() {
+            return None;
+        }
+        let Some(peer_bf) = self
+            .state
+            .peers
+            .with_live(self.addr, |live| live.bitfield.clone())
+        else {
+            return None;
+        };
+
+        let mut g = self.state.lock_write("try_hedge_blocking_piece");
+        let (idx, original) = g
+            .inflight_pieces
+            .iter_mut()
+            .filter(|(p, r)| {
+                r.peer != self.addr
+                    && blocking.contains(p)
+                    && r.hedged.len() < 2
+                    && !r.hedged.contains(&self.addr)
+                    && peer_bf.get(p.get_usize()).map(|v| *v).unwrap_or(false)
+                    && r.started.elapsed() >= BLOCKING_HEDGE
+            })
+            .max_by_key(|(_, r)| r.started.elapsed())
+            .map(|(p, r)| {
+                r.hedged.push(self.addr);
+                (*p, r.peer)
+            })?;
+        if cfg!(debug_assertions) {
+            eprintln!(
+                "[p2p-hedge] piece {} original {} hedge {}",
+                idx, original, self.addr
+            );
+        }
+        Some(idx)
     }
 
     /// Try to steal a piece from a slower peer. Threshold is
@@ -1482,26 +1528,26 @@ impl PeerHandler {
             // Then try get the next one in queue.
             // Afterwards means we are close to completion, try stealing more aggressively.
             let new_piece_notify = self.state.new_pieces_notify.notified();
-            let next = match self
-                .try_steal_old_slow_piece(10.)
-                .map_or_else(|| self.reserve_next_needed_piece(), |v| Ok(Some(v)))?
-                .or_else(|| self.try_steal_old_slow_piece(3.))
-            {
-                Some(next) => next,
-                None => {
-                    debug!("no pieces to request");
-                    match aframe!(tokio::time::timeout(
-                        // Half of default rw timeout not to race with it.
-                        Duration::from_secs(5),
-                        new_piece_notify
-                    ))
-                    .await
-                    {
-                        Ok(()) => debug!("woken up, new pieces might be available"),
-                        Err(_) => debug!("woken up by sleep timer"),
-                    }
-                    continue;
+            let next = match self.try_hedge_blocking_piece() {
+                Some(next) => Some(next),
+                None => self
+                    .try_steal_old_slow_piece(10.)
+                    .map_or_else(|| self.reserve_next_needed_piece(), |v| Ok(Some(v)))?
+                    .or_else(|| self.try_steal_old_slow_piece(3.)),
+            };
+            let Some(next) = next else {
+                debug!("no pieces to request");
+                match aframe!(tokio::time::timeout(
+                    // Half of default rw timeout not to race with it.
+                    Duration::from_secs(5),
+                    new_piece_notify
+                ))
+                .await
+                {
+                    Ok(()) => debug!("woken up, new pieces might be available"),
+                    Err(_) => debug!("woken up by sleep timer"),
                 }
+                continue;
             };
 
             for chunk in self.state.lengths.iter_chunk_infos(next) {
@@ -1658,7 +1704,8 @@ impl PeerHandler {
                     .map(|l| l.read());
 
                 match g.inflight_pieces.get(&chunk_info.piece_index) {
-                    Some(InflightPiece { peer, .. }) if *peer == addr => {}
+                    Some(InflightPiece { peer, hedged, .. })
+                        if *peer == addr || hedged.contains(&addr) => {}
                     Some(InflightPiece { peer, .. }) => {
                         debug!(
                             "in-flight piece {} was stolen by {}, ignoring",

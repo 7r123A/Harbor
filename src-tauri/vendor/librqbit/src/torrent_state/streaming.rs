@@ -99,6 +99,13 @@ impl TorrentStreams {
         Interleave { all: all.into() }
     }
 
+    pub(crate) fn blocking_pieces(&self, lengths: &Lengths) -> Vec<ValidPieceIndex> {
+        self.streams
+            .iter()
+            .filter_map(|s| s.value().current_piece(lengths).map(|p| p.id))
+            .collect()
+    }
+
     pub(crate) fn wake_streams_on_piece_completed(
         &self,
         piece_id: ValidPieceIndex,
