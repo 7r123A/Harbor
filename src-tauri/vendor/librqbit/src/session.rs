@@ -244,6 +244,10 @@ pub struct AddTorrentOptions {
     /// You probably want to set it, however for safety it's not default.
     #[serde(default)]
     pub overwrite: bool,
+    /// Skip the initial checksum pass when no fastresume bitfield exists.
+    /// Intended for disposable streaming caches that start empty.
+    #[serde(default)]
+    pub skip_initial_check: bool,
     /// Only list the files in the torrent without starting it.
     #[serde(default)]
     pub list_only: bool,
@@ -1184,6 +1188,7 @@ impl Session {
                 only_files.clone(),
                 minfo.storage_factory.create_and_init(&minfo, &metadata)?,
                 false,
+                opts.skip_initial_check,
             ));
             let handle = Arc::new(ManagedTorrent {
                 locked: RwLock::new(ManagedTorrentLocked {

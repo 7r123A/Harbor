@@ -735,7 +735,9 @@ async fn add_result_from_handle(
     already_managed: bool,
     file_idx: Option<usize>,
 ) -> Result<AddResult, String> {
+    let init_started = Instant::now();
     wait_for_torrent_initialization(session, &handle, !already_managed).await?;
+    let init_ms = init_started.elapsed().as_millis();
     let files = handle
         .with_metadata(|m| {
             m.file_infos
@@ -756,12 +758,18 @@ async fn add_result_from_handle(
     let narrow_idx = file_idx
         .filter(|&i| i < files.len())
         .or_else(|| files.iter().max_by_key(|f| f.length).map(|f| f.idx));
+    let narrow_started = Instant::now();
     if let Some(idx) = narrow_idx {
         let only: HashSet<usize> = HashSet::from([idx]);
         if let Err(error) = update_only_files_bounded(session, &handle, &only).await {
             eprintln!("[torrent-engine] initial file narrowing failed: {error}");
         }
     }
+    let narrow_ms = narrow_started.elapsed().as_millis();
+    eprintln!(
+        "[torrent-engine] files timing: already_managed={already_managed} init_ms={init_ms} narrow_ms={narrow_ms} files={} narrow_idx={narrow_idx:?}",
+        files.len()
+    );
     let port = current_port().ok_or_else(|| "engine port unavailable".to_string())?;
     Ok(AddResult {
         info_hash: format!("{:?}", handle.info_hash()),
@@ -794,6 +802,7 @@ pub async fn torrent_engine_add(
         let opts = AddTorrentOptions {
             overwrite: true,
             paused: true,
+            skip_initial_check: true,
             only_files: file_idx.map(|i| vec![i]),
             trackers: Some(merge_trackers(trackers)),
             initial_peers: (!seed.is_empty()).then_some(seed),
