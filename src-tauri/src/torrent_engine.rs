@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use librqbit::api::TorrentIdOrHash;
 use librqbit::dht::Dht;
@@ -77,6 +77,9 @@ const LAN_FALLBACK_PORTS: [u16; 10] = [
 const CACHE_SWEEP_INITIAL_DELAY_SECS: u64 = 60;
 const CACHE_SWEEP_INTERVAL_SECS: u64 = 30 * 60;
 const FILE_SELECTION_TIMEOUT_SECS: u64 = 12;
+// The side DHT is an extra peer source, not a prerequisite. Waiting on it before
+// adding the torrent puts dead DHT time on the player's startup path.
+const SIDE_DHT_SEED_BUDGET: Duration = Duration::from_millis(250);
 static CACHE_SWEEP_RUNNING: AtomicBool = AtomicBool::new(false);
 
 struct CacheSweepGuard;
@@ -241,6 +244,18 @@ fn current_side_dht() -> Option<Dht> {
         .side_dht
         .clone()
         .filter(|dht| !dht.cancellation_token().is_cancelled())
+}
+
+async fn seed_side_dht(magnet: &str) -> (Vec<SocketAddr>, Duration) {
+    let Some(dht) = current_side_dht() else {
+        return (Vec::new(), Duration::ZERO);
+    };
+    if dht_boot::node_count(&dht) == 0 {
+        return (Vec::new(), Duration::ZERO);
+    }
+    let started = Instant::now();
+    let peers = dht_boot::seed_peers(&dht, magnet, 40, SIDE_DHT_SEED_BUDGET).await;
+    (peers, started.elapsed())
 }
 
 async fn run_session<T>(
@@ -770,10 +785,9 @@ pub async fn torrent_engine_add(
                 return add_result_from_handle(&session, handle, true, file_idx).await;
             }
         }
-        let seed = match current_side_dht() {
-            Some(d) => dht_boot::seed_peers(&d, magnet.as_str(), 40, Duration::from_secs(3)).await,
-            None => Vec::new(),
-        };
+        let add_started = Instant::now();
+        let (seed, seed_took) = seed_side_dht(&magnet).await;
+        let seeded_peers = seed.len();
         // librqbit ignores AddTorrentOptions.trackers for magnets, so splice the
         // per-stream trackers directly into the magnet URI to guarantee they announce.
         let magnet = trackers::embed_into_magnet(&magnet, &trackers);
@@ -791,6 +805,7 @@ pub async fn torrent_engine_add(
             force_tracker_interval: Some(Duration::from_secs(300)),
             ..Default::default()
         };
+        let add_call_started = Instant::now();
         let added = timeout(
             Duration::from_secs(60),
             session.add_torrent(AddTorrent::from_url(magnet.as_str()), Some(opts)),
@@ -798,6 +813,7 @@ pub async fn torrent_engine_add(
         .await
         .map_err(|_| "metadata timed out: no peers reached in 60s".to_string())?
         .map_err(|e| format!("{e:#}"))?;
+        let add_took = add_call_started.elapsed();
         let (handle, already_managed) = match added {
             AddTorrentResponse::AlreadyManaged(_, handle) => (handle, true),
             AddTorrentResponse::Added(_, handle) => (handle, false),
@@ -805,7 +821,21 @@ pub async fn torrent_engine_add(
                 return Err("torrent added as list-only".to_string());
             }
         };
-        add_result_from_handle(&session, handle, already_managed, file_idx).await
+        let files_started = Instant::now();
+        let result = add_result_from_handle(&session, handle, already_managed, file_idx).await;
+        let files_took = files_started.elapsed();
+        if let Ok(result) = &result {
+            eprintln!(
+                "[torrent-engine] add timing: hash={} seeded_peers={} seed_ms={} add_ms={} files_ms={} total_ms={}",
+                result.info_hash,
+                seeded_peers,
+                seed_took.as_millis(),
+                add_took.as_millis(),
+                files_took.as_millis(),
+                add_started.elapsed().as_millis()
+            );
+        }
+        result
     })
     .await
 }
@@ -829,12 +859,7 @@ pub(crate) async fn ensure_added(
                 // it so librqbit announces them (it drops AddTorrentOptions.trackers for
                 // magnets - the only peer path when UDP/DHT are blocked).
                 let magnet = trackers::embed_into_magnet(&build_magnet(hash), &trackers);
-                let seed = match current_side_dht() {
-                    Some(d) => {
-                        dht_boot::seed_peers(&d, magnet.as_str(), 40, Duration::from_secs(3)).await
-                    }
-                    None => Vec::new(),
-                };
+                let (seed, _) = seed_side_dht(&magnet).await;
                 let opts = AddTorrentOptions {
                     overwrite: true,
                     paused: true,
