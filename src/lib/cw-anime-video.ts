@@ -1,4 +1,5 @@
 import { getAnimeCwId } from "@/lib/anime-cw-ids";
+import { provenCwAnimeIdentity } from "@/lib/cw-anime-identity";
 import {
   animeKitsuMeta,
   type AnimeKitsuMeta,
@@ -10,6 +11,10 @@ const ANIME_ID = /^(kitsu|mal|anilist|anidb):/;
 const STREAM_ID = /^(kitsu|mal|anilist|anidb):([1-9]\d*):[1-9]\d*$/;
 
 export type CwAnimeVideoLookup = (metaId: string) => Promise<AnimeKitsuMeta | null>;
+
+export type CwAnimeVideoItem = Pick<LibraryItem, "_id" | "state" | "altIds"> & {
+  imdb_id?: string | null;
+};
 
 export function matchCwAnimeVideo(
   videos: AnimeKitsuVideo[],
@@ -35,7 +40,7 @@ export function matchCwAnimeVideo(
  * rows that only recorded an anime mapping. The lookup is injectable for tests.
  */
 export async function resolveCwAnimeVideo(
-  item: Pick<LibraryItem, "_id" | "state">,
+  item: CwAnimeVideoItem,
   native: { season: number; episode: number } | null | undefined,
   lookup: CwAnimeVideoLookup = animeKitsuMeta,
 ): Promise<AnimeKitsuVideo | null> {
@@ -47,7 +52,7 @@ export async function resolveCwAnimeVideo(
     ? item._id
     : played
       ? `${played[1]}:${played[2]}`
-      : getAnimeCwId(item._id);
+      : (provenCwAnimeIdentity(item) ?? getAnimeCwId(item._id));
   if (!metaId) return null;
   const meta = await lookup(metaId).catch(() => null);
   if (!meta) return null;

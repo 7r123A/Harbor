@@ -1,7 +1,10 @@
 // @ts-expect-error Node test types are outside the browser tsconfig.
 import assert from "node:assert/strict";
 // @ts-expect-error Node test types are outside the browser tsconfig.
+import { readFileSync } from "node:fs";
+// @ts-expect-error Node test types are outside the browser tsconfig.
 import test from "node:test";
+import ts from "typescript";
 import "./_localstorage-stub.ts";
 import { recordAnimeCwId } from "../src/lib/anime-cw-ids.ts";
 import { providerMappedEpisode } from "../src/lib/cw-anime-episode.ts";
@@ -173,4 +176,57 @@ test("provider episode coordinates resolve the correct entry-relative video", as
 test("an unmatched provider E1 cannot masquerade as a split cour's entry E1", async () => {
   const row = item("kitsu:45619", 1, "tt13706018:1:1");
   assert.equal(await resolveCwAnimeVideo(row, { season: 1, episode: 1 }, lookup), null);
+});
+
+function loadResolver(proven: string | null, mapped: string | null) {
+  const lookups: string[] = [];
+  const mocks: Record<string, unknown> = {
+    "@/lib/anime-cw-ids": { getAnimeCwId: () => mapped },
+    "@/lib/cw-anime-identity": { provenCwAnimeIdentity: () => proven },
+    "@/lib/providers/anime-kitsu-addon": {
+      animeKitsuMeta: async (id: string) => {
+        lookups.push(id);
+        if (id === "kitsu:49444") return TYBW_META;
+        if (id === "kitsu:45619") return META;
+        return null;
+      },
+    },
+  };
+  const source = readFileSync(new URL("../src/lib/cw-anime-video.ts", import.meta.url), "utf8");
+  const output = ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const module = { exports: {} };
+  new Function("require", "module", "exports", output)(
+    (name: string) => {
+      assert.ok(Object.hasOwn(mocks, name), `Unexpected dependency: ${name}`);
+      return mocks[name];
+    },
+    module,
+    module.exports,
+  );
+  return {
+    resolve: module.exports as typeof import("../src/lib/cw-anime-video"),
+    lookups,
+  };
+}
+
+test("a verified checkpoint proof is preferred over the base mapping", async () => {
+  const h = loadResolver("kitsu:49444", "kitsu:45619");
+  const row = item("tt0434665", 11, "tt0434665:4:11");
+  row.state.season = 4;
+
+  const video = await h.resolve.resolveCwAnimeVideo(row, { season: 4, episode: 11 });
+
+  assert.deepEqual(h.lookups, ["kitsu:49444"]);
+  assert.equal(video?.id, TYBW_VIDEO.id);
+});
+
+test("without a proof or a mapping the resolver stays empty", async () => {
+  const h = loadResolver(null, null);
+  const row = item("tt0434665", 11, "tt0434665:4:11");
+  row.state.season = 4;
+
+  assert.equal(await h.resolve.resolveCwAnimeVideo(row, { season: 4, episode: 11 }), null);
+  assert.deepEqual(h.lookups, []);
 });
