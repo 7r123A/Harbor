@@ -81,6 +81,19 @@ function sharesContentId(a: LibraryItem, b: LibraryItem): boolean {
   return itemIds(a).some((id) => ids.has(id));
 }
 
+/** The show's IMDb id: the record's own id first, then a stored alias. */
+export function imdbIdOf(item: LibraryItem): string | null {
+  if (/^tt\d+$/.test(item._id)) return item._id;
+  return item.altIds?.find((id) => /^tt\d+$/.test(id)) ?? null;
+}
+
+/** Two records that both name an IMDb title, and name different ones. */
+export function differentImdbTitles(a: LibraryItem, b: LibraryItem): boolean {
+  const left = imdbIdOf(a);
+  const right = imdbIdOf(b);
+  return left != null && right != null && left !== right;
+}
+
 /** Keep every source checkpoint so dismissing the survivor clears all copies. */
 function mergeCopies(survivor: LibraryItem, copy: LibraryItem): LibraryItem {
   const members = [...(survivor.cwMembers ?? [survivor]), ...(copy.cwMembers ?? [copy])];
@@ -137,6 +150,16 @@ export function dedupeCwItems(items: LibraryItem[], limit: number): LibraryItem[
     // Identity is judged against the card that is actually shown: sharing a
     // content id verifies the pair, whichever index found it.
     if (!sharesContentId(item, existing)) {
+      // Two different IMDb titles are two different shows; a shared name is
+      // not enough to give one card the other's slot.
+      if (differentImdbTitles(existing, item)) {
+        if (out.length >= limit) continue;
+        const next = out.length;
+        out.push(item);
+        for (const id of itemIds(item)) idIndex.set(id, next);
+        for (const key of keys) if (!nameIndex.has(key)) nameIndex.set(key, next);
+        continue;
+      }
       // Track the ids so a later copy of this duplicate still finds the card,
       // without promoting them to verified aliases.
       for (const id of itemIds(item)) aliasIndex.set(id, index);

@@ -603,3 +603,30 @@ test("resurfaceCandidates only looks up identities for anime", async () => {
   });
   assert.ok(h.relatedCalls.includes("kitsu:77"), "anime still checks its aliases");
 });
+
+test("staleCwIds keeps same-name shows with different IMDb ids", async () => {
+  const h = harness();
+  const resurface = h.load("src/lib/cw-resurface.ts");
+  const us = {
+    _id: "tt0386676",
+    type: "series",
+    isAnime: true,
+    name: "Same Name",
+    state: {
+      season: 1,
+      episode: 1,
+      timeOffset: 100,
+      duration: 1000,
+      lastWatched: "2026-01-01T00:00:00Z",
+    },
+  };
+  const uk = {
+    ...us,
+    _id: "tt0290978",
+    state: { ...us.state, episode: 2, lastWatched: "2026-02-01T00:00:00Z" },
+  };
+
+  const stale = await resurface.staleCwIds([us, uk], [us, uk]);
+
+  assert.deepEqual([...stale], [], "a shared title cannot hide a different IMDb title");
+});
