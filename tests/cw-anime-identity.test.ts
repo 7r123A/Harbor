@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import ts from "typescript";
 import "./_localstorage-stub.ts";
 import {
   recordAnimeCwId,
@@ -96,4 +98,113 @@ test("AniList/MAL aliases stay unified after normal detail hydration supplies Ki
     dedupeAnimeCw([{ _id: "mal:62922" }, { _id: "anilist:202250" }]).map((v) => v._id),
     ["mal:62922"],
   );
+});
+
+const PROOF_META = {
+  id: "kitsu:49444",
+  type: "series",
+  name: "BLEACH: Thousand-Year Blood War",
+  videos: [
+    {
+      id: "kitsu:49444:11",
+      title: "GOD OF THUNDER",
+      season: 1,
+      episode: 11,
+      imdb_id: "tt111",
+      imdbSeason: 4,
+      imdbEpisode: 11,
+    },
+  ],
+};
+
+function loadIdentityHarness() {
+  const mocks: Record<string, unknown> = {
+    "@/lib/anime-cw-ids": {
+      getAnimeCwId: () => null,
+      getAnimeCanonicalId: () => null,
+      getAnilistMalAlias: () => null,
+      recordAnimeCwId: () => {},
+      notifyAnimeCwIds: () => {},
+    },
+    "@/lib/anime-identity-db": {
+      animeDbReadEntry: async () => null,
+      animeDbReadProvider: async () => null,
+      animeDbWriteProvider: async () => {},
+    },
+    "@/lib/providers/anime-entry": { resolveAnimeEntry: async () => null },
+    "@/lib/providers/anime-kitsu-addon": { animeKitsuMeta: async () => PROOF_META },
+    "@/lib/anime-tracker-entry": {
+      resolveTrackerAnimeEntry: async () => ({ id: "kitsu:49444" }),
+    },
+    "@/lib/providers/tmdb/tmdb-imdb-resolve": {
+      tmdbImdbCached: () => null,
+      tmdbImdbId: async () => "tt111",
+    },
+    "@/lib/publicmetadb/mappings": { getImdbForTmdb: async () => null },
+  };
+  const source = readFileSync(new URL("../src/lib/cw-anime-identity.ts", import.meta.url), "utf8");
+  const output = ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const module = { exports: {} };
+  new Function("require", "module", "exports", output)(
+    (name: string) => {
+      assert.ok(Object.hasOwn(mocks, name), `Unexpected dependency: ${name}`);
+      return mocks[name];
+    },
+    module,
+    module.exports,
+  );
+  return module.exports as typeof import("../src/lib/cw-anime-identity.ts");
+}
+
+function catalogProofItem(id: string, extra: { altIds?: string[]; imdbId?: string } = {}) {
+  return {
+    _id: id,
+    type: "series",
+    name: "Bleach",
+    state: {
+      season: 4,
+      episode: 11,
+      video_id: `${id}:4:11`,
+      ...(extra.imdbId ? { imdb_id: extra.imdbId } : {}),
+    },
+    ...(extra.altIds ? { altIds: extra.altIds } : {}),
+  };
+}
+
+test("a catalog proof keyed by an alt IMDb id resolves the exact cour", async () => {
+  const identity = loadIdentityHarness();
+  const item = catalogProofItem("tmdb:tv:900", { altIds: ["tt111"] });
+
+  await identity.warmCwAnimeIdentities([item]);
+
+  assert.equal(identity.provenCwAnimeIdentity(item), "kitsu:49444");
+});
+
+test("a catalog proof keyed by state.imdb_id resolves the exact cour", async () => {
+  const identity = loadIdentityHarness();
+  const item = catalogProofItem("tmdb:tv:901", { imdbId: "tt111" });
+
+  await identity.warmCwAnimeIdentities([item]);
+
+  assert.equal(identity.provenCwAnimeIdentity(item), "kitsu:49444");
+});
+
+test("a catalog proof resolves through the cached asynchronous TMDB to IMDb mapping", async () => {
+  const identity = loadIdentityHarness();
+  const item = catalogProofItem("tmdb:tv:902");
+
+  await identity.warmCwAnimeIdentities([item], { tmdbKey: "fixture" });
+
+  // The item carries neither an IMDb id nor an alias; the proof can only exist
+  // because the asynchronous mapping was recorded and reused.
+  assert.equal(identity.provenCwAnimeIdentity(item), "kitsu:49444");
+});
+
+test("an unwarmed catalog row has no proof", () => {
+  const identity = loadIdentityHarness();
+  const item = catalogProofItem("tmdb:tv:903", { altIds: ["tt111"] });
+
+  assert.equal(identity.provenCwAnimeIdentity(item), null);
 });

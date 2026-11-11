@@ -162,6 +162,27 @@ export function cwAnimeIdentityKey(
   return null;
 }
 
+export type CwIdentityProofInput = {
+  _id?: string;
+  id?: string;
+  videoId?: string | null;
+  altIds?: string[];
+  imdb_id?: string | null;
+  state?: CwIdentityItem["state"];
+  season?: number;
+  episode?: number;
+};
+
+/** The verified checkpoint identity, using the same proof key as `warmOne`. */
+export function provenCwAnimeIdentity(item: CwIdentityProofInput): string | null {
+  const id = item._id ?? item.id ?? "";
+  const videoId = item.videoId ?? item.state?.video_id;
+  if (!id) return null;
+  if (nativeEntry.test(id) || KITSU_ID.test(id)) return cwAnimeIdentityKey(id, videoId);
+  if (!catalogEntry.test(id)) return null;
+  return cwAnimeIdentityKey(id, videoId, checkpointCoords(item, id, videoId));
+}
+
 async function resolveNative(id: string): Promise<string | null> {
   const cached = nativeCache.get(id);
   if (cached && cached.expiresAt > Date.now()) return cached.identity;

@@ -200,5 +200,8 @@ test("a non-anime Cinemeta row resolves to nothing", async () => {
 
 test("the Continue Watching card resolves titles for detected Cinemeta rows too", () => {
   const src = readFileSync("src/components/continue-card.tsx", "utf8");
-  assert.match(src, /if \(!isAnimeCwItem\(item\) && getAnimeCwId\(item\._id\) == null\) return;/);
+  assert.match(
+    src,
+    /if \(!isAnimeCwItem\(item\) && getAnimeCwId\(item\._id\) == null && !sourceIdentity\) return;/,
+  );
 });
