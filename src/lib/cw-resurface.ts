@@ -10,7 +10,14 @@ import {
 } from "@/lib/stremio";
 import { isCwDismissed } from "@/lib/cw-dismiss";
 import { privateCwProfileId } from "@/lib/cw-profile";
-import { isFurther, itemIds, recordKey, sameRecord, titleKeys } from "@/lib/cw-dedupe";
+import {
+  differentImdbTitles,
+  isFurther,
+  itemIds,
+  recordKey,
+  sameRecord,
+  titleKeys,
+} from "@/lib/cw-dedupe";
 
 const ANIME_ID = /^(kitsu|mal|anilist|anidb):/;
 
@@ -63,7 +70,12 @@ export async function staleCwIds(
     for (const id of itemIds(item)) for (const row of byId.get(id) ?? []) related.add(row);
     const anime = isAnimeCwItem(item) || ANIME_ID.test(item._id);
     if (anime) {
-      for (const key of titleKeys(item)) for (const row of byTitle.get(key) ?? []) related.add(row);
+      for (const key of titleKeys(item)) {
+        for (const row of byTitle.get(key) ?? []) {
+          // Distinct IMDb titles are distinct shows; one may not hide the other.
+          if (!differentImdbTitles(item, row)) related.add(row);
+        }
+      }
     }
     // The card itself is always in the pool; exclude that record before asking
     // whether an identity lookup is needed, or the fallback never runs.
