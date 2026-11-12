@@ -13,10 +13,10 @@ import {
 import { getSession as getSimklSession, subscribeSession } from "@/lib/simkl/session";
 import { manualWatchedState } from "@/lib/manual-watched";
 import {
-  episodeFromVideoId,
   isAnimeCwItem,
   isCwMember,
   libraryMetaType,
+  resolvedEpisodeCoords,
   type LibraryItem,
 } from "@/lib/stremio";
 import { isEpisodeHidden } from "@/lib/hidden-episodes";
@@ -67,15 +67,7 @@ function isFinishedSeries(i: LibraryItem): boolean {
 }
 
 function currentEpisode(i: LibraryItem): { season: number; episode: number } | null {
-  const season = i.state?.season;
-  const episode = i.state?.episode;
-  if (season && episode) return { season, episode };
-  const videoId = i.state?.video_id ?? "";
-  if (ANIME_ID.test(i._id) && videoId.split(":").length === 3) {
-    const number = Number(videoId.split(":")[2]);
-    return Number.isInteger(number) && number > 0 ? { season: 1, episode: number } : null;
-  }
-  return episodeFromVideoId(i.state?.video_id ?? "");
+  return resolvedEpisodeCoords(i);
 }
 
 function scopedSplitItem(id: string): boolean {

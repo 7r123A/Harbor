@@ -36,6 +36,9 @@ type Overrides = {
   imdbKitsu?: number | null;
   checkpointKitsu?: number | null;
   tmdbKitsu?: number | null;
+  titleGeneration?: () => number;
+  onRemember?: () => boolean;
+  fetchGate?: Promise<void>;
 };
 
 function load({
@@ -43,6 +46,9 @@ function load({
   imdbKitsu = null,
   checkpointKitsu = null,
   tmdbKitsu = null,
+  titleGeneration = () => 0,
+  onRemember = () => false,
+  fetchGate,
 }: Overrides = {}) {
   const anizip = (key: string) => async () => ({
     titles: ANIZIP[key] ?? null,
@@ -61,7 +67,10 @@ function load({
       getAnimeCwId: () => cwId,
       notifyAnimeCwIds: () => {},
     },
-    "@/lib/anime-title-key": { rememberAnimeTitle: () => false },
+    "@/lib/anime-title-key": {
+      animeTitleKeysGeneration: titleGeneration,
+      rememberAnimeTitle: onRemember,
+    },
     "@/lib/cw-anime-identity": {
       cwAnimeIdentityKey: (_id: string, videoId?: string | null) =>
         videoId ? (checkpointKitsu == null ? null : `kitsu:${checkpointKitsu}`) : cwId,
@@ -80,6 +89,7 @@ function load({
     },
   };
   const fetchStub = async (url: string) => {
+    if (fetchGate) await fetchGate;
     const id = Number(/anime\/(\d+)/.exec(url)?.[1]);
     const titles = KITSU_TITLES[id];
     return { ok: !!titles, json: async () => ({ data: { attributes: { titles } } }) };
@@ -196,6 +206,40 @@ test("a movie checkpoint falls back to its recorded catalog identity", async () 
 test("a non-anime Cinemeta row resolves to nothing", async () => {
   const api = load();
   assert.equal(await api.resolvePreferredAnimeTitle("tt1234567", "romaji"), null);
+});
+
+test("a title resolved under the current owner is remembered", async () => {
+  let remembered = 0;
+  const api = load({
+    onRemember: () => {
+      remembered += 1;
+      return true;
+    },
+  });
+  assert.equal(await api.resolvePreferredAnimeTitle("kitsu:12", "romaji"), "One Piece");
+  assert.equal(remembered, 1);
+});
+
+test("an old owner's title lookup cannot repopulate a cleared cache", async () => {
+  let generation = 0;
+  let remembered = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const api = load({
+    titleGeneration: () => generation,
+    onRemember: () => {
+      remembered += 1;
+      return true;
+    },
+    fetchGate: gate,
+  });
+  const pending = api.resolvePreferredAnimeTitle("kitsu:12", "romaji");
+  generation += 1; // clearAnimeTitleKeys()
+  release();
+  assert.equal(await pending, "One Piece");
+  assert.equal(remembered, 0, "the pre-clear lookup must not write");
 });
 
 test("the Continue Watching card resolves titles for detected Cinemeta rows too", () => {

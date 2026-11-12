@@ -16,6 +16,7 @@ import { hdrOverlayEmitAction } from "@/lib/hdr-overlay";
 import { PipApp } from "@/views/pip";
 import { VideoPipApp } from "@/views/video-pip";
 import "@/lib/awards-history-eager";
+import "@/lib/cw-derived-caches";
 import "@/index.css";
 import "flag-icons/css/flag-icons.min.css";
 import { startTaskbarProgress } from "@/lib/download/taskbar-progress";

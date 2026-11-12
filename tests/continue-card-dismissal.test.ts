@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import * as playbackHistorySource from "../src/lib/player/playback-history-source";
+import { resolvedEpisodeCoords as realEpisodeCoords } from "../src/lib/stremio.ts";
 
 function harness() {
   const data = new Map<string, string>();
@@ -69,6 +70,7 @@ function harness() {
           const match = id?.match(/:(\d+):(\d+)$/);
           return match ? { season: +match[1], episode: +match[2] } : null;
         },
+        resolvedEpisodeCoords: (item: any) => realEpisodeCoords(item),
         libraryPut: async (auth: string, item: any) => {
           if (auth === heldAuth) {
             heldAuth = "";

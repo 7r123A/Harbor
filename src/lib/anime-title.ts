@@ -7,7 +7,11 @@ import {
   type AniZipMapping,
 } from "@/lib/providers/anizip";
 import { getAnimeCanonicalId, getAnimeCwId, notifyAnimeCwIds } from "@/lib/anime-cw-ids";
-import { rememberAnimeTitle, type AnimeTitleCheckpoint } from "@/lib/anime-title-key";
+import {
+  animeTitleKeysGeneration,
+  rememberAnimeTitle,
+  type AnimeTitleCheckpoint,
+} from "@/lib/anime-title-key";
 import { cwAnimeIdentityKey, getCachedCatalogImdb } from "@/lib/cw-anime-identity";
 import { externalToKitsu, tmdbTvToKitsu } from "@/lib/providers/anime-mapping";
 import { parseKitsuId } from "@/lib/providers/kitsu";
@@ -177,9 +181,15 @@ export async function resolvePreferredAnimeTitle(
   lang: AnimeTitleLang,
   checkpoint?: AnimeTitleCheckpoint,
 ): Promise<string | null> {
+  const generation = animeTitleKeysGeneration();
   const title = await resolvePreferredAnimeTitleUncached(id, lang, checkpoint);
   // The card shows this title, so two sources that display the same show should
   // also dedupe by it even when their stored names are in different languages.
-  if (title && rememberAnimeTitle(id, title, checkpoint)) notifyAnimeCwIds();
+  if (
+    title &&
+    generation === animeTitleKeysGeneration() &&
+    rememberAnimeTitle(id, title, checkpoint)
+  )
+    notifyAnimeCwIds();
   return title;
 }

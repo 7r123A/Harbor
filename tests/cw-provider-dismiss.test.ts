@@ -5,6 +5,7 @@ import test from "node:test";
 // @ts-expect-error Node test types are outside the browser tsconfig.
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { resolvedEpisodeCoords as realEpisodeCoords } from "../src/lib/stremio.ts";
 
 type Provider = "trakt" | "simkl" | "publicmetadb";
 type Item = Record<string, any>;
@@ -103,10 +104,7 @@ function loadProviderDismiss() {
     },
     "@/lib/active-profile-id": { activeProfileId: () => profile },
     "@/lib/stremio": {
-      episodeFromVideoId: (id?: string) => {
-        const match = id?.match(/:(\d+):(\d+)$/);
-        return match ? { season: +match[1], episode: +match[2] } : null;
-      },
+      resolvedEpisodeCoords: (item: any) => realEpisodeCoords(item),
     },
   };
   const code = ts.transpileModule(
