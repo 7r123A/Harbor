@@ -603,6 +603,9 @@ const music: Record<string, string> = {
   "music.search.recent": "최근 검색",
   "music.search.historyEmpty": "최근 검색이 여기에 표시됩니다.",
   "music.search.removeRecent": "최근 검색에서 {title} 삭제",
+  "music.audio.videoQuality": "Default video quality",
+  "music.audio.videoQualityHint":
+    "Used for music videos. A quality you pick while watching lasts until the next song.",
 };
 
 export default music;

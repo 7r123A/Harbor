@@ -608,6 +608,9 @@ const music: Record<string, string> = {
   "music.search.recent": "最近の検索",
   "music.search.historyEmpty": "最近の検索がここに表示されます。",
   "music.search.removeRecent": "最近の検索から{title}を削除",
+  "music.audio.videoQuality": "Default video quality",
+  "music.audio.videoQualityHint":
+    "Used for music videos. A quality you pick while watching lasts until the next song.",
 };
 
 export default music;

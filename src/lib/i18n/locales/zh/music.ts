@@ -590,6 +590,9 @@ const music: Record<string, string> = {
   "music.search.recent": "最近搜索",
   "music.search.historyEmpty": "最近的搜索将显示在这里。",
   "music.search.removeRecent": "从最近搜索中移除{title}",
+  "music.audio.videoQuality": "Default video quality",
+  "music.audio.videoQualityHint":
+    "Used for music videos. A quality you pick while watching lasts until the next song.",
 };
 
 export default music;

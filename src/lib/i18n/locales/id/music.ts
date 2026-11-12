@@ -610,6 +610,9 @@ const music: Record<string, string> = {
   "music.search.recent": "Pencarian terbaru",
   "music.search.historyEmpty": "Pencarian terbaru Anda akan muncul di sini.",
   "music.search.removeRecent": "Hapus {title} dari pencarian terbaru",
+  "music.audio.videoQuality": "Default video quality",
+  "music.audio.videoQualityHint":
+    "Used for music videos. A quality you pick while watching lasts until the next song.",
 };
 
 export default music;

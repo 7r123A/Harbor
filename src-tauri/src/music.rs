@@ -94,6 +94,9 @@ pub struct MusicVideoStream {
     audio_url: Option<String>,
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     http_headers: std::collections::BTreeMap<String, String>,
+    /// Heights this upload actually offers, so the picker never lists a ceiling it cannot serve.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    available_heights: Vec<u32>,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

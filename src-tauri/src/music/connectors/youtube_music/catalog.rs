@@ -538,9 +538,10 @@ pub async fn stream(app: &tauri::AppHandle, track: &MusicTrack) -> Result<MusicS
 pub async fn video_stream(
     app: &tauri::AppHandle,
     track: &MusicTrack,
+    max_height: Option<u32>,
 ) -> Result<MusicVideoStream, String> {
     let video_id = safe_video_id(track.source_id.as_deref().unwrap_or(&track.id))?;
-    super::ytdlp::video_stream(app, &video_id).await
+    super::ytdlp::video_stream(app, &video_id, max_height).await
 }
 
 fn gather<T>(response: &Value, key: &str, build: fn(&Value) -> Option<T>, limit: usize) -> Vec<T> {

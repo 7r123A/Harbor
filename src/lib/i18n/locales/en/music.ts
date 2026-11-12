@@ -386,6 +386,11 @@ const music: Record<string, string> = {
   "music.audio.preferredSource": "Preferred source",
   "music.audio.preferredSourceHint":
     "Harbor plays from this first, then falls back to any source that works.",
+  "music.audio.videoQuality": "Default video quality",
+  "music.audio.videoQualityHint":
+    "Used for music videos. A quality you pick while watching lasts until the next song.",
+  "Video quality": "Video quality",
+  Auto: "Auto",
   "music.spotify.connect": "Spotify Premium",
   "music.spotify.connectDetail": "Connect once for native, ad-free playback.",
   "music.spotify.connectAction": "Connect",

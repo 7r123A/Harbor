@@ -14,6 +14,7 @@ import {
 import { primeMusicVideoHostPosition, releaseMusicVideoHostSource } from "./video-host";
 import { createMusicVideoSurfaces, type HoldVideo } from "./video-surfaces";
 import { searchMusicVideoPage } from "./video-pages";
+import { clearMusicVideoSessionQuality } from "./video-quality";
 import type { MusicTrack } from "./types";
 
 /**
@@ -79,6 +80,7 @@ function resolvableVideo(track: MusicTrack | null | undefined): track is MusicTr
  * loads anything, so by the time a surface asks for the stream it is usually already cached.
  */
 let warmedKey = "";
+let warmedTrackKey = "";
 function warmMusicVideoStream(track: MusicTrack | null | undefined): void {
   if (!resolvableVideo(track)) return;
   const key = musicVideoStreamKey(track);
@@ -98,6 +100,12 @@ function warmQueuedVideos(): void {
 
 subscribeMusic(() => {
   const state = getMusicState();
+  const key = state.current ? `${state.current.connectorId}:${state.current.id}` : "";
+  if (key !== warmedTrackKey) {
+    warmedTrackKey = key;
+    // A quality chosen for one video lasts only for that video.
+    clearMusicVideoSessionQuality();
+  }
   warmMusicVideoStream(state.current);
   warmQueuedVideos();
 });

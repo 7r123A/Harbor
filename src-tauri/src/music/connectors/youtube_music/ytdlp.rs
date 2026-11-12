@@ -13,7 +13,6 @@ const TIMEOUT: Duration = Duration::from_secs(45);
 const FORMAT: &str = "bestaudio[acodec=opus]/bestaudio/best";
 // Muxed YouTube formats stop at 720p, so the video track is fetched on its own and mpv is
 // handed the audio alongside it. `best` is the fallback for anything with no split rendition.
-const VIDEO_FORMAT: &str = "bestvideo[height<=1080][vcodec^=avc1][protocol^=https]+bestaudio[acodec^=mp4a][protocol^=https]/bestvideo[height<=1080][protocol^=https]+bestaudio[protocol^=https]/best";
 const SEPARATOR: &str = "|||";
 
 pub async fn stream(app: &tauri::AppHandle, video_id: &str) -> Result<MusicStream, String> {
@@ -40,7 +39,10 @@ pub async fn stream(app: &tauri::AppHandle, video_id: &str) -> Result<MusicStrea
 pub async fn video_stream(
     app: &tauri::AppHandle,
     video_id: &str,
+    max_height: Option<u32>,
 ) -> Result<MusicVideoStream, String> {
+    let cap = max_height.unwrap_or(1080).clamp(144, 2160);
+    let format = video_format(cap);
     let args = vec![
         "--js-runtimes".to_string(),
         "node".to_string(),
@@ -48,12 +50,28 @@ pub async fn video_stream(
         "youtube:player_client=tv_embedded".to_string(),
         "--no-playlist".to_string(),
         "-f".to_string(),
-        VIDEO_FORMAT.to_string(),
+        format,
         "--dump-single-json".to_string(),
         format!("https://www.youtube.com/watch?v={video_id}"),
     ];
     let output = crate::ytdlp_update::run(app, args, TIMEOUT, "music video").await?;
     parse_video(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Format selection for a video height cap.
+///
+/// H.264 tops out at 1080p on YouTube, so above that the cap has to outrank the codec or a
+/// 1440/2160 request silently came back as 1080. Below it, keep the compatible avc1 pick.
+fn video_format(cap: u32) -> String {
+    if cap <= 1080 {
+        format!(
+            "bestvideo[height<={cap}][vcodec^=avc1][protocol^=https]+bestaudio[acodec^=mp4a][protocol^=https]/bestvideo[height<={cap}][protocol^=https]+bestaudio[protocol^=https]/best"
+        )
+    } else {
+        format!(
+            "bestvideo[height<={cap}][protocol^=https]+bestaudio[acodec^=mp4a][protocol^=https]/bestvideo[height<={cap}][protocol^=https]+bestaudio[protocol^=https]/best"
+        )
+    }
 }
 
 fn parse_video(stdout: &str) -> Result<MusicVideoStream, String> {
@@ -95,6 +113,23 @@ fn parse_video(stdout: &str) -> Result<MusicVideoStream, String> {
             "YouTube Music returned incompatible audio and video request headers".to_string(),
         );
     }
+    let mut heights: Vec<u32> = payload
+        .get("formats")
+        .and_then(serde_json::Value::as_array)
+        .map(|formats| {
+            formats
+                .iter()
+                .filter(|format| format.get("vcodec").and_then(serde_json::Value::as_str) != Some("none"))
+                .filter_map(|format| format.get("height").and_then(serde_json::Value::as_u64))
+                .filter_map(|height| u32::try_from(height).ok())
+                .filter(|height| (144..=2160).contains(height))
+                .collect::<std::collections::BTreeSet<u32>>()
+                .into_iter()
+                .rev()
+                .collect()
+        })
+        .unwrap_or_default();
+    heights.truncate(12);
     MusicStream {
         url: String::new(),
         mime_type: String::new(),
@@ -106,6 +141,7 @@ fn parse_video(stdout: &str) -> Result<MusicVideoStream, String> {
         url: read_url(video)?,
         audio_url: audio.map(read_url).transpose()?,
         http_headers,
+        available_heights: heights,
     })
 }
 
@@ -157,6 +193,15 @@ fn mime_of(extension: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_high_cap_does_not_prefer_h264() {
+        assert!(video_format(1080).contains("vcodec^=avc1"));
+        assert!(video_format(720).contains("vcodec^=avc1"));
+        assert!(!video_format(1440).contains("avc1"));
+        assert!(!video_format(2160).contains("avc1"));
+        assert!(video_format(1440).contains("height<=1440"));
+    }
 
     #[test]
     fn video_resolution_rejects_audio_only_and_accepts_reordered_tracks() {
@@ -307,3 +352,17 @@ mod interview_tests {
         assert_eq!(tracks[0].duration_seconds, 125);
     }
 }
+    #[test]
+    fn available_heights_list_the_upload() {
+        let stream = parse_video(
+            r#"{"url":"https://example.test/v","vcodec":"avc1","formats":[
+                {"height":1080,"vcodec":"avc1"},
+                {"height":720,"vcodec":"vp9"},
+                {"height":2160,"vcodec":"none"},
+                {"height":480,"vcodec":"avc1"},
+                {"height":1440,"vcodec":"vp9"}
+            ]}"#,
+        )
+        .expect("video");
+        assert_eq!(stream.available_heights, vec![1440, 1080, 720, 480]);
+    }

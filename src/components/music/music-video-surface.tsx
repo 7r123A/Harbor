@@ -12,6 +12,7 @@ import { useT } from "@/lib/i18n";
 import type { MusicTrack } from "@/lib/music/types";
 import { useMusicPlayer } from "@/lib/music/player";
 import { musicVideoSurfaces } from "@/lib/music/video-session";
+import { useMusicVideoQuality } from "@/lib/music/video-quality";
 import { musicVideoStream, musicVideoStreamKey, type MusicVideoStream } from "@/lib/music/video";
 import {
   adoptMusicVideoHost,
@@ -332,6 +333,15 @@ export function MusicVideoSurface({
     setAttempt((count) => count + 1);
     retryMusicVideo(track);
   }, [onRetry, track.id, track.connectorId]);
+  // A new quality is a new stream: resolve again and keep the same position.
+  const quality = useMusicVideoQuality();
+  const qualityRef = useRef(quality);
+  useEffect(() => {
+    if (qualityRef.current === quality) return;
+    qualityRef.current = quality;
+    setAttempt((count) => count + 1);
+    retryMusicVideo(track);
+  }, [quality, track]);
   // A restored paused track, or one whose resolve ran before the audio was primed, has no
   // picture yet. Once playback actually starts, try it again instead of leaving the error up.
   useEffect(() => {
@@ -408,6 +418,7 @@ export function MusicVideoSurface({
           fullscreen={fullscreen}
           onToggleFullscreen={toggleMusicVideoFullscreen}
           expanded={expanded}
+          availableHeights={stream?.availableHeights ?? []}
         />
       )}
       {interrupted && !mini && (
