@@ -22,6 +22,12 @@ export type NativeStartupTimeline = {
 
 export type StartupMark = { name: string; at: number };
 
+export type StartupEvent = {
+  name: string;
+  at: number;
+  detail?: Record<string, unknown>;
+};
+
 export type StartupMeasure = { name: string; ms: number };
 
 export type StartupLongTasks = {
@@ -40,6 +46,7 @@ export type StartupTraceSnapshot = {
   timeOrigin: number;
   native: NativeStartupTimeline | null;
   marks: StartupMark[];
+  events: StartupEvent[];
   measures: StartupMeasure[];
   longTasks: StartupLongTasks;
   stalled?: boolean;
@@ -52,6 +59,8 @@ const POST_REVEAL_CAPTURE_MS = 15_000;
 const STALLED_STARTUP_MS = 20_000;
 const launchId = makeLaunchId();
 const seen = new Set<string>();
+const events: StartupEvent[] = [];
+const MAX_EVENTS = 500;
 const longTasks: StartupLongTasks = {
   count: 0,
   totalMs: 0,
@@ -92,6 +101,20 @@ export function startupMark(name: string): void {
   }
 }
 
+/** Structured, timestamped detail for stages a mark cannot describe. */
+export function startupEvent(name: string, detail?: Record<string, unknown>): void {
+  try {
+    if (events.length >= MAX_EVENTS) return;
+    const at =
+      typeof performance !== "undefined" && Number.isFinite(performance.now())
+        ? performance.now()
+        : 0;
+    events.push({ name, at, ...(detail ? { detail } : {}) });
+  } catch {
+    /* Instrumentation must never affect startup. */
+  }
+}
+
 function startupMarkAt(name: string, startTime: number): void {
   if (!canMark() || !Number.isFinite(startTime)) return;
   try {
@@ -106,6 +129,17 @@ export function startupMarkOnce(name: string): void {
   if (seen.has(name)) return;
   seen.add(name);
   startupMark(name);
+}
+
+export function startupHasMark(name: string): boolean {
+  if (typeof performance === "undefined" || typeof performance.getEntriesByName !== "function") {
+    return false;
+  }
+  try {
+    return performance.getEntriesByName(MARK_PREFIX + name).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 function readMarks(): StartupMark[] {
@@ -272,6 +306,7 @@ export function startupSnapshot(): StartupTraceSnapshot {
     timeOrigin,
     native,
     marks,
+    events: [...events],
     measures: computeStartupMeasures(byName, native, timeOrigin),
     longTasks: { ...longTasks },
   };
@@ -514,6 +549,7 @@ export async function startupFinish(): Promise<void> {
 /** Test/manual reset. Never called during a normal launch. */
 export function resetStartupTrace(): void {
   seen.clear();
+  events.length = 0;
   native = null;
   nativeRequest = null;
   finished = false;
@@ -541,6 +577,7 @@ export function resetStartupTrace(): void {
 const api = {
   mark: startupMark,
   markOnce: startupMarkOnce,
+  event: startupEvent,
   snapshot: startupSnapshot,
   report: () => startupSnapshot().measures,
   finish: startupFinish,

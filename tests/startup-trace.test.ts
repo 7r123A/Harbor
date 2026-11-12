@@ -8,6 +8,7 @@ import {
   startupMarkOnce,
   startupSnapshot,
   startupTraceHistory,
+  startupEvent,
   type NativeStartupTimeline,
 } from "../src/lib/startup-trace.ts";
 
@@ -89,6 +90,15 @@ test("one WebView startup keeps one launch id", () => {
   const second = startupSnapshot();
   assert.ok(first.launchId);
   assert.equal(first.launchId, second.launchId);
+});
+
+test("structured startup events keep their detail and reset", () => {
+  resetStartupTrace();
+  startupEvent("test.event", { value: 7, ok: true });
+  const event = startupSnapshot().events.find((entry) => entry.name === "test.event");
+  assert.deepEqual(event?.detail, { value: 7, ok: true });
+  resetStartupTrace();
+  assert.equal(startupSnapshot().events.length, 0);
 });
 
 test("an enabled trace is persisted", async () => {

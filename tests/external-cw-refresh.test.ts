@@ -61,6 +61,7 @@ function fixture() {
       },
     },
     "@/lib/render-cause": { noteNotify: () => {} },
+    "@/lib/startup-trace": { startupEvent: () => {} },
     "@/lib/nuvio/nuvio-playback": {
       fetchNuvioPlaybackItems: async () => {
         nuvio.fetches++;
