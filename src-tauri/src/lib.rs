@@ -63,6 +63,8 @@ mod browser_args;
 #[cfg(desktop)]
 mod native_module;
 #[cfg(desktop)]
+mod startup_trace;
+#[cfg(desktop)]
 mod captions;
 #[cfg(desktop)]
 mod cast;
@@ -952,6 +954,7 @@ pub fn run() {
 
 #[cfg(desktop)]
 pub fn run() {
+    startup_trace::mark_process_start();
     #[cfg(target_os = "linux")]
     linux_gamescope::prepare();
     #[cfg(feature = "music")]
@@ -1111,6 +1114,7 @@ pub fn run() {
                 && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
             {
                 let _ = webview.window().show();
+                startup_trace::mark_window_shown();
             }
         })
         .setup(move |app| {
@@ -1812,6 +1816,7 @@ pub fn run() {
             ebook_tts::ebook_tts_voices,
             harbor_flush_done,
             harbor_startup_ready,
+            startup_trace::startup_timeline,
             close_aux_windows,
             desktop_notify::send_clickable_notification,
             installer_handoff::handoff_probe,

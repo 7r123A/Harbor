@@ -198,6 +198,11 @@
         }
       } catch (e) {}
     </script>
+    <script>
+      try {
+        performance.mark("harbor:startup:webview-entry");
+      } catch (e) {}
+    </script>
     <script type="module" src="/src/boot-artwork.ts"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
