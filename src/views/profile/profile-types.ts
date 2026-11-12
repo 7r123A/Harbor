@@ -57,6 +57,7 @@ export type ProfileWatching = {
 export type FriendsVisibility = "everyone" | "friends" | "only_me";
 
 export type ProfileSummary = {
+  id?: string;
   handle: string;
   alias: string;
   avatarUrl?: string;
@@ -112,6 +113,7 @@ export type ProfileSummary = {
   canvasHeight?: number;
   hideTopBanner?: boolean;
   hideCardTitles?: boolean;
+  dmPolicy?: "everyone" | "friends";
 };
 
 export type SimklPublished = {

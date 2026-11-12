@@ -456,6 +456,7 @@ export function ProfileView({
           badges={badges}
           userFont={c.font}
           hideBanner={c.hideTopBanner}
+          signedIn={viewerSignedIn && !isNuvio}
           onEdit={() => setEditing(true)}
           onPatch={patchSummary}
         />

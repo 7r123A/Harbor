@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Loader2, Search } from "lucide-react";
+import { ArrowLeft, Loader2, Search, UserCheck, Users } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { fetchFriends, type Friend } from "@/lib/social/friends";
 import { searchDmUsers, type DmDirectoryUser, type DmPresence } from "@/lib/social/dm";
@@ -12,6 +12,7 @@ type Candidate = {
   avatarUrl?: string;
   verified?: boolean;
   presence?: DmPresence;
+  isFriend?: boolean;
 };
 
 function fromFriend(f: Friend): Candidate {
@@ -21,6 +22,7 @@ function fromFriend(f: Friend): Candidate {
     displayName: f.alias || f.handle,
     avatarUrl: f.avatarUrl,
     presence: f.presence,
+    isFriend: true,
   };
 }
 
@@ -93,15 +95,27 @@ export function DmNewMessage({
     };
   }, [query]);
 
+  const friendHandles = useMemo(
+    () => new Set(friends.map((f) => f.handle.toLowerCase())),
+    [friends],
+  );
+
   const rows = useMemo<Candidate[]>(() => {
     const q = query.trim().toLowerCase();
-    if (q.length >= 2) return results.map(fromDirectory);
+    if (q.length >= 2) {
+      return results.map((u) => {
+        const candidate = fromDirectory(u);
+        return friendHandles.has(candidate.handle.toLowerCase())
+          ? { ...candidate, isFriend: true }
+          : candidate;
+      });
+    }
     const source = friends.map(fromFriend);
     if (!q) return source;
     return source.filter((f) =>
       `${f.displayName} ${f.handle}`.toLowerCase().includes(q),
     );
-  }, [friends, results, query]);
+  }, [friends, results, query, friendHandles]);
 
   const pick = async (candidate: Candidate) => {
     if (picking) return;
@@ -168,27 +182,47 @@ export function DmNewMessage({
               : t("Add a friend, or search for someone by name or handle.")}
           </p>
         ) : (
-          <ul className="space-y-0.5">
-            {rows.map((c) => (
-              <li key={c.handle}>
-                <button
-                  type="button"
-                  disabled={!!picking}
-                  onClick={() => void pick(c)}
-                  className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-start transition-colors hover:bg-elevated disabled:opacity-60"
-                >
-                  <DmAvatar user={{ displayName: c.displayName, avatarUrl: c.avatarUrl, presence: c.presence }} showPresence />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13.5px] font-medium text-ink">
-                      {c.displayName}
+          <>
+            {!query.trim() && (
+              <div className="flex items-center gap-1.5 px-3 pb-1.5 pt-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-ink-subtle">
+                <Users size={12} aria-hidden />
+                {t("Friends")}
+              </div>
+            )}
+            <ul className="space-y-0.5">
+              {rows.map((c) => (
+                <li key={c.handle}>
+                  <button
+                    type="button"
+                    disabled={!!picking}
+                    onClick={() => void pick(c)}
+                    className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-start transition-colors hover:bg-elevated disabled:opacity-60"
+                  >
+                    <DmAvatar user={{ displayName: c.displayName, avatarUrl: c.avatarUrl, presence: c.presence }} showPresence />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <span className="truncate text-[13.5px] font-medium text-ink">
+                          {c.displayName}
+                        </span>
+                        {c.isFriend && (
+                          <span
+                            title={t("Friend")}
+                            role="img"
+                            aria-label={t("Friend")}
+                            className="inline-flex shrink-0 text-accent"
+                          >
+                            <UserCheck size={13} aria-hidden />
+                          </span>
+                        )}
+                      </span>
+                      <span className="block truncate text-[11.5px] text-ink-subtle">@{c.handle}</span>
                     </span>
-                    <span className="block truncate text-[11.5px] text-ink-subtle">@{c.handle}</span>
-                  </span>
-                  {picking === c.handle && <Loader2 size={15} className="animate-spin text-ink-subtle" aria-hidden />}
-                </button>
-              </li>
-            ))}
-          </ul>
+                    {picking === c.handle && <Loader2 size={15} className="animate-spin text-ink-subtle" aria-hidden />}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { MessageCircle, Minus, SquarePen, X } from "lucide-react";
+import { Minus, SquarePen, X } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { subscribeAuthor } from "@/lib/theme-auth";
 import { openDmConversation } from "@/lib/social/dm";
@@ -61,6 +61,30 @@ function usePlaybackActive(): boolean {
 }
 
 type ToastState = { event: DmIncoming; key: number };
+
+/** A speech bubble with three live dots: reads as messaging even at rest. */
+function DmGlyph({ size = 21 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+      className="shrink-0 transition-transform duration-300 group-hover:scale-105"
+    >
+      <path
+        d="M7.5 3.5h9A3.5 3.5 0 0 1 20 7v6a3.5 3.5 0 0 1-3.5 3.5h-5.4l-3.1 2.55a.6.6 0 0 1-.95-.47V16.5H7.5A3.5 3.5 0 0 1 4 13V7a3.5 3.5 0 0 1 3.5-3.5Z"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <circle className="harbor-dm-dot" cx="8.6" cy="10.2" r="1.1" fill="currentColor" />
+      <circle className="harbor-dm-dot harbor-dm-dot-2" cx="12" cy="10.2" r="1.1" fill="currentColor" />
+      <circle className="harbor-dm-dot harbor-dm-dot-3" cx="15.4" cy="10.2" r="1.1" fill="currentColor" />
+    </svg>
+  );
+}
 
 export function DmLauncher({ playing: playerPlaying = false }: { playing?: boolean } = {}) {
   const t = useT();
@@ -185,26 +209,34 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
     <>
       {!open &&
         createPortal(
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            aria-label={unread > 0 ? t("Messages ({count} unread)", { count: unread }) : t("Messages")}
-            aria-haspopup="dialog"
-            className={`fixed end-4 z-[200] grid place-items-center rounded-full bg-accent text-canvas shadow-[0_10px_28px_-8px_rgba(0,0,0,0.55)] ring-1 ring-black/10 transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-              playing ? "h-11 w-11" : "h-12 w-12"
-            }`}
-            style={{ bottom: launcherBottom }}
-          >
-            <MessageCircle size={playing ? 19 : 21} aria-hidden />
+          <div className="fixed end-4 z-[200]" style={{ bottom: launcherBottom }}>
+            <span
+              aria-hidden
+              className="harbor-dm-halo pointer-events-none absolute inset-0 rounded-full ring-2 ring-accent/45"
+            />
+            <button
+              type="button"
+              onClick={() => setOpen(true)}
+              aria-label={unread > 0 ? t("Messages ({count} unread)", { count: unread }) : t("Messages")}
+              aria-haspopup="dialog"
+              className={`group relative flex items-center justify-center overflow-hidden rounded-full bg-surface/95 text-accent shadow-[0_10px_28px_-8px_rgba(0,0,0,0.55)] ring-1 ring-edge-soft backdrop-blur-md transition-[width,background-color,box-shadow] duration-300 hover:bg-elevated hover:shadow-[0_14px_34px_-10px_rgba(0,0,0,0.65)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                playing ? "h-11 w-11 hover:w-[7.5rem]" : "h-12 w-12 hover:w-[7.9rem]"
+              }`}
+            >
+              <DmGlyph size={playing ? 19 : 21} />
+              <span className="ms-0 max-w-0 overflow-hidden whitespace-nowrap text-[13px] font-semibold text-ink opacity-0 transition-all duration-300 group-hover:ms-2 group-hover:max-w-[5.6rem] group-hover:opacity-100">
+                {t("Messages")}
+              </span>
+            </button>
             {unread > 0 && (
               <span
                 key={unread}
-                className="animate-badge-pop absolute -end-1 -top-1 flex h-[19px] min-w-[19px] items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold tabular-nums text-white ring-2 ring-canvas"
+                className="animate-badge-pop pointer-events-none absolute -end-1 -top-1 flex h-[19px] min-w-[19px] items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold tabular-nums text-white ring-2 ring-canvas"
               >
                 {unreadLabel}
               </span>
             )}
-          </button>,
+          </div>,
           document.body,
         )}
 
