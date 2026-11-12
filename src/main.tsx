@@ -2,6 +2,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { StrictMode, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "@/App";
+import { BootRecovery } from "@/components/boot-recovery";
+import { markBootFallback, withBootWatchdog } from "@/lib/boot-dependencies";
 import { hydrateCustomThemes } from "@/lib/custom-themes";
 import { getUiLanguage } from "@/lib/i18n/store";
 import { ensureUiLocale } from "@/lib/i18n/load-locale";
@@ -174,6 +176,23 @@ function revealRoot() {
   );
 }
 
+function dismissBootSplash() {
+  const boot = document.getElementById("harbor-boot");
+  if (!boot) {
+    startupMarkOnce("splash.removed");
+    void startupFinish();
+    return;
+  }
+  startupMarkOnce("splash.reveal-called");
+  boot.classList.add("gone");
+  startupMarkOnce("splash.fade-start");
+  setTimeout(() => {
+    boot.remove();
+    startupMarkOnce("splash.removed");
+    void startupFinish();
+  }, 280);
+}
+
 function StartupReady() {
   useEffect(() => {
     requestAnimationFrame(() => {
@@ -233,25 +252,23 @@ function MainRoot() {
     const wait = Math.max(0, MIN_BOOT_MS - (performance.now() - mountedAt.current));
     const timer = window.setTimeout(() => {
       revealRoot();
-      startupMarkOnce("splash.reveal-called");
-      const boot = document.getElementById("harbor-boot");
-      if (boot) {
-        boot.classList.add("gone");
-        startupMarkOnce("splash.fade-start");
-        setTimeout(() => {
-          boot.remove();
-          startupMarkOnce("splash.removed");
-          void startupFinish();
-        }, 280);
-      } else {
-        startupMarkOnce("splash.removed");
-        void startupFinish();
-      }
+      dismissBootSplash();
     }, wait);
     return () => window.clearTimeout(timer);
   }, [appReady]);
 
   return <App onReady={markAppReady} />;
+}
+
+function BootRoot({ secretsUnavailable }: { secretsUnavailable: boolean }) {
+  const [recovered, setRecovered] = useState(!secretsUnavailable);
+  const continueBoot = useCallback(() => setRecovered(true), []);
+  const startRecovery = useCallback(() => {
+    revealRoot();
+    dismissBootSplash();
+  }, []);
+  if (recovered) return <MainRoot />;
+  return <BootRecovery onContinue={continueBoot} onSplashReady={startRecovery} />;
 }
 
 /** PIP, modal, captions, HDR overlay, DJ deck and the detached player all load this same
@@ -271,8 +288,32 @@ async function mount() {
   // the boot splash never clears. Cleaning up from inside a component is too late.
   if (!isAuxWindow) proactiveStorageCleanup();
   startupMarkOnce("boot.storage-cleanup-done");
-  await loadInstallFeatures();
-  startupMarkOnce("boot.features-done");
+  const featuresPromise = withBootWatchdog(
+    "features",
+    loadInstallFeatures().then(() => startupMarkOnce("boot.features-done")),
+    2_000,
+  );
+  // Start the independent critical reads before waiting for features, so a
+  // hung feature probe cannot serialize the rest of the boot.
+  const secretsPromise = withBootWatchdog(
+    "secrets",
+    loadSecrets().then(() => startupMarkOnce("boot.secrets-done")),
+    4_000,
+  );
+  const themesPromise = withBootWatchdog(
+    "themes",
+    hydrateCustomThemes()
+      .catch(() => {})
+      .then(() => startupMarkOnce("boot.themes-done")),
+    1_500,
+  );
+  const localePromise = withBootWatchdog(
+    "locale",
+    ensureUiLocale(getUiLanguage()).then(() => startupMarkOnce("boot.locale-done")),
+    2_000,
+  );
+  const features = await featuresPromise;
+  if (features.timedOut || features.failed) markBootFallback("features");
   const musicEnabled = getInstallFeatures().music;
   if (
     "__TAURI_INTERNALS__" in window &&
@@ -290,18 +331,26 @@ async function mount() {
   const musicStartup =
     musicEnabled && !isHdrOverlay && !isModal && !isCaptions && !isPip && !isVideoPip;
   if (musicStartup) startupMarkOnce("boot.music-start");
-  await Promise.all([
-    loadSecrets().then(() => startupMarkOnce("boot.secrets-done")),
-    hydrateCustomThemes()
-      .catch(() => {})
-      .then(() => startupMarkOnce("boot.themes-done")),
-    ensureUiLocale(getUiLanguage()).then(() => startupMarkOnce("boot.locale-done")),
+  const musicPromise = withBootWatchdog(
+    "music",
     musicStartup
       ? import("@/lib/music/player")
           .then(({ initializeMusic }) => initializeMusic())
           .then(() => startupMarkOnce("boot.music-done"))
       : Promise.resolve(),
+    3_000,
+  );
+  const [secrets, themes, locale, music] = await Promise.all([
+    secretsPromise,
+    themesPromise,
+    localePromise,
+    musicPromise,
   ]);
+  if (themes.timedOut || themes.failed) markBootFallback("themes");
+  if (locale.timedOut || locale.failed) markBootFallback("locale");
+  if (music.timedOut || music.failed) markBootFallback("music");
+  const secretsUnavailable = secrets.timedOut || secrets.failed;
+  if (secretsUnavailable) startupMarkOnce("boot.secrets.unavailable");
   startupMarkOnce("boot.critical-done");
   if (!isHdrOverlay && !isModal && !isCaptions && !isDjDeck) void initSubtitleCache();
   if (!isHdrOverlay && !isModal && !isCaptions && !isPip && !isVideoPip && !isDjDeck)
@@ -326,7 +375,7 @@ async function mount() {
       ) : isPip ? (
         <PipApp />
       ) : (
-        <MainRoot />
+        <BootRoot secretsUnavailable={secretsUnavailable} />
       )}
       {(isModal || isPip || isVideoPip || isCaptions || isDjDeck) && <StartupReady />}
     </StrictMode>,
