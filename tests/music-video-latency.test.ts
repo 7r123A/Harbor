@@ -56,7 +56,7 @@ function loadDiscovery(handle: (name: string, args: any) => unknown) {
       assert.equal(name, "@tauri-apps/api/core");
       return {
         invoke: async (command: string, args: any) => {
-          queries.push(args.query);
+          if (command === "music_search_videos") queries.push(args.query);
           return handle(command, args);
         },
       };

@@ -17,12 +17,14 @@ import { useT } from "@/lib/i18n";
 import { useDragScroll } from "@/lib/use-drag-scroll";
 import {
   MUSIC_VIDEO_KIND_LABELS,
+  anchoredVideoQuery,
   musicVideoQuery,
   musicVideoUsesYoutube,
   type MusicVideoKind,
 } from "@/lib/music/video-discovery";
 import { appendMusicVideos, searchMusicVideoPage } from "@/lib/music/video-pages";
 import type { MusicTrack } from "@/lib/music/types";
+import { getMusicState } from "@/lib/music/player";
 import youtubeLogo from "@/assets/service-logos/youtube.ico";
 import "./music-video-discovery.css";
 
@@ -78,7 +80,8 @@ export function MusicVideoDiscovery({
     moreRequest = useRef(false),
     seenCursors = useRef(new Set<string>());
   const resultSubject = queryOverride?.base === baseQuery ? "" : filterSubject;
-  const searchKey = `${regular}:${resultSubject}:${search}`;
+  const requestQuery = anchoredVideoQuery(search, getMusicState().current);
+  const searchKey = `${regular}:${resultSubject}:${requestQuery}`;
   const [edges, setEdges] = useState({ start: true, end: true });
   const tracks = result?.tracks ?? [];
   const itemMenu = useMusicItemMenu({
@@ -114,7 +117,7 @@ export function MusicVideoDiscovery({
     setLoadingMore(false);
     setMoreError(false);
     setResult(null);
-    searchMusicVideoPage(search, regular, null, retry > 0, resultSubject)
+    searchMusicVideoPage(requestQuery, regular, null, retry > 0, resultSubject)
       .then((page) => {
         if (!cancelled) setResult({ key: searchKey, ...page, error: false });
       })
@@ -125,7 +128,7 @@ export function MusicVideoDiscovery({
       cancelled = true;
       if (generation.current === version) generation.current++;
     };
-  }, [active, activated, search, retry, regular, searchKey, resultSubject]);
+  }, [active, activated, search, retry, regular, searchKey, resultSubject, requestQuery]);
   const current = result?.key === searchKey ? result : null;
   const more = useCallback(async () => {
     if (!current?.next || moreRequest.current) return;
@@ -135,7 +138,7 @@ export function MusicVideoDiscovery({
     setLoadingMore(true);
     setMoreError(false);
     try {
-      const page = await searchMusicVideoPage(search, regular, cursor, false, resultSubject);
+      const page = await searchMusicVideoPage(requestQuery, regular, cursor, false, resultSubject);
       if (generation.current !== version) return;
       seenCursors.current.add(cursor);
       setResult((previous) =>
@@ -155,7 +158,7 @@ export function MusicVideoDiscovery({
         setLoadingMore(false);
       }
     }
-  }, [current, search, regular, searchKey, resultSubject]);
+  }, [current, search, regular, searchKey, resultSubject, requestQuery]);
   const moreRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     moreRef.current =
