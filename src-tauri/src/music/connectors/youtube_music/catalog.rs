@@ -54,20 +54,93 @@ pub(super) fn video_results_kind(
     let mut found = Vec::new();
     parse::collect(response, LIST_ITEM, &mut found);
     let mut seen = std::collections::HashSet::new();
-    found.into_iter().filter_map(|item| {
-        // Keep provider-declared official music videos. UGC search also contains
-        // tutorials, covers and static audio uploads; those are not music-video discovery.
-        let kind = item.pointer("/overlay/musicItemThumbnailOverlayRenderer/content/musicPlayButtonRenderer/playNavigationEndpoint/watchEndpoint/watchEndpointMusicSupportedConfigs/watchEndpointMusicConfig/musicVideoType").and_then(Value::as_str)?;
+    let mut videos = Vec::new();
+    let mut sources = Vec::new();
+    for item in found {
+        // Keep provider-declared official music. UGC search also contains tutorials,
+        // covers and static audio uploads; those are not music-video discovery.
+        let kind = item.pointer("/overlay/musicItemThumbnailOverlayRenderer/content/musicPlayButtonRenderer/playNavigationEndpoint/watchEndpoint/watchEndpointMusicSupportedConfigs/watchEndpointMusicConfig/musicVideoType").and_then(Value::as_str);
+        let Some(kind) = kind else { continue };
         if interviews {
-            if kind != "MUSIC_VIDEO_TYPE_UGC" { return None; }
-        } else if kind != "MUSIC_VIDEO_TYPE_OMV" { return None; }
-        let mut track = items::track_from_list_item(item)?;
-        if interviews && !track.title.to_lowercase().contains("interview") { return None; }
+            if kind != "MUSIC_VIDEO_TYPE_UGC" {
+                continue;
+            }
+        } else if kind != "MUSIC_VIDEO_TYPE_OMV" && kind != "MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC" {
+            continue;
+        }
+        let Some(mut track) = items::track_from_list_item(item) else {
+            continue;
+        };
+        if interviews && !track.title.to_lowercase().contains("interview") {
+            continue;
+        }
         track.media_kind = Some("video".to_string());
-        let id = track.source_id.as_deref()?;
-        if id.len() != 11 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') || !seen.insert(id.to_string()) { return None; }
-        Some(track)
-    }).take(limit).collect()
+        let Some(id) = track.source_id.as_deref() else {
+            continue;
+        };
+        if id.len() != 11
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            || !seen.insert(id.to_string())
+        {
+            continue;
+        }
+        // The provider often lists a stage or lyric upload before the official video and
+        // gives both the same song title. Keep the music video first: discovery dedupes by
+        // title, so whichever comes first is the one the listener sees.
+        if kind == "MUSIC_VIDEO_TYPE_OMV" {
+            videos.push(track);
+        } else {
+            sources.push(track);
+        }
+    }
+    videos.extend(sources);
+    videos.truncate(limit);
+    videos
+}
+
+/// The "top result" card. YouTube Music pins the official video there even when the videos
+/// shelf omits it or lists a stage upload with the same title first.
+pub(super) fn card_video(response: &Value) -> Option<MusicTrack> {
+    let mut cards = Vec::new();
+    parse::collect(response, "musicCardShelfRenderer", &mut cards);
+    let card = *cards.first()?;
+    let title = parse::text(card.get("title")?)?;
+    let subtitle = parse::text(card.get("subtitle")?)?;
+    let parts: Vec<&str> = subtitle
+        .split('•')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    let kind = parts.first()?;
+    if !kind.eq_ignore_ascii_case("video") && !kind.eq_ignore_ascii_case("music video") {
+        return None;
+    }
+    let artist = parts.get(1)?.to_string();
+    let duration_label = parts
+        .iter()
+        .rev()
+        .find(|part| part.contains(':'))
+        .copied()
+        .unwrap_or("");
+    let seconds = super::fields::seconds_from_label(duration_label).unwrap_or(0);
+    let art = parse::nav(
+        card,
+        &["thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails"],
+    )?;
+    let url = art.as_array()?.last()?.get("url")?.as_str()?;
+    let id = url.split("/vi/").nth(1)?.split('/').next()?;
+    if id.len() != 11
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
+        return None;
+    }
+    let mut track = items::track(id, title, Some(artist), None, url.to_string(), seconds);
+    track.media_kind = Some("video".to_string());
+    Some(track)
 }
 
 pub async fn albums(
@@ -604,6 +677,56 @@ mod tests {
         response["contents"].as_array_mut().unwrap().push(duplicate);
         assert_eq!(video_results(&response, 12).len(), 1);
     }
+    #[test]
+    fn the_top_result_card_is_a_video_identity() {
+        let response = json!({"contents": [{"musicCardShelfRenderer": {
+            "title": {"runs": [{"text": "Gnarly"}]},
+            "subtitle": {"runs": [{"text": "Video"}, {"text": " • "}, {"text": "KATSEYE"}, {"text": " • "}, {"text": "246M views"}, {"text": " • "}, {"text": "2:22"}]},
+            "thumbnail": {"musicThumbnailRenderer": {"thumbnail": {"thumbnails": [
+                {"url": "https://i.ytimg.com/vi/R2-yomhYAj4/hqdefault.jpg"}
+            ]}}}
+        }}]});
+        let track = card_video(&response).expect("card");
+        assert_eq!(track.source_id.as_deref(), Some("R2-yomhYAj4"));
+        assert_eq!(track.title, "Gnarly");
+        assert_eq!(track.artist, "KATSEYE");
+        assert_eq!(track.duration_seconds, 142);
+        assert_eq!(track.media_kind.as_deref(), Some("video"));
+        // A song card is not a video identity.
+        let song = json!({"musicCardShelfRenderer": {
+            "title": {"runs": [{"text": "Gnarly"}]},
+            "subtitle": {"runs": [{"text": "Song • KATSEYE"}]},
+            "thumbnail": {"musicThumbnailRenderer": {"thumbnail": {"thumbnails": [
+                {"url": "https://i.ytimg.com/vi/R2-yomhYAj4/hqdefault.jpg"}
+            ]}}}
+        }});
+        assert!(card_video(&song).is_none());
+    }
+
+    #[test]
+    fn an_official_video_leads_a_source_upload_with_the_same_title() {
+        let mut response: Value =
+            serde_json::from_str(include_str!("video-search-fixture.json")).unwrap();
+        let pointer = "/contents/0/musicResponsiveListItemRenderer/overlay/musicItemThumbnailOverlayRenderer/content/musicPlayButtonRenderer/playNavigationEndpoint/watchEndpoint/watchEndpointMusicSupportedConfigs/watchEndpointMusicConfig/musicVideoType";
+        // The clean-stage upload is listed first and shares the song's title.
+        *response.pointer_mut(pointer).unwrap() = json!("MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC");
+        let tracks = video_results(&response, 12);
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(tracks[0].source_id.as_deref(), Some("a5uQMwRMHcs"));
+    }
+
+    #[test]
+    fn official_source_music_uploads_count_as_music_videos() {
+        let mut response: Value =
+            serde_json::from_str(include_str!("video-search-fixture.json")).unwrap();
+        let pointer = "/contents/0/musicResponsiveListItemRenderer/overlay/musicItemThumbnailOverlayRenderer/content/musicPlayButtonRenderer/playNavigationEndpoint/watchEndpoint/watchEndpointMusicSupportedConfigs/watchEndpointMusicConfig/musicVideoType";
+        // YouTube Music types a label's art track this way; it is still the official upload.
+        *response.pointer_mut(pointer).unwrap() = json!("MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC");
+        assert_eq!(video_results(&response, 12).len(), 2);
+        *response.pointer_mut(pointer).unwrap() = json!("MUSIC_VIDEO_TYPE_ATV");
+        assert_eq!(video_results(&response, 12).len(), 1);
+    }
+
     #[test]
     fn interviews_do_not_mix_official_videos_or_audio() {
         let mut response: Value =

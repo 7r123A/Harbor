@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import { musicVideoIdentity, musicVideoResults, searchMusicVideos } from "./video-discovery";
+import {
+  correctVideoTitles,
+  musicVideoIdentity,
+  musicVideoResults,
+  rankMusicVideos,
+  searchMusicVideos,
+} from "./video-discovery";
 import type { MusicTrack } from "./types";
 
 export type MusicVideoPage = { tracks: MusicTrack[]; next: string | null };
@@ -36,10 +42,14 @@ export function searchMusicVideoPage(
     regular,
     cursor,
   })
-    .then((page) => ({
-      tracks: musicVideoResults(page.tracks, Number.MAX_SAFE_INTEGER, subject),
-      next: typeof page.next === "string" && page.next !== cursor ? page.next : null,
-    }))
+    .then(async (page) => {
+      const tracks = musicVideoResults(page.tracks, Number.MAX_SAFE_INTEGER, subject);
+      return {
+        // Only the first page is corrected and ranked: later pages append in provider order.
+        tracks: cursor ? tracks : rankMusicVideos(await correctVideoTitles(tracks), clean),
+        next: typeof page.next === "string" && page.next !== cursor ? page.next : null,
+      };
+    })
     .catch(async (error) => {
       // HMR can update the UI before the native app restarts with the new command.
       if (!cursor && /command.*music_search_video_page.*not found/i.test(String(error))) {

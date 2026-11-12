@@ -2095,6 +2095,8 @@ pub fn run() {
             #[cfg(feature = "music")]
             music::music_search_video_page,
             #[cfg(feature = "music")]
+            music::music_video_titles,
+            #[cfg(feature = "music")]
             music::music_connections,
             #[cfg(feature = "music")]
             music::music_connect,

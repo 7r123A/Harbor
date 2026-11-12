@@ -260,6 +260,66 @@ pub async fn music_search_video_page(
     ).await.map_err(|_| "Music video search timed out".to_string())?
 }
 
+/// Canonical YouTube titles for video ids. YouTube Music mislabels some official videos
+/// (the one it calls "Smart (Slowed + Reverb ver.)" is titled "OFFICIAL MV" on
+/// youtube.com), so the discovery list is corrected from YouTube's own metadata.
+#[tauri::command]
+pub async fn music_video_titles(
+    ids: Vec<String>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    const MAX: usize = 24;
+    let mut unique: Vec<String> = Vec::new();
+    for id in ids {
+        if unique.len() >= MAX {
+            break;
+        }
+        let valid = id.len() == 11
+            && id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-');
+        if valid && !unique.contains(&id) {
+            unique.push(id);
+        }
+    }
+    if unique.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(4))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let mut tasks = Vec::with_capacity(unique.len());
+    for id in unique {
+        let client = client.clone();
+        tasks.push(tokio::spawn(async move {
+            let url = format!(
+                "https://www.youtube.com/oembed?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3D{id}&format=json"
+            );
+            let Ok(response) = client.get(url).send().await else {
+                return (id, None);
+            };
+            if !response.status().is_success() {
+                return (id, None);
+            }
+            let Ok(value) = response.json::<serde_json::Value>().await else {
+                return (id, None);
+            };
+            let Some(title) = value["title"].as_str() else {
+                return (id, None);
+            };
+            let title: String = title.trim().chars().take(200).collect();
+            (id, (!title.is_empty()).then_some(title))
+        }));
+    }
+    let mut titles = std::collections::HashMap::new();
+    for task in tasks {
+        if let Ok((id, Some(title))) = task.await {
+            titles.insert(id, title);
+        }
+    }
+    Ok(titles)
+}
+
 /// The music video for a track, when its source has one. Playback itself runs through the
 /// ordinary video player so the music pane inherits embedding, hardware decoding and geometry.
 #[tauri::command]
