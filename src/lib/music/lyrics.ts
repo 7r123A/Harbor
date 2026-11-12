@@ -77,7 +77,8 @@ async function json(url: string): Promise<unknown> {
     try {
       const response = await safeFetch(url, {
         headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(4000),
+        // Search answers are 200-325 KB and have been measured at 1.5-3.9 s; 4 s aborted them.
+        signal: AbortSignal.timeout(8000),
       });
       if (response.status === 404) return null;
       if (!response.ok) {
@@ -136,10 +137,20 @@ async function fetchLyrics(track: MusicTrack): Promise<LyricLine[] | null> {
   const duration = seconds(track.durationSeconds);
   const album = text(track.album).trim();
   const query = `artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`;
-  if (album && duration > 0) {
-    const exact = `${API}/get?${query}&album_name=${encodeURIComponent(album)}&duration=${Math.round(duration)}`;
-    const picked = chooseLyrics(rowsOf(await json(exact)), duration);
-    if (picked) return picked;
+  const attempts: (string | null)[] = [
+    album && duration > 0
+      ? `${API}/get?${query}&album_name=${encodeURIComponent(album)}&duration=${Math.round(duration)}`
+      : null,
+    duration > 0 ? `${API}/get?${query}&duration=${Math.round(duration)}` : `${API}/get?${query}`,
+    duration > 0 ? `${API}/get?${query}` : null,
+  ];
+  // The get endpoint is a tenth of the search payload even without an album. Providers like
+  // YouTube Music often put view counts in the album field, and their duration can be a few
+  // seconds off, so every get variant is cheaper than one rejected search.
+  for (const url of attempts) {
+    if (!url) continue;
+    const found = chooseLyrics(rowsOf(await json(url)), duration);
+    if (found) return found;
   }
   return chooseLyrics(rowsOf(await json(`${API}/search?${query}`)), duration);
 }
