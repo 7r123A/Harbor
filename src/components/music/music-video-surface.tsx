@@ -332,6 +332,14 @@ export function MusicVideoSurface({
     setAttempt((count) => count + 1);
     retryMusicVideo(track);
   }, [onRetry, track.id, track.connectorId]);
+  // A restored paused track, or one whose resolve ran before the audio was primed, has no
+  // picture yet. Once playback actually starts, try it again instead of leaving the error up.
+  useEffect(() => {
+    if (!active || attempt > 0 || player.phase !== "playing") return;
+    if (state.status !== "unavailable" || state.owner !== owner) return;
+    setAttempt(1);
+    retryMusicVideo(track);
+  }, [active, attempt, player.phase, state.status, state.owner, owner, track]);
   // Fullscreen is a lean-back surface: the chrome rests on its own the way a film player does.
   useEffect(() => {
     if (!fullscreen) {

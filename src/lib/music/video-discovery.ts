@@ -168,7 +168,7 @@ export function musicVideoResults(
       return true;
     })
     .slice(0, cap)
-    .map((track) => ({ ...track, mediaKind: "video" }));
+    .map((track) => ({ ...track, mediaKind: "video", videoSearch: false }));
 }
 
 export type MusicVideoKind = "videos" | "concerts" | "interviews";

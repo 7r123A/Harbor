@@ -24,6 +24,7 @@ function load(invoke: (...args: any[]) => Promise<unknown>) {
 }
 const video = {
   mediaKind: "video",
+  videoSearch: false,
   connectorId: "youtube",
   sourceId: "FGBhQbmPwH8",
   id: "youtube:FGBhQbmPwH8",

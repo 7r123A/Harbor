@@ -5,10 +5,48 @@ import {
   subscribeMusic,
   waitForMusicAudioReady,
 } from "./player";
-import { musicVideoStream, musicVideoStreamKey } from "./video";
+import {
+  musicVideoStream,
+  musicVideoStreamKey,
+  prefetchMusicVideoStreams,
+  setMusicVideoTargetResolver,
+} from "./video";
 import { primeMusicVideoHostPosition, releaseMusicVideoHostSource } from "./video-host";
 import { createMusicVideoSurfaces, type HoldVideo } from "./video-surfaces";
+import { searchMusicVideoPage } from "./video-pages";
 import type { MusicTrack } from "./types";
+
+/**
+ * A queued song's own id is an audio upload; its "video" is a square art track. Video mode
+ * resolves the official video for it instead, warmed while the previous song plays.
+ */
+setMusicVideoTargetResolver(async (track) => {
+  // A result from the video list is already the video. Anything else that reaches a surface
+  // as a video, including queues restored from before this lookup existed, is a song.
+  if (track.videoSearch === false || track.connectorId !== "youtube") return null;
+  // Bare "artist title" makes the provider answer with other songs by the act; naming the
+  // kind of upload is what puts the official video first.
+  const page = await searchMusicVideoPage(
+    `${track.artist} ${track.title} music video`,
+    false,
+  ).catch(() => null);
+  const fold = (value: string) =>
+    value
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .trim();
+  const song = fold(track.title).split(" ").filter(Boolean);
+  const isSong = (candidate: MusicTrack) => {
+    const words = new Set(fold(candidate.title).split(" ").filter(Boolean));
+    return song.length > 0 && song.every((word) => words.has(word));
+  };
+  const pick = page?.tracks.find(
+    (candidate) => candidate.sourceId && candidate.sourceId !== track.sourceId && isSong(candidate),
+  );
+  const id = pick?.sourceId;
+  return id ? { ...track, id, sourceId: id } : null;
+});
 
 /**
  * Leaving the watch page unmounts every surface, but the picture is a parked media element
@@ -49,7 +87,20 @@ function warmMusicVideoStream(track: MusicTrack | null | undefined): void {
   void musicVideoStream(track).catch(() => {});
 }
 
-subscribeMusic(() => warmMusicVideoStream(getMusicState().current));
+/** Warm the videos behind the next songs while the current one plays. */
+function warmQueuedVideos(): void {
+  const state = getMusicState();
+  const next = state.queue
+    .slice(state.queueIndex + 1, state.queueIndex + 3)
+    .filter((track) => track.mediaKind === "video");
+  if (next.length > 0) prefetchMusicVideoStreams(next, next.length);
+}
+
+subscribeMusic(() => {
+  const state = getMusicState();
+  warmMusicVideoStream(state.current);
+  warmQueuedVideos();
+});
 
 export const musicVideoSurfaces = createMusicVideoSurfaces(async (track, signal) => {
   let controls: Awaited<ReturnType<typeof activateMusicVideo>> | undefined;

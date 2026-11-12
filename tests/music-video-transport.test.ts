@@ -172,7 +172,11 @@ function loadSession(resolveStream: () => Promise<any>) {
       return {
         musicVideoStream: () => resolveStream(),
         musicVideoStreamKey: (value: any) => `${value.connectorId}:${value.sourceId}`,
+        prefetchMusicVideoStreams: () => {},
+        setMusicVideoTargetResolver: () => {},
       };
+    if (name === "./video-pages")
+      return { searchMusicVideoPage: async () => ({ tracks: [], next: null }) };
     throw Error(name);
   });
   return { session, engine, releases: () => released };

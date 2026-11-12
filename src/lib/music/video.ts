@@ -24,6 +24,18 @@ const streamRequests = new Map<string, Promise<MusicVideoStream>>();
 const prefetchQueue: MusicTrack[] = [];
 let prefetchKey = "";
 
+/**
+ * A queued song resolves to the audio upload the provider gave the queue, whose "video" is a
+ * square art track. Video mode needs the official video instead, so the session layer
+ * registers the lookup that swaps the identity before the native resolve.
+ */
+let videoTargetResolver: ((track: MusicTrack) => Promise<MusicTrack | null>) | null = null;
+export function setMusicVideoTargetResolver(
+  resolver: ((track: MusicTrack) => Promise<MusicTrack | null>) | null,
+): void {
+  videoTargetResolver = resolver;
+}
+
 export type MusicVideoIdentity = Pick<MusicTrack, "id" | "connectorId" | "sourceId">;
 
 /** The identity the native side resolves from: its connector plus that connector's own id. */
@@ -99,11 +111,14 @@ function dropCached(key: string): void {
 }
 
 function boundedResolve(track: MusicTrack, timeoutMs: number): Promise<MusicVideoStream> {
-  const native = invoke<MusicVideoStream>("music_video_stream", { track });
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return native;
+  const work = (async () => {
+    const resolved = videoTargetResolver ? await videoTargetResolver(track) : null;
+    return invoke<MusicVideoStream>("music_video_stream", { track: resolved ?? track });
+  })();
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return work;
   return new Promise<MusicVideoStream>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(MUSIC_VIDEO_UNAVAILABLE)), timeoutMs);
-    native.then(
+    work.then(
       (stream) => {
         clearTimeout(timer);
         resolve(stream);
