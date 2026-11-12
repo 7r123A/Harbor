@@ -103,6 +103,7 @@ function fixture(initialNuvioActive = true, nuvioSignedIn = true) {
       detectAnimeForCw: async () => {},
     },
     "@/lib/render-cause": { noteNotify: () => {} },
+    "@/lib/startup-trace": { startupEvent: () => {} },
     "@/lib/nuvio/nuvio-playback": {
       fetchNuvioPlaybackItems: async () => providers.nuvio(),
       readCachedNuvioPlaybackItems: () => nuvioItems,

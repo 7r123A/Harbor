@@ -46,6 +46,20 @@ import { listLocalCw, localCwSourceEnabled } from "@/lib/local-cw";
 import { localToLibraryItem } from "@/lib/continue-watching";
 import { cwAnimeIdentityKey, dedupeAnimeCw, warmCwAnimeIdentities } from "@/lib/cw-anime-identity";
 import { dedupeCwItems } from "@/lib/cw-dedupe";
+import {
+  cwAdvanceCancel,
+  cwAdvanceCandidates,
+  cwAdvanceComplete,
+  cwAdvanceOutcome,
+  cwAdvanceStart,
+  cwAnimeWarmEnd,
+  cwAnimeWarmStart,
+  cwResurfaceComplete,
+  cwResurfaceStart,
+  cwStaleComplete,
+  cwStaleStart,
+  cwStateCommit,
+} from "@/lib/cw-instrumentation";
 import { cwNextDisplayCoords } from "@/lib/cw-next-display";
 import { seasonIndex } from "@/lib/season-index";
 
@@ -348,6 +362,20 @@ export function useCwAdvance(
   const [extra, setExtra] = useState<LibraryItem[]>([]);
   const [removed, setRemoved] = useState<Set<string>>(new Set());
   const listCacheRef = useRef<Map<string, PlayEpisode[]>>(new Map());
+  const passIdRef = useRef<number | null>(null);
+  const stateCommitPassRef = useRef<number | null>(null);
+  const advancedRef = useRef(advanced);
+  const extraRef = useRef(extra);
+  const removedRef = useRef(removed);
+  useEffect(() => {
+    advancedRef.current = advanced;
+  }, [advanced]);
+  useEffect(() => {
+    extraRef.current = extra;
+  }, [extra]);
+  useEffect(() => {
+    removedRef.current = removed;
+  }, [removed]);
   const [airTick, setAirTick] = useState(0);
   const airTimerRef = useRef<number | null>(null);
   const [remoteProgress, setRemoteProgress] = useState<{
@@ -357,12 +385,28 @@ export function useCwAdvance(
   } | null>(null);
   useEffect(() => {
     if (!enabled) return;
+    cwAnimeWarmStart();
     void warmCwAnimeIdentities(
       [...items.map((item) => advanced.get(item._id) ?? item), ...extra].filter(
         (item) => isCwMember(item) && !removed.has(item._id) && !isCwDismissed(item),
       ),
-    );
+    )
+      .catch(() => {})
+      .finally(cwAnimeWarmEnd);
   }, [items, advanced, extra, removed, enabled]);
+  useEffect(() => {
+    const passId = stateCommitPassRef.current;
+    stateCommitPassRef.current = null;
+    cwStateCommit(
+      {
+        advanced: advanced.size,
+        extra: extra.length,
+        removed: removed.size,
+      },
+      passId ?? passIdRef.current,
+    );
+    if (passId != null) cwAdvanceComplete(passId);
+  }, [advanced, extra, removed]);
   const simkl =
     !privacyOwner &&
     simklEnabled &&
@@ -429,13 +473,22 @@ export function useCwAdvance(
       return;
     }
     let cancelled = false;
+    let passId: number | null = null;
     void (async () => {
+      passId = cwAdvanceStart();
+      passIdRef.current = passId;
       // Cards not in the row can still hold the same show's real progress
       // (classically an anime-scheme copy hidden from Home).
+      cwStaleStart(passId);
       const stalePromise = staleCwIds(
         items,
         progressPool.length > 0 ? progressPool : (library ?? items),
-      ).catch(() => new Set<string>());
+      )
+        .catch(() => new Set<string>())
+        .then((stale) => {
+          cwStaleComplete(passId);
+          return stale;
+        });
       // Parent maps may still belong to the outgoing account during a profile
       // switch. Only the snapshot tied to this session can drive advancement.
       const effectiveSimklWatched = simkl?.watched ?? EMPTY_SIMKL_WATCHED;
@@ -492,7 +545,12 @@ export function useCwAdvance(
       });
       const next = new Map<string, LibraryItem>();
       const remove = new Set<string>();
+      cwAdvanceCandidates(
+        candidates.map((i) => i._id),
+        passId,
+      );
       for (const i of candidates) {
+        const finishCandidate = () => cwAdvanceOutcome(i._id, "success", passId);
         const cur = currentEpisode(i)!;
         const isAnime = isAnimeCwItem(i) || ANIME_ID.test(i._id);
         let list = listCacheRef.current.get(i._id);
@@ -510,6 +568,7 @@ export function useCwAdvance(
             .catch(() => ({ ok: false, eps: [] as PlayEpisode[] }));
           if (cancelled) return;
           fetchOk = res.ok;
+          if (!res.ok) cwAdvanceOutcome(i._id, "failure", passId);
           if (res.ok) {
             list = res.eps;
             listCacheRef.current.set(i._id, list);
@@ -559,6 +618,7 @@ export function useCwAdvance(
                 list.some((e) => isUnannouncedSeason(e, isAnime, effCur.season));
               if (unannouncedNext) {
                 if (i.external !== "nuvio") remove.add(i._id);
+                finishCandidate();
                 continue;
               }
               if (nextSeasonEps.length > 0) {
@@ -585,6 +645,7 @@ export function useCwAdvance(
                     },
                     upNext: true,
                   });
+                  finishCandidate();
                   continue;
                 } else {
                   // Entire series is completed; keep if timer enabled
@@ -596,6 +657,7 @@ export function useCwAdvance(
                   } else if (i.external !== "nuvio") {
                     remove.add(i._id);
                   }
+                  finishCandidate();
                   continue;
                 }
               } else {
@@ -631,10 +693,12 @@ export function useCwAdvance(
                     ...base,
                     waitingForAir: true as const,
                   } as LibraryItem);
+                  finishCandidate();
                   continue;
                 } else if (i.external !== "nuvio") {
                   // Entire series is completed; remove from Continue Watching
                   remove.add(i._id);
+                  finishCandidate();
                   continue;
                 }
               }
@@ -672,9 +736,11 @@ export function useCwAdvance(
               waitingForAir: true as const,
               nextAirDate: curEpInList.airDate,
             } as LibraryItem);
+            finishCandidate();
             continue;
           } else if (i.external !== "nuvio" && (animeCwEnd === "hide" || hideCaughtUp)) {
             remove.add(i._id);
+            finishCandidate();
             continue;
           }
         }
@@ -714,6 +780,7 @@ export function useCwAdvance(
               !!privacyOwner,
             );
             if (!checkWatched(effCur.season, effCur.episode)) {
+              finishCandidate();
               continue;
             }
           }
@@ -739,6 +806,7 @@ export function useCwAdvance(
               (i.external === "nuvio" && (i as Record<string, unknown>).keptForTimer === true)));
         if (!watchedCur) {
           if (waiting) next.set(i._id, base);
+          finishCandidate();
           continue;
         }
         const nextSkip = episodeHiding
@@ -810,6 +878,7 @@ export function useCwAdvance(
           i.external !== "nuvio"
         ) {
           remove.add(i._id);
+          finishCandidate();
           continue;
         }
         if (unplacedFollowUp && !nextEpAired(list, unplacedFollowUp, isAnime, effCur.season)) {
@@ -818,6 +887,7 @@ export function useCwAdvance(
             waitingForAir: true as const,
             nextAirDate: unplacedFollowUp.airDate,
           } as LibraryItem);
+          finishCandidate();
           continue;
         }
         if (nextEp && nextEpAired(list, nextEp, isAnime, effCur.season)) {
@@ -890,6 +960,7 @@ export function useCwAdvance(
         ) {
           remove.add(i._id);
         }
+        finishCandidate();
       }
       const baseLibrary = privacyOwner
         ? listLocalCw(true)
@@ -942,15 +1013,19 @@ export function useCwAdvance(
           effectiveSimklStatus,
           !!privacyOwner,
         );
-      const [resurfaced, stale] = await Promise.all([
-        resurfaceCandidates(
-          lib,
-          inCw,
-          { tmdbKey, animeMode, animeCwEnd, hideCaughtUp },
-          watchedFor,
-        ).catch(() => new Map<string, ResurfaceTarget>()),
-        stalePromise,
-      ]);
+      cwResurfaceStart(passId);
+      const resurfacePromise = resurfaceCandidates(
+        lib,
+        inCw,
+        { tmdbKey, animeMode, animeCwEnd, hideCaughtUp },
+        watchedFor,
+      )
+        .catch(() => new Map<string, ResurfaceTarget>())
+        .then((resurfaced) => {
+          cwResurfaceComplete(passId);
+          return resurfaced;
+        });
+      const [resurfaced, stale] = await Promise.all([resurfacePromise, stalePromise]);
       for (const id of stale) remove.add(id);
       if (cancelled) return;
       const extraItems: LibraryItem[] = [];
@@ -990,13 +1065,23 @@ export function useCwAdvance(
       }
       if (!cancelled) {
         setResolvedOwner({ privacyOwner, profileId, simklSession, simklEnabled });
+        const changed =
+          !sameMap(advancedRef.current, next) ||
+          !sameList(extraRef.current, extraItems) ||
+          !sameSet(removedRef.current, remove);
         setAdvanced((prev) => (sameMap(prev, next) ? prev : next));
         setExtra((prev) => (sameList(prev, extraItems) ? prev : extraItems));
         setRemoved((prev) => (sameSet(prev, remove) ? prev : remove));
+        if (changed) {
+          stateCommitPassRef.current = passId;
+        } else {
+          cwAdvanceComplete(passId);
+        }
       }
     })();
     return () => {
       cancelled = true;
+      cwAdvanceCancel(passId);
       if (airTimerRef.current !== null) {
         window.clearTimeout(airTimerRef.current);
         airTimerRef.current = null;

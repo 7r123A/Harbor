@@ -28,6 +28,7 @@ import {
   subscribeSession as subscribePmdbSession,
 } from "@/lib/publicmetadb/session";
 import { type LibraryItem } from "@/lib/stremio";
+import { startupEvent } from "@/lib/startup-trace";
 
 const STALE_MS = 300_000;
 const FOCUS_STALE_MS = 30_000;
@@ -146,30 +147,51 @@ function merge(lists: LibraryItem[][]): LibraryItem[] {
 }
 
 // Pre-populate items synchronously on module load from disk cache
+const cacheReadStartedAt = typeof performance !== "undefined" ? performance.now() : 0;
+startupEvent("cw.cache.read.start", {});
 let items: LibraryItem[] = (() => {
   if (typeof window === "undefined") return EMPTY;
   const initialLists: LibraryItem[][] = [];
+  const readCache = (source: string, read: () => LibraryItem[]): LibraryItem[] => {
+    const started = typeof performance !== "undefined" ? performance.now() : 0;
+    const value = read();
+    if (typeof performance !== "undefined") {
+      startupEvent("cw.cache.source", {
+        source,
+        ms: Math.round((performance.now() - started) * 10) / 10,
+        items: value.length,
+      });
+    }
+    return value;
+  };
   if (isNuvioSignedIn() && isNuvioProviderActive()) {
     try {
       const slot = resolveNuvioProfileIndex();
-      const initial = getCachedNuvioItemsForSlot(slot);
+      const initial = readCache("nuvio", () => getCachedNuvioItemsForSlot(slot));
       if (initial.length > 0) initialLists.push(initial);
     } catch {}
   }
   if (typeof readCachedTraktPlaybackItems === "function" && getTraktSession() && sourceMask.trakt) {
     try {
-      const initialTrakt = readCachedTraktPlaybackItems();
+      const initialTrakt = readCache("trakt", readCachedTraktPlaybackItems);
       if (initialTrakt && initialTrakt.length > 0) initialLists.push(initialTrakt);
     } catch {}
   }
   if (typeof readCachedSimklPlaybackItems === "function" && getSimklSession() && sourceMask.simkl) {
     try {
-      const initialSimkl = readCachedSimklPlaybackItems();
+      const initialSimkl = readCache("simkl", readCachedSimklPlaybackItems);
       if (initialSimkl && initialSimkl.length > 0) initialLists.push(initialSimkl);
     } catch {}
   }
   return initialLists.length > 0 ? merge(initialLists) : EMPTY;
 })();
+if (typeof performance !== "undefined") {
+  startupEvent("cw.cache.read.end", {
+    ms: Math.round((performance.now() - cacheReadStartedAt) * 10) / 10,
+    items: items.length,
+  });
+  startupEvent("cw.cache.ready", { items: items.length });
+}
 
 let fetchedAt = 0;
 let inflight: Promise<void> | null = null;
@@ -319,27 +341,49 @@ async function runRefresh(gen: number, force = false): Promise<boolean> {
     });
   }
 
+  startupEvent("cw.external.refresh.start", {
+    sources: enabled.map(({ source }) => source),
+  });
   const results = await Promise.all(
-    enabled.map(async ({ fetch }) => {
+    enabled.map(async ({ source, fetch }) => {
+      const started = typeof performance !== "undefined" ? performance.now() : 0;
       try {
-        return await fetch();
+        const value = await fetch();
+        startupEvent("cw.external.source", {
+          source,
+          ok: true,
+          ms: Math.round((performance.now() - started) * 10) / 10,
+        });
+        return value;
       } catch {
+        startupEvent("cw.external.source", {
+          source,
+          ok: false,
+          ms: Math.round((performance.now() - started) * 10) / 10,
+        });
         return null;
       }
     }),
   );
 
+  const complete = results.every((result) => result !== null);
+  const failedSources = new Set(
+    enabled.filter((_, index) => results[index] === null).map(({ source }) => source),
+  );
+  startupEvent("cw.external.refresh.end", {
+    complete,
+    succeeded: results.filter((result) => result !== null).length,
+    failed: [...failedSources],
+    superseded: gen < lastAppliedGen,
+  });
+
   // If a newer generation has already finished and applied, ignore this superseded run
   if (gen < lastAppliedGen) return true;
   lastAppliedGen = gen;
 
-  const complete = results.every((r) => r !== null);
   fetchedAt = complete ? Date.now() : 0;
   const succeeded = results.filter((r): r is LibraryItem[] => r !== null);
   if (succeeded.length === 0) return false;
-  const failedSources = new Set(
-    enabled.filter((_, index) => results[index] === null).map(({ source }) => source),
-  );
   const retained = items.filter((i) => i.external && failedSources.has(i.external));
   const activeItems = [...succeeded, retained].flat().filter((i) => {
     if (i.external === "trakt") return sourceMask.trakt && !!getTraktSession();

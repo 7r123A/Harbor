@@ -3,6 +3,7 @@ import {
   startTransition,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -79,6 +80,15 @@ import { isCorruptAnimeEntry } from "@/lib/anime-cw-repair";
 import { absorbCloudAnimeCw } from "@/lib/anime-cw-absorb";
 import { animeCwIdsVersion, subscribeAnimeCwIds } from "@/lib/anime-cw-ids";
 import { cwTitleKey, dedupeAnimeCw, warmCwAnimeIdentities } from "@/lib/cw-anime-identity";
+import {
+  cwAnimeVersion,
+  cwAnimeWarmEnd,
+  cwAnimeWarmStart,
+  cwCaptureCohort,
+  cwMarkEmptyState,
+  cwMarkFirstVisible,
+  cwMutation,
+} from "@/lib/cw-instrumentation";
 import {
   ANIME_CLOUD_ID,
   CW_FINISHED_RATIO,
@@ -831,7 +841,13 @@ export function Home({
     settings.cwSources,
   ]);
   useEffect(() => {
-    void warmCwAnimeIdentities(continueWatching, { tmdbKey: settings.tmdbKey });
+    cwAnimeVersion(animeIdsVersion);
+  }, [animeIdsVersion]);
+  useEffect(() => {
+    cwAnimeWarmStart();
+    void warmCwAnimeIdentities(continueWatching, { tmdbKey: settings.tmdbKey })
+      .catch(() => {})
+      .finally(cwAnimeWarmEnd);
   }, [continueWatching, settings.tmdbKey]);
   const resurfaceLibrary = useMemo(() => {
     const disabledSources = new Set<string>();
@@ -1428,6 +1444,55 @@ export function Home({
 
   const cwHidden = homeRowsCustom.hidden.includes("cw");
   const cwTop = !!homeRowsCustom.cwTop;
+
+  useLayoutEffect(() => {
+    if (cwHidden || nuvioProfileSwitching) return;
+    cwCaptureCohort(cwItems);
+  }, [cwItems, cwHidden, nuvioProfileSwitching]);
+
+  useEffect(() => {
+    if (cwHidden || nuvioProfileSwitching) return;
+    if (cwItems.length > 0) cwMarkFirstVisible();
+  }, [cwItems, cwHidden, nuvioProfileSwitching]);
+
+  const cwVisibleRef = useRef<{ ids: string; progress: string; data: string } | null>(null);
+  useEffect(() => {
+    if (cwHidden || nuvioProfileSwitching) return;
+    if (cwItems.length === 0) {
+      if (cwVisibleRef.current?.ids) cwMutation("empty");
+      cwVisibleRef.current = { ids: "", progress: "", data: "" };
+      cwMarkEmptyState();
+      return;
+    }
+    const visible = cwItems.slice(0, 12);
+    const ids = visible.map((item) => item._id).join("|");
+    const progress = visible
+      .map(
+        (item) =>
+          `${item._id}:${item.state?.season ?? ""}:${item.state?.episode ?? ""}:${
+            item.state?.video_id ?? ""
+          }|${item.upNext ? 1 : 0}|${item.waitingForAir ? 1 : 0}`,
+      )
+      .join("~");
+    const data = visible
+      .map((item) => `${item._id}:${item.name}:${item.poster ?? ""}:${item.background ?? ""}`)
+      .join("~");
+    const previous = cwVisibleRef.current;
+    cwVisibleRef.current = { ids, progress, data };
+    if (!previous) return;
+    if (previous.ids !== ids) {
+      const before = new Set(previous.ids ? previous.ids.split("|") : []);
+      const after = new Set(ids.split("|"));
+      const added = [...after].some((id) => !before.has(id));
+      const removed = [...before].some((id) => !after.has(id));
+      cwMutation(added && removed ? "replace" : removed ? "removal" : added ? "insert" : "reorder");
+    } else if (previous.progress !== progress) {
+      cwMutation("progress");
+    } else if (previous.data !== data) {
+      cwMutation("enrichment");
+    }
+  }, [cwItems, cwHidden, nuvioProfileSwitching]);
+
   const cwBlock =
     cwHidden && !editMode ? null : (
       <div data-scroll-anchor="cw">

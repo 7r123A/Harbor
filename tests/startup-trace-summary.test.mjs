@@ -59,3 +59,91 @@ test("stalled launches are counted but excluded from percentiles", () => {
   assert.equal(summary.rows[0].n, 1);
   assert.equal(summary.rows[0].p50, 100);
 });
+
+function cwTrace(launchId, items, refreshed, rootAt, events) {
+  return {
+    launchId,
+    at: Number(launchId.replace(/\D/g, "")) || 1,
+    marks: [{ name: "root.revealed", at: rootAt }],
+    measures: [],
+    events: [
+      { name: "cw.cache.ready", at: 0, detail: { items } },
+      ...(refreshed ? [{ name: "cw.external.refresh.start", at: rootAt - 100, detail: {} }] : []),
+      ...events,
+    ],
+  };
+}
+
+test("CW events are grouped by cached-refreshed, cached-not-refreshed and empty cache", () => {
+  const summary = summarizeStartupTraces({
+    traces: [
+      cwTrace("fresh1", 3, false, 100, [
+        { name: "cw.first.visible", at: 120 },
+        {
+          name: "cw.mutation.end",
+          at: 500,
+          detail: {
+            mutations: 2,
+            settled: 3,
+            success: 2,
+            failed: 1,
+            lastMutationAt: 400,
+            reason: "quiet",
+          },
+        },
+      ]),
+      cwTrace("stale1", 2, true, 200, [
+        { name: "cw.first.visible", at: 260 },
+        {
+          name: "cw.mutation.end",
+          at: 800,
+          detail: {
+            mutations: 4,
+            settled: 4,
+            success: 4,
+            failed: 0,
+            lastMutationAt: 700,
+            reason: "timeout",
+          },
+        },
+      ]),
+      cwTrace("empty1", 0, true, 300, [
+        { name: "cw.empty.paint", at: 310 },
+        {
+          name: "cw.mutation.end",
+          at: 600,
+          detail: {
+            mutations: 0,
+            settled: 0,
+            success: 0,
+            failed: 0,
+            lastMutationAt: null,
+            reason: "quiet",
+          },
+        },
+      ]),
+    ],
+  });
+
+  assert.equal(summary.cw["cached-not-refreshed"].launches, 1);
+  assert.equal(summary.cw["cached-refreshed"].launches, 1);
+  assert.equal(summary.cw.empty.launches, 1);
+  assert.equal(
+    summary.cw["cached-not-refreshed"].rows.find((row) => row.name === "cw.first.visible")
+      ?.p50First,
+    20,
+  );
+  assert.equal(
+    summary.cw["cached-refreshed"].rows.find((row) => row.name === "cw.first.visible")?.p50First,
+    60,
+  );
+  assert.equal(summary.cw.empty.rows.find((row) => row.name === "cw.empty.paint")?.p50First, 10);
+  assert.equal(summary.cw["cached-not-refreshed"].mutationEnd.mutations.p50, 2);
+  assert.equal(summary.cw["cached-refreshed"].mutationEnd.mutations.p50, 4);
+  assert.equal(summary.cw.empty.mutationEnd.mutations.p50, 0);
+  assert.equal(summary.cw["cached-not-refreshed"].mutationEnd.lastMutation.p50, 300);
+  assert.equal(summary.cw["cached-refreshed"].mutationEnd.lastMutation.p50, 500);
+  assert.equal(summary.cw.empty.mutationEnd.lastMutation, null);
+  assert.equal(summary.cw["cached-not-refreshed"].mutationEnd.quiet, 1);
+  assert.equal(summary.cw["cached-refreshed"].mutationEnd.timeout, 1);
+});
