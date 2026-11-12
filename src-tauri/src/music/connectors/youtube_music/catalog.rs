@@ -553,7 +553,8 @@ fn adopt(mut track: MusicTrack, album: &MusicAlbumRef) -> MusicTrack {
     if track.album.is_none() {
         track.album = Some(album.title.clone());
     }
-    if track.artwork.is_empty() {
+    // The album's cover is the canonical artwork for a track listed on that album.
+    if !album.artwork.is_empty() {
         track.artwork = album.artwork.clone();
     }
     if track.artist == "Unknown artist" {
@@ -800,6 +801,11 @@ mod tests {
         assert_eq!(imported.tracks[0].duration_seconds, 189);
         assert_eq!(imported.tracks[1].album.as_deref(), Some("ELEVEN"));
         assert_eq!(imported.tracks[2].source_id.as_deref(), Some("V6TEcoNUmc8"));
+        // The fixture's Ditto entry carries no thumbnail; the id still supplies a poster.
+        assert_eq!(
+            imported.tracks[2].artwork,
+            "https://i.ytimg.com/vi/V6TEcoNUmc8/hq720.jpg"
+        );
     }
 
     #[test]
