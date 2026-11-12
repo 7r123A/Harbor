@@ -1139,8 +1139,9 @@ export async function playMusic(
         else {
           await invoke("music_play_track", { track, volume: state.volume });
           // The music-video host owns the audible track once its surface takes over.
-          // Pause the native engine immediately so a video loop cannot play both.
-          if (track.mediaKind === "video")
+          // Pause the native engine once the video owns the picture. A queued song in video
+          // mode keeps playing until its video actually starts, so a failed lookup is audible.
+          if (track.mediaKind === "video" && !track.videoSearch)
             await invoke("music_engine_pause", { paused: true }).catch(() => {});
         }
         break;
