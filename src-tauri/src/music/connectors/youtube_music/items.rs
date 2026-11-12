@@ -209,6 +209,12 @@ pub fn track(
     seconds: u64,
 ) -> MusicTrack {
     let artist = artist.unwrap_or_else(|| "Unknown artist".to_string());
+    // Some panels omit the thumbnail; the poster is always addressable by the video id.
+    let artwork = if artwork.trim().is_empty() && video_id.len() == 11 {
+        format!("https://i.ytimg.com/vi/{video_id}/hq720.jpg")
+    } else {
+        artwork
+    };
     MusicTrack {
         explicit: None,
         version: None,
