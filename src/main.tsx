@@ -22,6 +22,15 @@ import "flag-icons/css/flag-icons.min.css";
 import { startTaskbarProgress } from "@/lib/download/taskbar-progress";
 import { completeBetaReturnPreferences } from "@/lib/updater/beta-return";
 import { proactiveStorageCleanup } from "@/lib/storage-recovery";
+import {
+  armStalledStartupTrace,
+  observeStartupPerformance,
+  preloadNativeStartupTimeline,
+  probeNavigationFocusable,
+  startupFinish,
+  startupMark,
+  startupMarkOnce,
+} from "@/lib/startup-trace";
 
 // Loaded only when a DJ window is actually opened; not part of the core entry graph.
 const DjDeckApp = lazy(() =>
@@ -156,6 +165,13 @@ function revealRoot() {
     root.removeAttribute("data-startup-hidden");
     root.inert = false;
   }
+  startupMarkOnce("root.revealed");
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      startupMarkOnce("root.first-frame");
+      probeNavigationFocusable();
+    }),
+  );
 }
 
 function StartupReady() {
@@ -164,6 +180,7 @@ function StartupReady() {
       document.getElementById("harbor-boot")?.remove();
       document.getElementById("harbor-boot-chrome")?.remove();
       revealRoot();
+      startupMarkOnce("splash.removed");
     });
   }, []);
   return null;
@@ -188,7 +205,9 @@ function MainRoot() {
   // Acknowledge startup and take focus as soon as the app is mounted. The window is already on
   // screen showing the splash, and holding focus back would let the user click elsewhere first.
   useEffect(() => {
-    if (!appReady || !("__TAURI_INTERNALS__" in window)) return;
+    if (!appReady) return;
+    startupMarkOnce("app.ready");
+    if (!("__TAURI_INTERNALS__" in window)) return;
     void import("@tauri-apps/api/core").then(async ({ invoke }) => {
       await invoke("harbor_startup_ready").catch(() => {});
       if (returnPreferencesReady) {
@@ -206,14 +225,27 @@ function MainRoot() {
   }, [appReady]);
 
   useEffect(() => {
+    startupMarkOnce("app.mounted");
+  }, []);
+
+  useEffect(() => {
     if (!appReady) return;
     const wait = Math.max(0, MIN_BOOT_MS - (performance.now() - mountedAt.current));
     const timer = window.setTimeout(() => {
       revealRoot();
+      startupMarkOnce("splash.reveal-called");
       const boot = document.getElementById("harbor-boot");
       if (boot) {
         boot.classList.add("gone");
-        setTimeout(() => boot.remove(), 280);
+        startupMarkOnce("splash.fade-start");
+        setTimeout(() => {
+          boot.remove();
+          startupMarkOnce("splash.removed");
+          void startupFinish();
+        }, 280);
+      } else {
+        startupMarkOnce("splash.removed");
+        void startupFinish();
       }
     }, wait);
     return () => window.clearTimeout(timer);
@@ -228,11 +260,19 @@ function MainRoot() {
 const isAuxWindow = isPip || isVideoPip || isModal || isHdrOverlay || isCaptions || isDjDeck;
 
 async function mount() {
+  startupMark("mount.start");
+  if (!isAuxWindow) {
+    observeStartupPerformance();
+    armStalledStartupTrace();
+    void preloadNativeStartupTimeline();
+  }
   // Must run before anything writes: on a full localStorage every setItem throws, and the
   // first unguarded one during the initial render kills the tree before onReady fires, so
   // the boot splash never clears. Cleaning up from inside a component is too late.
   if (!isAuxWindow) proactiveStorageCleanup();
+  startupMarkOnce("boot.storage-cleanup-done");
   await loadInstallFeatures();
+  startupMarkOnce("boot.features-done");
   const musicEnabled = getInstallFeatures().music;
   if (
     "__TAURI_INTERNALS__" in window &&
@@ -245,18 +285,28 @@ async function mount() {
     !isRemote
   ) {
     returnPreferencesReady = completeBetaReturnPreferences(__APP_VERSION__);
+    startupMarkOnce("boot.beta-return-done");
   }
+  const musicStartup =
+    musicEnabled && !isHdrOverlay && !isModal && !isCaptions && !isPip && !isVideoPip;
+  if (musicStartup) startupMarkOnce("boot.music-start");
   await Promise.all([
-    loadSecrets(),
-    hydrateCustomThemes().catch(() => {}),
-    ensureUiLocale(getUiLanguage()),
-    musicEnabled && !isHdrOverlay && !isModal && !isCaptions && !isPip && !isVideoPip
-      ? import("@/lib/music/player").then(({ initializeMusic }) => initializeMusic())
+    loadSecrets().then(() => startupMarkOnce("boot.secrets-done")),
+    hydrateCustomThemes()
+      .catch(() => {})
+      .then(() => startupMarkOnce("boot.themes-done")),
+    ensureUiLocale(getUiLanguage()).then(() => startupMarkOnce("boot.locale-done")),
+    musicStartup
+      ? import("@/lib/music/player")
+          .then(({ initializeMusic }) => initializeMusic())
+          .then(() => startupMarkOnce("boot.music-done"))
       : Promise.resolve(),
   ]);
+  startupMarkOnce("boot.critical-done");
   if (!isHdrOverlay && !isModal && !isCaptions && !isDjDeck) void initSubtitleCache();
   if (!isHdrOverlay && !isModal && !isCaptions && !isPip && !isVideoPip && !isDjDeck)
     startTaskbarProgress();
+  startupMarkOnce("boot.services-started");
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
       {isHdrOverlay ? (
@@ -281,6 +331,7 @@ async function mount() {
       {(isModal || isPip || isVideoPip || isCaptions || isDjDeck) && <StartupReady />}
     </StrictMode>,
   );
+  startupMarkOnce("boot.render-called");
 }
 void mount().catch(() => {
   if (isHdrOverlay) {

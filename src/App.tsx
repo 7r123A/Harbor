@@ -46,6 +46,7 @@ import { CinematicOverlay } from "@/chrome/cinematic-overlay";
 import { Topbar, TogetherButton } from "@/chrome/topbar";
 import { TabHotkeys } from "@/chrome/tab-hotkeys";
 import { startMaintenance, subscribeMemoryPressure } from "@/lib/maintenance";
+import { startupMarkOnce } from "@/lib/startup-trace";
 import { MiddleClickScroll } from "@/lib/use-middle-click-scroll";
 import { exitWindowFullscreenOnPlayerClose, toggleWindowFullscreen } from "@/lib/fullscreen-state";
 import { flushCloudSync } from "@/views/player/hooks/use-stremio-sync";
@@ -919,6 +920,7 @@ function parseDeepLinkEpisode(videoId?: string): { season: number; episode: numb
 
 function RevealOnMount({ onReady }: { onReady?: () => void }) {
   useEffect(() => {
+    startupMarkOnce("shell.committed");
     onReady?.();
   }, [onReady]);
   return null;
@@ -978,6 +980,9 @@ function Shell({ onReady }: { onReady?: () => void }) {
   const activeProfileForMusic = activeProfile?.id ?? null;
   const kid = activeProfile?.kid ?? null;
   const preview = useThemePreview();
+  useEffect(() => {
+    startupMarkOnce("shell.committed");
+  }, []);
   useEffect(() => {
     void ensureCuratedLogos();
     const id = window.setTimeout(() => {

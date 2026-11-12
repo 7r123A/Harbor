@@ -54,6 +54,7 @@ import { anyProfileSharesStremioWith, useProfiles } from "@/lib/profiles";
 import { type Meta } from "@/lib/cinemeta";
 import { t, useT, useUiLanguage } from "@/lib/i18n";
 import { useSettings, type StreamingService } from "@/lib/settings";
+import { startupMarkOnce } from "@/lib/startup-trace";
 import { useContentDrag } from "@/lib/window-drag";
 import { trackEvent } from "@/lib/discover";
 import { publishResumeStates } from "@/lib/hover-preview/store";
@@ -228,7 +229,14 @@ export function Home({
   const [heroRows, setHeroRows] = useState<string[]>([]);
   const [heroReady, setHeroReady] = useState(false);
   useEffect(() => {
+    if (rows.length > 0) startupMarkOnce("home.rows-committed");
+  }, [rows]);
+  useEffect(() => {
+    if (heroReady) startupMarkOnce("home.hero-ready");
+  }, [heroReady]);
+  useEffect(() => {
     if (!active || !heroReady) return;
+    startupMarkOnce("home.ready");
     onReady?.();
   }, [active, heroReady, onReady]);
   const [items, setItems] = useState<LibraryItem[]>([]);
@@ -294,6 +302,7 @@ export function Home({
     let cancelled = false;
     let retryTimer: number | null = null;
     (async () => {
+      startupMarkOnce("home.build-start");
       const isClassic = settings.homeMode === "classic";
 
       let built: { rows: HomeRow[]; hero: Meta[]; heroRows?: string[]; failed?: number } = {
@@ -321,6 +330,8 @@ export function Home({
         }
       }
       if (cancelled) return;
+      startupMarkOnce("home.build-done");
+      startupMarkOnce("home.data-ready");
       let degraded = (built.failed ?? 0) > 0;
       const commitRows = (next: HomeRow[]) =>
         startTransition(() =>
