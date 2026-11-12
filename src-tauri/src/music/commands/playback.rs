@@ -13,6 +13,30 @@ pub async fn music_play_track(
     track: MusicTrack,
     volume: Option<f64>,
 ) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let identity = format!(
+        "{}:{}",
+        track.connector_id.as_deref().unwrap_or("direct"),
+        track.id
+    );
+    let result = play_track(app, state, track, volume).await;
+    let outcome = match &result {
+        Ok(()) => "ok".to_string(),
+        Err(error) => format!("error: {error}"),
+    };
+    crate::music::trace::log(format!(
+        "play {identity} {outcome} {} ms",
+        started.elapsed().as_millis()
+    ));
+    result
+}
+
+async fn play_track(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, MusicState>,
+    track: MusicTrack,
+    volume: Option<f64>,
+) -> Result<(), String> {
     let request = state.begin_play_request();
     let volume = volume.unwrap_or(0.82);
     if track.connector_id.as_deref() == Some("spotify") {

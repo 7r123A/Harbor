@@ -173,6 +173,27 @@ pub(super) fn playback_started(track: &super::MusicTrack) {
 }
 
 fn account_for_playback(event:&serde_json::Value, app:&tauri::AppHandle) {
+    // The native module reports its events here, so this is where the sidecar build sees
+    // them; the in-process engine logs and invalidates from its own event loop.
+    match event["event"].as_str() {
+        Some("file-loaded") => crate::music::trace::log(format!(
+            "file-loaded track={}", event["trackId"].as_str().unwrap_or("?")
+        )),
+        Some("end-file") => {
+            let reason = event["reason"].as_str().unwrap_or("?");
+            crate::music::trace::log(format!(
+                "end-file reason={reason} track={} deck={}",
+                event["trackId"].as_str().unwrap_or("?"),
+                event["deck"].as_u64().unwrap_or(0)
+            ));
+            if reason == "error" {
+                if let Some(track_id) = event["trackId"].as_str() {
+                    crate::music::forget_dead_stream(app, track_id);
+                }
+            }
+        }
+        _ => {}
+    }
     // Broadcast and DJ deck B must not double-count listening time.
     if event["deck"].as_u64() == Some(1) {return;}
     let Some(ledger)=MUSIC_SCROBBLE.get() else{return};
@@ -264,10 +285,26 @@ pub(super) fn module_request(command: serde_json::Value) -> Option<Result<serde_
             Err(error) => return Some(Err(error)),
         }
     }
+    let name = command["command"].as_str().unwrap_or("?").to_string();
+    // The visualizer polls a snapshot ~16 times a second; it would drown the trace.
+    let traced = crate::music::trace::enabled() && !name.ends_with("meter_snapshot");
+    let started = std::time::Instant::now();
     let result = host.as_mut().expect("Music host created").request(&command);
     if result.is_err() {
         // Don't retain a dead or incompatible service across future commands.
         *host = None;
+    }
+    if traced {
+        // The module is a single-threaded pipe: one slow command stalls every command behind it.
+        let outcome = match &result {
+            Ok(Ok(_)) => "ok".to_string(),
+            Ok(Err(error)) => format!("rejected: {error}"),
+            Err(error) => format!("transport: {error} (host discarded)"),
+        };
+        crate::music::trace::log(format!(
+            "module {name} {outcome} {} ms",
+            started.elapsed().as_millis()
+        ));
     }
     Some(result.unwrap_or_else(Err))
 }

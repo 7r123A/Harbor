@@ -578,7 +578,9 @@ function clearSpotifyStartupWatchdog(): void {
 
 function armSpotifyStartupWatchdog(request: number, track: MusicTrack): void {
   clearSpotifyStartupWatchdog();
-  if (track.connectorId !== "spotify" || state.phase !== "resolving") return;
+  // A source can accept the command and then never reach file-loaded, which used to leave the
+  // player spinning on "resolving" for as long as the user waited.
+  if (state.phase !== "resolving") return;
   spotifyStartupTimer = setTimeout(() => {
     spotifyStartupTimer = null;
     if (
