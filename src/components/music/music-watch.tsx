@@ -40,6 +40,7 @@ import { MusicVideoSurface } from "./music-video-surface";
 import { MusicVideoFullscreen } from "./music-video-fullscreen";
 import { MusicVideoMiniToggle } from "./music-video-mini-toggle";
 import { musicVideoSurfaces } from "@/lib/music/video-session";
+import { musicVideoPlayback, musicWatchQueue } from "@/lib/music/video-queue";
 import {
   getMusicVideoFullscreen,
   subscribeMusicVideoFullscreen,
@@ -131,8 +132,11 @@ export function MusicWatch({
         !isMusicTrackPrimed(track)
       )
         await playMusic(
-          { ...track, mediaKind: "video" },
-          (queue.length ? queue : [track]).map((item) => ({ ...item, mediaKind: "video" })),
+          musicVideoPlayback({ ...track, mediaKind: "video" }, current),
+          musicWatchQueue(track, queue.length ? queue : [track], current).map((item) => ({
+            ...item,
+            mediaKind: "video",
+          })),
         );
       else await waitForMusicAudioReady(track);
       if (cancelled) return;
