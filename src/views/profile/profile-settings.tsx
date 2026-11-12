@@ -1,5 +1,8 @@
 import { createPortal } from "react-dom";
 import {
+  Bell,
+  BellOff,
+  BellRing,
   Check,
   Globe,
   Image as ImageIcon,
@@ -10,9 +13,17 @@ import {
   ShieldCheck,
   UserRound,
   Users,
+  Volume2,
   X,
 } from "lucide-react";
 import { socialPatch } from "@/lib/social/client";
+import {
+  saveDmNotifyMode,
+  saveDmPolicy,
+  useDmPrefs,
+  type DmNotifyMode,
+  type DmPolicy,
+} from "@/lib/social/dm-preferences";
 import {
   audioTimes,
   formatClock,
@@ -329,6 +340,9 @@ export function ProfileSettings({
   const [pickingCards, setPickingCards] = useState(false);
   const [pickingMinecraft, setPickingMinecraft] = useState(false);
   const [customizing, setCustomizing] = useState(false);
+  const dmPrefs = useDmPrefs();
+  const [dmBusy, setDmBusy] = useState<"policy" | "mode" | null>(null);
+  const [dmError, setDmError] = useState<string | null>(null);
   const badgeOptions = pickableBadges(badges ?? []);
   const canPickBadges =
     badgeOptions.length > 0 || summary.verified || summary.hideVerified === true;
@@ -359,6 +373,78 @@ export function ProfileSettings({
       setError(t("Could not update privacy. Try again."));
     }
   };
+
+  const changeDmPolicy = async (next: DmPolicy) => {
+    if (next === dmPrefs.policy || dmBusy) return;
+    setDmBusy("policy");
+    setDmError(null);
+    try {
+      await saveDmPolicy(next);
+    } catch {
+      setDmError(t("Could not update message privacy. Try again."));
+    } finally {
+      setDmBusy(null);
+    }
+  };
+
+  const changeDmNotifyMode = async (next: DmNotifyMode) => {
+    if (next === dmPrefs.mode || dmBusy) return;
+    setDmBusy("mode");
+    setDmError(null);
+    try {
+      await saveDmNotifyMode(next);
+    } catch {
+      setDmError(t("Could not update message notifications. Try again."));
+    } finally {
+      setDmBusy(null);
+    }
+  };
+
+  const dmPolicyOpts: Array<{
+    id: DmPolicy;
+    label: string;
+    help: string;
+    icon: typeof Globe;
+  }> = [
+    {
+      id: "friends",
+      label: t("Friends only"),
+      help: t("Only people you have added can start a conversation"),
+      icon: Users,
+    },
+    {
+      id: "everyone",
+      label: t("Everyone"),
+      help: t("Anyone with your handle can start a conversation"),
+      icon: Globe,
+    },
+  ];
+
+  const dmModeOpts: Array<{
+    id: DmNotifyMode;
+    label: string;
+    help: string;
+    icon: typeof Bell;
+  }> = [
+    {
+      id: "preview",
+      label: t("Preview"),
+      help: t("Chime and show who wrote"),
+      icon: BellRing,
+    },
+    {
+      id: "sound",
+      label: t("Sound"),
+      help: t("Chime without the message"),
+      icon: Volume2,
+    },
+    {
+      id: "silent",
+      label: t("Silent"),
+      help: t("Only update the unread badge"),
+      icon: BellOff,
+    },
+  ];
 
   const save = async (after?: () => void) => {
     if (!form.alias.trim()) {
@@ -916,6 +1002,107 @@ export function ProfileSettings({
                         />
                       </button>
                     </div>
+
+                    <div className="rounded-xl bg-elevated px-4 py-3.5 ring-1 ring-edge-soft">
+                      <div className="flex items-center gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[13.5px] font-medium text-ink">
+                            {t("Who can message you")}
+                          </div>
+                          <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-subtle">
+                            {t(
+                              "Choose who can start a new conversation. Existing conversations stay open, and blocked accounts can never message you.",
+                            )}
+                          </div>
+                        </div>
+                        {dmBusy === "policy" && (
+                          <Loader2 size={15} className="animate-spin text-ink-subtle" aria-hidden />
+                        )}
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        {dmPolicyOpts.map((o) => {
+                          const on = dmPrefs.policy === o.id;
+                          const Icon = o.icon;
+                          return (
+                            <button
+                              key={o.id}
+                              type="button"
+                              disabled={!!dmBusy}
+                              onClick={() => void changeDmPolicy(o.id)}
+                              aria-pressed={on}
+                              className={`flex flex-col items-start gap-1 rounded-md border p-2.5 text-start transition-colors disabled:opacity-60 ${
+                                on
+                                  ? "border-ink bg-surface"
+                                  : "border-edge-soft bg-surface/40 hover:border-edge"
+                              }`}
+                            >
+                              <span className="flex items-center gap-1.5 text-[12.5px] font-semibold text-ink">
+                                <Icon size={15} className={on ? "text-ink" : "text-ink-subtle"} />
+                                {o.label}
+                              </span>
+                              <span className="text-[11.5px] leading-snug text-ink-subtle">
+                                {o.help}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl bg-elevated px-4 py-3.5 ring-1 ring-edge-soft">
+                      <div className="flex items-center gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[13.5px] font-medium text-ink">
+                            {t("Message notifications")}
+                          </div>
+                          <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-subtle">
+                            {t(
+                              "How new direct messages get your attention while you are using Harbor.",
+                            )}
+                          </div>
+                        </div>
+                        {dmBusy === "mode" && (
+                          <Loader2 size={15} className="animate-spin text-ink-subtle" aria-hidden />
+                        )}
+                      </div>
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        {dmModeOpts.map((o) => {
+                          const on = dmPrefs.mode === o.id;
+                          const Icon = o.icon;
+                          return (
+                            <button
+                              key={o.id}
+                              type="button"
+                              disabled={!!dmBusy}
+                              onClick={() => void changeDmNotifyMode(o.id)}
+                              aria-pressed={on}
+                              className={`flex flex-col items-center gap-1 rounded-md border p-2.5 text-center transition-colors disabled:opacity-60 ${
+                                on
+                                  ? "border-ink bg-surface"
+                                  : "border-edge-soft bg-surface/40 hover:border-edge"
+                              }`}
+                            >
+                              <Icon size={16} className={on ? "text-ink" : "text-ink-subtle"} />
+                              <span className="text-[12px] font-semibold text-ink">{o.label}</span>
+                              <span className="text-[10.5px] leading-snug text-ink-subtle">
+                                {o.help}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="mt-2 text-[11.5px] leading-relaxed text-ink-subtle">
+                        {t(
+                          "Do Not Disturb always silences message alerts, and muted conversations never alert. The unread badge still updates either way.",
+                        )}
+                      </p>
+                    </div>
+
+                    {dmError && (
+                      <p className="rounded-md bg-danger/10 px-3 py-2 text-[12px] text-danger" role="alert">
+                        {dmError}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>

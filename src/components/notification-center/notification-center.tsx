@@ -9,6 +9,7 @@ import { subscribeNotificationOpen } from "@/lib/social/notification-open";
 import { requestOpenGroup } from "@/lib/social/open-group";
 import { openDiagnosticsConsent } from "@/lib/social/diagnostics-open";
 import { useNotificationCenter } from "@/lib/social/use-notification-center";
+import { requestOpenDm } from "@/lib/social/dm-store";
 import { useT } from "@/lib/i18n";
 import { FeedRow, NotificationDetail, RequestRow } from "./notification-rows";
 import { useOptionalGameAccess } from "@/views/games/game-access";
@@ -64,6 +65,15 @@ export function NotificationCenter({ trigger = true }: { trigger?: boolean } = {
       setOpen(false);
       const requestId = typeof notif.data?.requestId === "string" ? notif.data.requestId : undefined;
       if (requestId) openDiagnosticsConsent(requestId);
+      return;
+    }
+    if (notif.kind === "direct_message") {
+      setOpen(false);
+      const conversationId =
+        typeof notif.data?.conversationId === "string"
+          ? notif.data.conversationId
+          : notif.targetId;
+      requestOpenDm(conversationId);
       return;
     }
     const groupKind = notif.kind === "group-added" || notif.kind === "group-post";
