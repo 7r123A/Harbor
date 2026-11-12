@@ -32,7 +32,9 @@ async fn stream_status(stream: &MusicStream) -> Result<reqwest::StatusCode, Stri
     Ok(response.status())
 }
 
-/// Preserve the cache's tolerant policy for transient network failures.
+/// Preserve the cache's tolerant policy for rejected responses, but a URL this machine
+/// cannot reach is not playable: re-resolve instead of handing mpv a source that may wait
+/// forever with nothing to report.
 pub(super) async fn probe_stream(stream: &MusicStream) -> StreamHealth {
     let url = stream.url.trim();
     if !url.starts_with("http://") && !url.starts_with("https://") {
@@ -43,7 +45,8 @@ pub(super) async fn probe_stream(stream: &MusicStream) -> StreamHealth {
     }
     match stream_status(stream).await {
         Ok(status) if expiry_status(status.as_u16()) => StreamHealth::Expired,
-        _ => StreamHealth::Usable,
+        Ok(_) => StreamHealth::Usable,
+        Err(_) => StreamHealth::Expired,
     }
 }
 
@@ -134,6 +137,21 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_cached_url_is_re_resolved_instead_of_reaching_the_player() {
+        // Bind then drop: the port is closed, so the probe must fail fast rather than pass.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let stream = MusicStream {
+            url: format!("http://{address}/audio"),
+            mime_type: "audio/webm".into(),
+            bitrate: 0,
+            http_headers: Default::default(),
+        };
+        assert_eq!(probe_stream(&stream).await, StreamHealth::Expired);
     }
 
     #[tokio::test]

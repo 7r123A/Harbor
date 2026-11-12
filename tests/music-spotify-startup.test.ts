@@ -10,7 +10,7 @@ import {
 
 const track = { id: "spotify:track:fixture", connectorId: "spotify" };
 
-test("Spotify startup timeout applies only to the current unresolved audio request", () => {
+test("startup timeout applies only to the current unresolved audio request", () => {
   const base = {
     request: 7,
     currentRequest: 7,
@@ -30,12 +30,12 @@ test("Spotify startup timeout applies only to the current unresolved audio reque
   assert.equal(shouldReportSpotifyStartupTimeout({ ...base, phase: "paused" }), false);
   assert.equal(shouldReportSpotifyStartupTimeout({ ...base, casting: true }), false);
   assert.equal(shouldReportSpotifyStartupTimeout({ ...base, videoOwned: true }), false);
+  // Every source now gets the watchdog: a YouTube track that never reaches file-loaded must
+  // report instead of spinning forever.
+  const youtube = { id: "youtube:fixture", connectorId: "youtube" };
   assert.equal(
-    shouldReportSpotifyStartupTimeout({
-      ...base,
-      expected: { id: "other", connectorId: "soundcloud" },
-    }),
-    false,
+    shouldReportSpotifyStartupTimeout({ ...base, expected: youtube, current: youtube }),
+    true,
   );
 });
 

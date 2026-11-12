@@ -92,7 +92,13 @@ where
         run_with_fallback(app, args, timeout, label, validate),
     )
     .await
-    .map_err(|_| "YouTube Music timed out while resolving this track.".to_string())?
+    .map_err(|_| {
+        crate::music::trace::log(format!(
+            "{label}: timed out after {} s",
+            timeout.as_secs()
+        ));
+        "YouTube Music timed out while resolving this track.".to_string()
+    })?
 }
 
 async fn validate_output<T, Validate, Validated>(
@@ -153,6 +159,13 @@ where
         let budget = timeout.saturating_sub(started.elapsed()).mul_f32(0.65);
         if let Ok(output) = execute(executable, &args, budget).await {
             if let Ok(validated) = validate_output(output, &validate).await {
+                crate::music::trace::log(format!(
+                    "{label}: verified extractor {} ok",
+                    executable
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("?")
+                ));
                 return Ok(validated);
             }
         }
@@ -166,7 +179,10 @@ where
     let output = crate::trailer::run_yt_dlp(app, args.clone(), budget, label).await;
     let error = match output {
         Ok(output) if output.success => match validate_output(output, &validate).await {
-            Ok(validated) => return Ok(validated),
+            Ok(validated) => {
+                crate::music::trace::log(format!("{label}: bundled extractor ok"));
+                return Ok(validated);
+            }
             Err(error) => error,
         },
         Ok(output) => {
