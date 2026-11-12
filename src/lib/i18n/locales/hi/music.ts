@@ -601,6 +601,9 @@ const music: Record<string, string> = {
   "music.search.recent": "हाल की खोजें",
   "music.search.historyEmpty": "आपकी हाल की खोजें यहाँ दिखाई देंगी।",
   "music.search.removeRecent": "हाल की खोजों से {title} हटाएँ",
+  "music.audio.videoQuality": "Default video quality",
+  "music.audio.videoQualityHint":
+    "Used for music videos. A quality you pick while watching lasts until the next song.",
 };
 
 export default music;

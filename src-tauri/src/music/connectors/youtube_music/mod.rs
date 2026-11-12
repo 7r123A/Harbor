@@ -207,8 +207,9 @@ impl MusicConnector for YouTubeMusicConnector {
         &self,
         app: &tauri::AppHandle,
         track: &MusicTrack,
+        max_height: Option<u32>,
     ) -> Result<MusicVideoStream, String> {
-        catalog::video_stream(app, track).await
+        catalog::video_stream(app, track, max_height).await
     }
 
     fn set_health(&self, health: ConnectorHealth) {

@@ -15,6 +15,11 @@ import { openDjDeck } from "@/lib/music/dj-deck";
 import djDeckPreview from "@/assets/settings-preview/dj-deck.png";
 import { useT } from "@/lib/i18n";
 import {
+  MUSIC_VIDEO_QUALITIES,
+  setDefaultMusicVideoQuality,
+  useDefaultMusicVideoQuality,
+} from "@/lib/music/video-quality";
+import {
   loadMusicAudioDevices,
   MUSIC_EQ_FREQUENCIES,
   normalizeMusicAudio,
@@ -98,6 +103,7 @@ export function MusicAudioSettings({
 }) {
   const t = useT();
   const heading = useRef<HTMLHeadingElement>(null);
+  const videoQuality = useDefaultMusicVideoQuality();
   useEffect(() => {
     heading.current?.focus({ preventScroll: true });
   }, []);
@@ -186,6 +192,22 @@ export function MusicAudioSettings({
       )}
       <fieldset disabled={!state.ready || state.saving}>
         <PreferredSourceRow />
+        <section className="music-audio-section">
+          <div className="music-audio-row">
+            <label>{t("music.audio.videoQuality")}</label>
+          </div>
+          <Dropdown
+            value={videoQuality}
+            ariaLabel={t("music.audio.videoQuality")}
+            className="music-audio-output"
+            onChange={(next) => setDefaultMusicVideoQuality(next as typeof videoQuality)}
+            options={MUSIC_VIDEO_QUALITIES.map((quality) => ({
+              value: quality,
+              label: quality === "auto" ? t("Auto") : `${quality}p`,
+            }))}
+          />
+          <p>{t("music.audio.videoQualityHint")}</p>
+        </section>
         <ListeningProfiles draft={draft} update={update} />
         <section className="music-audio-section">
           <div className="music-audio-row">

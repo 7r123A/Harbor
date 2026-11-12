@@ -327,13 +327,14 @@ pub async fn music_video_stream(
     app: tauri::AppHandle,
     state: tauri::State<'_, MusicState>,
     track: MusicTrack,
+    max_height: Option<u32>,
 ) -> Result<MusicVideoStream, String> {
     let connector = track
         .connector_id
         .as_deref()
         .ok_or_else(|| "This track has no source to ask for a video".to_string())?;
     pick(state.inner(), connector)?
-        .resolve_video(&app, &track)
+        .resolve_video(&app, &track, max_height)
         .await
 }
 

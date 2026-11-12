@@ -32,6 +32,12 @@ function load(handle: (name: string, args: any) => unknown = async () => null) {
             return () => {};
           },
         };
+      if (name === "./video-quality")
+        return {
+          musicVideoQuality: () => "auto",
+          musicVideoMaxHeight: () => null,
+          defaultMusicVideoQuality: () => "auto",
+        };
       throw Error(name);
     },
     module,

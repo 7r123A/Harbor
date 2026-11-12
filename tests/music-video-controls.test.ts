@@ -28,6 +28,16 @@ function load(): Controls {
     (name: string) => {
       if (name === "@/lib/music/lyrics") return lyrics;
       if (name === "@/lib/i18n") return { useT: () => (key: string) => key };
+      if (name === "@/lib/music/video-quality")
+        return {
+          cycleMusicVideoQuality: () => {},
+          useMusicVideoQuality: () => "auto",
+          MUSIC_VIDEO_QUALITIES: ["auto", "2160", "1080"],
+          setDefaultMusicVideoQuality: () => {},
+          useDefaultMusicVideoQuality: () => "auto",
+          setMusicVideoSessionQuality: () => {},
+        };
+      if (name === "@/components/dropdown") return { Dropdown: () => null };
       if (name === "@/lib/music/appearance")
         return { setMusicAppearance: () => {}, useMusicAppearance: () => ({ immersive: false }) };
       if (name === "@/components/icons/music-icons")

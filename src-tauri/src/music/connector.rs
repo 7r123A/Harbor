@@ -89,6 +89,7 @@ pub trait MusicConnector: Send + Sync {
         &self,
         _app: &tauri::AppHandle,
         _track: &MusicTrack,
+        _max_height: Option<u32>,
     ) -> Result<MusicVideoStream, String> {
         Err(NO_VIDEO.to_string())
     }

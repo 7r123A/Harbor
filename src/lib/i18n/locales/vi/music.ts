@@ -604,6 +604,9 @@ const music: Record<string, string> = {
   "music.search.recent": "Tìm kiếm gần đây",
   "music.search.historyEmpty": "Các tìm kiếm gần đây sẽ xuất hiện ở đây.",
   "music.search.removeRecent": "Xóa {title} khỏi tìm kiếm gần đây",
+  "music.audio.videoQuality": "Default video quality",
+  "music.audio.videoQualityHint":
+    "Used for music videos. A quality you pick while watching lasts until the next song.",
 };
 
 export default music;
