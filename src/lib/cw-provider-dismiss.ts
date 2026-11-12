@@ -1,5 +1,5 @@
 import { activeProfileId } from "@/lib/active-profile-id";
-import { episodeFromVideoId, type LibraryItem } from "@/lib/stremio";
+import { resolvedEpisodeCoords, type LibraryItem } from "@/lib/stremio";
 import { deleteSimklPlayback, fetchSimklPlaybackSnapshot } from "@/lib/simkl/playback";
 import { isSimklBlocked } from "@/lib/simkl/client";
 import {
@@ -122,18 +122,7 @@ function mediaTypeOf(item: LibraryItem): QueueMediaType {
 }
 
 function itemEpisode(item: LibraryItem): { season: number; episode: number } | null {
-  const season = item.state?.season;
-  const episode = item.state?.episode;
-  if (season != null && episode != null) return { season, episode };
-  const videoId = item.state?.video_id ?? "";
-  // Native anime stream ids are `scheme:entry:episode`; the middle segment is
-  // the entry, not a season, so `episodeFromVideoId` must not parse them.
-  const native = /^(?:kitsu|mal|anilist|anidb):\d+:(\d+)$/.exec(videoId);
-  if (native) {
-    const number = Number(native[1]);
-    return number > 0 ? { season: 1, episode: number } : null;
-  }
-  return episodeFromVideoId(videoId);
+  return resolvedEpisodeCoords(item);
 }
 
 function overlapIds(a: LibraryItem, b: LibraryItem): string[] {

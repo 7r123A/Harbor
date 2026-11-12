@@ -19,7 +19,8 @@ function playbackAt(i: LibraryItem): number {
   return resume?.t ?? 0;
 }
 
-function progressRatio(i: LibraryItem): number {
+// Copy ranking uses only stored offset; dismissals also consider resume progress.
+function rankProgressRatio(i: LibraryItem): number {
   const duration = i.state?.duration ?? 0;
   return duration > 0 ? Math.min(1, (i.state?.timeOffset ?? 0) / duration) : 0;
 }
@@ -32,7 +33,7 @@ export function isFurther(incoming: LibraryItem, existing: LibraryItem): boolean
   const incomingRank = episodeRank(incoming);
   const existingRank = episodeRank(existing);
   if (incomingRank !== existingRank) return incomingRank > existingRank;
-  return progressRatio(incoming) > progressRatio(existing);
+  return rankProgressRatio(incoming) > rankProgressRatio(existing);
 }
 
 function memberKey(i: LibraryItem): string {

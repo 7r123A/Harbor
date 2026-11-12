@@ -80,6 +80,36 @@ export function episodeFromVideoId(
   return { season, episode };
 }
 
+/**
+ * The episode a Continue Watching card actually represents. Complete state
+ * coordinates win, including season zero for Specials; native anime stream ids
+ * are entry-relative, never a season; nothing is invented when coordinates are
+ * incomplete or malformed.
+ */
+export function resolvedEpisodeCoords(
+  item: Pick<LibraryItem, "_id" | "state">,
+): { season: number; episode: number } | null {
+  const season = item.state?.season;
+  const episode = item.state?.episode;
+  if (
+    typeof season === "number" &&
+    typeof episode === "number" &&
+    Number.isInteger(season) &&
+    Number.isInteger(episode) &&
+    season >= 0 &&
+    episode >= 0
+  ) {
+    return { season, episode };
+  }
+  const videoId = item.state?.video_id ?? "";
+  const native = /^(?:kitsu|mal|anilist|anidb):\d+:(\d+)$/.exec(videoId);
+  if (native) {
+    const number = Number(native[1]);
+    return number > 0 ? { season: 1, episode: number } : null;
+  }
+  return episodeFromVideoId(videoId);
+}
+
 function resumeForItem(i: LibraryItem): { ms: number; t: number } | null {
   const vid = i.state?.video_id ?? "";
   const kitsuThreeSeg = /^(kitsu|mal|anilist|anidb):/.test(i._id) && vid.split(":").length === 3;

@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 import { dedupeCwItems } from "../src/lib/cw-dedupe";
-import type { LibraryItem } from "../src/lib/stremio";
+import { resolvedEpisodeCoords as realEpisodeCoords, type LibraryItem } from "../src/lib/stremio";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -415,6 +415,7 @@ function advanceHarness(
     "@/lib/cw-next-display": { cwNextDisplayCoords },
     "@/lib/stremio": {
       isAnimeCwItem: (item: LibraryItem) => /^(kitsu|mal|anilist|anidb):/.test(item._id),
+      resolvedEpisodeCoords: (item: LibraryItem) => realEpisodeCoords(item),
     },
   };
   const output = ts.transpileModule(read("src/views/home/hooks/use-cw-advance.ts"), {

@@ -28,3 +28,8 @@ export function rememberCardCoords(item: LibraryItem, coords: CardCoords): boole
 export function cardCoords(item: LibraryItem): CardCoords | undefined {
   return cache.get(cacheKey(item));
 }
+
+/** Display coordinates belong to the active content owner. */
+export function clearCardCoords(): void {
+  cache.clear();
+}
