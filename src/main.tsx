@@ -214,7 +214,7 @@ function StartupReady() {
  * This is the one constant to tune — raise it to hide more of the load, lower it to reach content
  * sooner.
  */
-const MIN_BOOT_MS = 1800;
+const MIN_BOOT_MS = 300;
 
 function MainRoot() {
   const [appReady, setAppReady] = useState(false);
