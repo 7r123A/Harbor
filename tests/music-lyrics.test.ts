@@ -225,3 +225,31 @@ test("lyrics do not immediately retry throttled requests or cache them as missin
   limited = false;
   assert.deepEqual(await lyrics.loadTrackLyrics(track()), [{ at: 2, text: "Recovered" }]);
 });
+test("a YouTube video title is reduced to the song before lyrics are requested", () => {
+  const { lyrics } = build(async () => ok(null));
+  assert.equal(
+    lyrics.lyricTitle("LE SSERAFIM (르세라핌) 'Smart' OFFICIAL MV", "LE SSERAFIM"),
+    "Smart",
+  );
+  assert.equal(lyrics.lyricTitle("Smart (Slowed + Reverb ver.)", "LE SSERAFIM"), "Smart");
+  assert.equal(lyrics.lyricTitle("Daft Punk - One More Time", "Daft Punk"), "One More Time");
+  assert.equal(lyrics.lyricTitle("One More Time", "Daft Punk"), "One More Time");
+  assert.equal(lyrics.lyricTitle("", "Daft Punk"), "");
+});
+
+test("the lyrics request uses the cleaned song title", async () => {
+  const { lyrics, calls } = build(async () =>
+    ok({ duration: 189, instrumental: false, syncedLyrics: "[00:02.00]Cleaned" }),
+  );
+  const lines = await lyrics.loadTrackLyrics(
+    track({
+      id: "t-mv",
+      title: "LE SSERAFIM (르세라핌) 'Smart' OFFICIAL MV",
+      artist: "LE SSERAFIM",
+      durationSeconds: 189,
+    }),
+  );
+  assert.deepEqual(lines, [{ at: 2, text: "Cleaned" }]);
+  assert.ok(calls[0].includes("track_name=Smart"), calls[0]);
+  assert.ok(!calls[0].includes("OFFICIAL"), calls[0]);
+});

@@ -130,9 +130,40 @@ function chooseLyrics(rows: LrcRow[], target: number): LyricLine[] | null {
   return parsed.length > 0 ? parsed : null;
 }
 
+/**
+ * YouTube titles carry marketing chrome and often repeat the act, and LRCLIB rejects both.
+ * "LE SSERAFIM (르세라핌) 'Smart' OFFICIAL MV" has to become "Smart" before it is asked for.
+ */
+export function lyricTitle(title: string, artist: string): string {
+  let value = text(title).normalize("NFKC").trim();
+  const lead = text(artist).normalize("NFKC").trim();
+  if (lead && value.toLowerCase().startsWith(lead.toLowerCase())) value = value.slice(lead.length);
+  const cleaned = value
+    .replace(
+      /[\(\[]\s*(?:official[^\)\]]*|lyrics?[^\)\]]*|visuali[sz]er[^\)\]]*|audio|video|m\/v|mv)\s*[\)\]]/gi,
+      " ",
+    )
+    .replace(
+      /\b(?:official(?:\s+music)?(?:\s+(?:video|audio|mv|m\/v))?|lyrics?(?:\s+video)?|visuali[sz]er|m\/v|mv|color\s+coded)\b/gi,
+      " ",
+    )
+    // A performance label describes the take, not the words.
+    .replace(
+      /[\(\[]\s*(?:slowed|reverb|sped\s*up|remix|live|acoustic|instrumental|karaoke|cover|performance)[^\)\]]*[\)\]]/gi,
+      " ",
+    )
+    // Anything still bracketed is a translation or a reading, not part of the title.
+    .replace(/[\(\[]\s*[^\)\]]*[\)\]]/g, " ")
+    .replace(/["'“”‘’]/g, " ")
+    .replace(/^[\s\-–—:|]+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || text(title).trim();
+}
+
 async function fetchLyrics(track: MusicTrack): Promise<LyricLine[] | null> {
   const artist = text(track.artist).trim();
-  const title = text(track.title).trim();
+  const title = lyricTitle(track.title, artist);
   if (!artist || !title) return null;
   const duration = seconds(track.durationSeconds);
   const album = text(track.album).trim();
