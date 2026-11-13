@@ -30,7 +30,10 @@ function load(file, dependencies, globals = {}) {
 function fixture({ only = true, addons = [], results = {}, order = [] } = {}) {
   addons = addons.map((a) => ({ ...a, manifest: { resources: ["meta"], ...a.manifest } }));
   const requests = [];
-  const policy = { addonOnlyMetadata: () => only };
+  const policy = {
+    addonOnlyMetadata: () => only,
+    readMetadataSettings: () => ({ addonOnlyMetadata: only }),
+  };
   const storage = {
     getItem: () => JSON.stringify({ addonOnlyMetadata: only, metadataAddonOrder: order }),
   };

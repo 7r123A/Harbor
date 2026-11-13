@@ -367,6 +367,7 @@ function imageFixture(disk, invoke, now, failStorage = false) {
       },
       "@/lib/manga/sources/suwayomi/auth-registry": { suwayomiAuthFor: () => null },
       "@/lib/settings": { useSettings: () => ({ settings: { posterQuality: "high" } }) },
+      "./request-scheduler": load("src/lib/request-scheduler.ts"),
       "./object-url-cache": load(
         "src/lib/object-url-cache.ts",
         {},

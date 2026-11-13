@@ -130,7 +130,13 @@ export const TvCard = memo(function TvCard({
     };
   }, [meta.id, isAnimeCardId, cardSettings.animeCardRating]);
   const imdbId = useTmdbImdbId(meta.id) ?? undefined;
-  const sharedCardState = useCardSharedState({ meta, settings: cardSettings, imdbId, flagRerun });
+  const sharedCardState = useCardSharedState({
+    meta,
+    settings: cardSettings,
+    imdbId,
+    flagRerun,
+    cardRef,
+  });
   const animeRating = isAnimeCardId && cardSettings.showMalBadge ? meta.imdbRating : undefined;
   const { cardBadges } = useCardScoreState({
     meta,

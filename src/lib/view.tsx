@@ -1820,6 +1820,7 @@ export function useScrollMemory(
     let saveTimer: number | null = null;
     let revealId: number | null = null;
     let pendingTop: number | null = null;
+    let lastScrollAt = 0;
     let parked = el.clientHeight === 0;
     let everVisible = !parked;
     let retries = 0;
@@ -1947,15 +1948,22 @@ export function useScrollMemory(
       tryRestore();
     };
 
+    const saveAfterScroll = () => {
+      saveTimer = null;
+      const remaining = 200 - (performance.now() - lastScrollAt);
+      if (remaining > 1) {
+        saveTimer = window.setTimeout(saveAfterScroll, remaining);
+        return;
+      }
+      saveNow();
+    };
+
     const onScroll = () => {
-      if (restoring || parked || el.closest("[data-layer-inactive]")) return;
-      // Keep the offset for navigation during a gesture. Measure an anchor after scrolling settles.
+      if (restoring || parked) return;
+      // Keep the offset for navigation during a gesture without replacing a timer on every frame.
       pendingTop = el.scrollTop;
-      cancelSave();
-      saveTimer = window.setTimeout(() => {
-        saveTimer = null;
-        saveNow();
-      }, 200);
+      lastScrollAt = performance.now();
+      saveTimer ??= window.setTimeout(saveAfterScroll, 200);
     };
 
     armSettle();

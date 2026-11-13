@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { createObjectUrlCache } from "./object-url-cache";
+import { createRequestScheduler } from "./request-scheduler";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { suwayomiAuthFor } from "@/lib/manga/sources/suwayomi/auth-registry";
 import { useSettings } from "@/lib/settings";
@@ -81,6 +82,7 @@ function isDead(url: string): boolean {
   return false;
 }
 const inflight = new Map<string, Promise<ProxyImageResult | null>>();
+const posterDownloads = createRequestScheduler({ concurrency: 6 });
 // Legacy poster blobs share a database with pinned music; only this prefix is disposable.
 const POSTER_PREFIX = "season-poster:v1:";
 const POSTER_TTL = 7 * 24 * 60 * 60_000;
@@ -162,7 +164,7 @@ function proxyImage(
           void idbCacheDelete(diskKey).catch(() => {});
         }
       }
-      const fetchCover = (useCache: boolean, acceptImage = false) =>
+      const requestCover = (useCache: boolean, acceptImage: boolean) =>
         invoke<HarborFetchResponse>("harbor_fetch", {
           args: {
             url,
@@ -184,6 +186,14 @@ function proxyImage(
             maxResponseBytes: 32 * 1024 * 1024,
           },
         });
+      const fetchCover = (useCache: boolean, acceptImage = false) => {
+        if (!persist) return requestCover(useCache, acceptImage);
+        return posterDownloads.schedule(`${generation}:${key}`, () =>
+          generation === cacheGeneration
+            ? requestCover(useCache, acceptImage)
+            : Promise.reject(new Error("image cache cleared")),
+        );
+      };
       let resp: HarborFetchResponse;
       phase = "native-fetch";
       try {
