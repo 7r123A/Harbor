@@ -664,7 +664,7 @@ fn quit_for_handoff(app: tauri::AppHandle) {
                 std::thread::sleep(std::time::Duration::from_millis(FLUSH_STEP_MS));
             }
         }
-        crate::shutdown_services(&app);
+        // The shared exit path runs teardown off the window thread.
         app.exit(0);
     });
 }
