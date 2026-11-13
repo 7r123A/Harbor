@@ -108,6 +108,14 @@ html[data-os="macos"]:not([data-mpv-embed="1"]) #root {
   background: var(--color-canvas);
 }
 
+/* A theme background image paints below body, so the body/#root paint above
+   would hide it. The html canvas stays as the opaque fallback underneath.
+   macOS only: Linux keeps its painted root, where transparency caused ghosting. */
+html[data-harbor-backdrop][data-os="macos"]:not([data-mpv-embed="1"]) body,
+html[data-harbor-backdrop][data-os="macos"]:not([data-mpv-embed="1"]) #root {
+  background: transparent;
+}
+
 /* The mpv surface is a native sibling under the transparent webview, so a
    backdrop-filter inside the player can only sample the webview's own pixels:
    over the video it blurs nothing. It still recomposites the page every frame,
