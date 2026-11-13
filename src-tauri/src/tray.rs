@@ -178,7 +178,6 @@ pub(crate) fn dispatch(app: &AppHandle, id: &str) -> Result<(), String> {
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 }
             }
-            crate::shutdown_services(app);
             app.exit(0);
         }
         _ => return Err("unknown tray action".into()),

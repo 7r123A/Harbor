@@ -192,20 +192,59 @@ pub(crate) fn release_stremio_scheme(app: &tauri::AppHandle) {
 
 #[cfg(desktop)]
 pub(crate) fn shutdown_services(app: &tauri::AppHandle) {
+    // The user asked to quit; a teardown step that runs past the deadline is not a crash.
+    crash_report::mark_clean_exit();
+    shutdown_stage(1);
     release_stremio_scheme(app);
+    shutdown_stage(2);
     native_module::shutdown();
+    shutdown_stage(3);
     thumbs::shutdown(app);
+    shutdown_stage(4);
     multiview::shutdown(app);
+    shutdown_stage(5);
     dvr::shutdown(app);
+    shutdown_stage(6);
     #[cfg(feature = "music")]
     music::shutdown(app);
+    shutdown_stage(7);
     stream_proxy::shutdown(app);
+    shutdown_stage(8);
     cast_server::stop();
+    shutdown_stage(9);
     torrent_engine::stop();
+    shutdown_stage(10);
     discord_rp::shutdown(app);
     #[cfg(desktop)]
     external_player::shutdown();
-    crash_report::mark_clean_exit();
+    shutdown_stage(0);
+}
+
+/// Last teardown step that started, so a stalled shutdown names its blocking service.
+#[cfg(desktop)]
+static SHUTDOWN_STAGE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+#[cfg(desktop)]
+fn shutdown_stage(stage: u8) {
+    SHUTDOWN_STAGE.store(stage, std::sync::atomic::Ordering::Relaxed);
+}
+
+#[cfg(desktop)]
+fn shutdown_stage_name(stage: u8) -> &'static str {
+    match stage {
+        1 => "stremio scheme release",
+        2 => "native modules",
+        3 => "thumbnails",
+        4 => "multiview",
+        5 => "dvr",
+        6 => "music",
+        7 => "stream proxy",
+        8 => "cast server",
+        9 => "torrent engine",
+        10 => "discord/external player",
+        0 => "finished, waiting to exit",
+        _ => "unknown",
+    }
 }
 
 #[cfg(desktop)]
@@ -1292,6 +1331,10 @@ pub fn run() {
                                 std::thread::sleep(std::time::Duration::from_millis(50));
                             }
                             let _ = w.destroy();
+                            // Auxiliary windows can keep the event loop alive after the main
+                            // window is gone, so quit explicitly instead of relying on the
+                            // last-window rule.
+                            w.app_handle().exit(0);
                         });
                     }
                 }
@@ -1320,7 +1363,6 @@ pub fn run() {
                     if let Err(error) = tray_popup::destroy(window.app_handle()) {
                         eprintln!("[harbor::tray] cleanup failed: {error}");
                     }
-                    shutdown_services(window.app_handle());
                 }
                 _ => {}
             }
@@ -2299,8 +2341,71 @@ pub fn run() {
         .build(context)
         .expect("error while building tauri application")
         .run(|app_handle, event| {
-            if matches!(event, tauri::RunEvent::Exit) {
-                shutdown_services(app_handle);
+            // Native teardown can block (audio, librespot, torrents). Running it on the window
+            // thread used to leave a hung process with a dead tray icon whenever one step stalled.
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
+                // Keep preventing exits until cleanup is done, so a second close request cannot
+                // cut native teardown short.
+                if !SHUTDOWN_FINISHED.load(std::sync::atomic::Ordering::SeqCst) {
+                    api.prevent_exit();
+                    if !SHUTDOWN_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                        teardown_then_exit(app_handle, code.unwrap_or(0));
+                    }
+                }
             }
         });
+}
+
+#[cfg(desktop)]
+static SHUTDOWN_STARTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(desktop)]
+static SHUTDOWN_FINISHED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Runs native teardown off the window thread, then exits. A stuck step gives up after
+/// `TEARDOWN_DEADLINE` so the process can never outlive the window as an unkillable ghost.
+#[cfg(desktop)]
+fn teardown_then_exit(app: &tauri::AppHandle, code: i32) {
+    use tauri::Manager;
+    const TEARDOWN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(8);
+    // A GUI launch has no console, so a forced exit is recorded beside the app logs too.
+    let stall_log = app.path().app_log_dir().ok().map(|directory| {
+        let _ = std::fs::create_dir_all(&directory);
+        directory.join("shutdown-stall.log")
+    });
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::spawn(move || {
+            std::thread::sleep(TEARDOWN_DEADLINE);
+            let stage =
+                shutdown_stage_name(SHUTDOWN_STAGE.load(std::sync::atomic::Ordering::Relaxed));
+            eprintln!(
+                "[harbor::shutdown] teardown exceeded {TEARDOWN_DEADLINE:?} at stage '{stage}'; exiting"
+            );
+            if let Some(path) = stall_log {
+                use std::io::Write;
+                let millis = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|elapsed| elapsed.as_millis())
+                    .unwrap_or(0);
+                if let Ok(mut file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                {
+                    let _ = writeln!(
+                        file,
+                        "{millis} pid={} forced exit: teardown exceeded {}ms at stage '{stage}'",
+                        std::process::id(),
+                        TEARDOWN_DEADLINE.as_millis()
+                    );
+                }
+            }
+            std::process::exit(code);
+        });
+        shutdown_services(&app);
+        SHUTDOWN_FINISHED.store(true, std::sync::atomic::Ordering::SeqCst);
+        app.exit(code);
+    });
 }
