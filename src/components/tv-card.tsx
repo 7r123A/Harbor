@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState, type RefObject } from "react";
 import type { Meta } from "@/lib/cinemeta";
 import { peekCachedLogo, resolveLogo } from "@/lib/logo";
 import { sizeImageUrl } from "@/lib/img-size";
@@ -186,6 +186,7 @@ export const TvCard = memo(function TvCard({
           scoreBadges={cardBadges}
           sharedState={sharedCardState}
           isAnime={isAnimeCardId}
+          cardRef={cardRef}
         />
       </span>
     </button>
@@ -240,6 +241,7 @@ export function TvCardArtwork({
   scoreBadges = [],
   sharedState,
   isAnime = false,
+  cardRef,
 }: {
   meta: Meta;
   awardLookupName?: string;
@@ -255,6 +257,7 @@ export function TvCardArtwork({
   scoreBadges?: CardBadge[];
   sharedState: CardSharedState;
   isAnime?: boolean;
+  cardRef?: RefObject<HTMLElement | null>;
 }) {
   const { settings } = useSettings();
   const card = cardSettings ?? { ...settings, ...settings.tvCardOptions };
@@ -266,7 +269,7 @@ export function TvCardArtwork({
     sharedState;
   const awardYear = parseAwardYear(meta.releaseInfo);
   const awardImdb = !isAnime && card.cardAwardDisplay !== "none" ? imdbId : undefined;
-  const classicWin = useClassicAwardWin(meta, awardImdb);
+  const classicWin = useClassicAwardWin(meta, awardImdb, cardRef);
   const animeAward = isAnime
     ? (findTopAward(awardLookupName ?? meta.name, awardYear) ?? findTopAward(meta.name, awardYear))
     : null;

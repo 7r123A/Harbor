@@ -29,6 +29,7 @@ import { profileFromMeta, trackEvent } from "./discover";
 import type { StreamingService } from "./settings";
 import { useSettings } from "./settings";
 import { useSmoothWheel } from "./smooth-scroll";
+import { noteScrollActivity } from "./scroll-activity";
 import { useTogether } from "./together/provider";
 import { beginMarathonAdvance } from "./fullscreen-state";
 import { consumeBack } from "./back-intercept";
@@ -1959,6 +1960,7 @@ export function useScrollMemory(
     };
 
     const onScroll = () => {
+      noteScrollActivity();
       if (restoring || parked) return;
       // Keep the offset for navigation during a gesture without replacing a timer on every frame.
       pendingTop = el.scrollTop;

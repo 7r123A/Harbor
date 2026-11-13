@@ -79,7 +79,7 @@ const TILES: string[] = [
 export function GenreTiles({ title }: { title?: string }) {
   const t = useT();
   return (
-    <Row title={title ?? t("Browse by Genre")} min={210} shape="tile" alwaysActive>
+    <Row title={title ?? t("Browse by Genre")} min={210} shape="tile">
       {TILES.map((g) => (
         <GenreTile key={g} genre={g} />
       ))}

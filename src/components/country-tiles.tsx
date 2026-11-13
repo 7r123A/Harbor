@@ -67,7 +67,7 @@ export function CountryTiles({ title }: { title?: string }) {
     }
   }, [uiLang]);
   return (
-    <Row title={title ?? t("Browse by Country")} min={210} shape="tile" alwaysActive>
+    <Row title={title ?? t("Browse by Country")} min={210} shape="tile">
       {ISO.map((iso) => (
         <CountryTile key={iso} iso={iso} name={regionName(iso)} />
       ))}

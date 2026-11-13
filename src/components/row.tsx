@@ -13,6 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import { observeResize, observeWithin } from "@/lib/visibility";
+import { isScrollActive } from "@/lib/scroll-activity";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ThreeLiquidGlassSurface } from "@/components/ThreeLiquidGlassSurface";
 import { NavChevron } from "./nav-arrow";
@@ -32,14 +33,19 @@ function columnSpan(value?: string): number {
 const NEAR_MARGIN = "300px";
 const PAGE_MARGIN = "800px 0px";
 const FAR_RELEASE_MS = 15000;
-const CARD_MOUNTS_PER_FRAME = 6;
+// At 144Hz a six-card mount batch regularly took two vsyncs, so a scrolling page
+// fills a row one card at a time. At rest, where there is no frame budget to
+// protect, the same queue drains at the original rate.
+const CARD_MOUNTS_DURING_SCROLL = 1;
+const CARD_MOUNTS_AT_REST = 6;
 const pendingCardMounts = new Set<() => void>();
 let cardMountFrame: number | undefined;
 
 function mountQueuedCards() {
   cardMountFrame = undefined;
+  const perFrame = isScrollActive() ? CARD_MOUNTS_DURING_SCROLL : CARD_MOUNTS_AT_REST;
   startTransition(() => {
-    for (let i = 0; i < CARD_MOUNTS_PER_FRAME; i++) {
+    for (let i = 0; i < perFrame; i++) {
       const mount = pendingCardMounts.values().next().value;
       if (!mount) break;
       pendingCardMounts.delete(mount);

@@ -149,7 +149,7 @@ const PosterCard = memo(function PosterCard({
   const ribbonRight = showTop10 && settings.top10RibbonSide === "right";
   const awardYear = parseAwardYear(meta.releaseInfo);
   const awardImdb = !isAnimeCardId && settings.cardAwardDisplay !== "none" ? imdbId : undefined;
-  const classicWin = useClassicAwardWin(meta, awardImdb);
+  const classicWin = useClassicAwardWin(meta, awardImdb, ref);
   const animeAwardWin =
     settings.cardAwardDisplay !== "none" && isAnimeCardId
       ? (findTopAward(awardLookupName ?? meta.name, awardYear) ??

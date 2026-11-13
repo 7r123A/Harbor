@@ -2,6 +2,7 @@ import { memo, useContext, useEffect, useRef, useState } from "react";
 import type { Meta } from "@/lib/cinemeta";
 import type { RailDef } from "@/lib/feed";
 import { FeedShelf } from "@/components/feed-shelf";
+import { LazyMount } from "@/components/lazy-mount";
 import { ScrollRootContext } from "@/components/row";
 import { useT } from "@/lib/i18n";
 import { useViewActions } from "@/lib/view";
@@ -69,19 +70,21 @@ export const Rail = memo(function Rail({
       className={items?.length === 0 ? "hidden" : undefined}
       onFocusCapture={() => setNear(true)}
     >
-      <FeedShelf
-        shelf={shelf}
-        items={items}
-        onEndReached={active && near && items !== null ? () => loadMore(railId) : undefined}
-        scrollKey={`discover:${railId}`}
-        onViewAll={() =>
-          openGrid({
-            title: shelf.title,
-            fetcher: (page) => def.fetch(page),
-            initial: items ?? undefined,
-          })
-        }
-      />
+      <LazyMount minHeight={340}>
+        <FeedShelf
+          shelf={shelf}
+          items={items}
+          onEndReached={active && near && items !== null ? () => loadMore(railId) : undefined}
+          scrollKey={`discover:${railId}`}
+          onViewAll={() =>
+            openGrid({
+              title: shelf.title,
+              fetcher: (page) => def.fetch(page),
+              initial: items ?? undefined,
+            })
+          }
+        />
+      </LazyMount>
     </div>
   );
 });
