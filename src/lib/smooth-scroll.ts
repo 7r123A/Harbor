@@ -28,7 +28,6 @@ export function useSmoothWheel(ref: RefObject<HTMLElement | null>, enabled: bool
 
     const step = (time: number) => {
       const current = el.scrollTop;
-      target = Math.max(0, Math.min(target, el.scrollHeight - el.clientHeight));
       const diff = target - current;
       if (Math.abs(diff) < SETTLE_PX) {
         el.scrollTop = target;
@@ -42,12 +41,12 @@ export function useSmoothWheel(ref: RefObject<HTMLElement | null>, enabled: bool
       el.scrollTop = current + diff * amount;
       // Some webviews round scrollTop; don't spin forever on the last pixel.
       if (elapsed > 0 && el.scrollTop === current) {
-        if (Math.abs(diff) <= 1) {
-          el.scrollTop = target;
+        el.scrollTop = Math.abs(diff) <= 1 ? target : current + Math.sign(diff);
+        // A content resize can clamp the attempted write before the target is reached.
+        if (el.scrollTop === current || Math.abs(diff) <= 1) {
           raf = 0;
           return;
         }
-        el.scrollTop = current + Math.sign(diff);
       }
       raf = requestAnimationFrame(step);
     };

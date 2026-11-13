@@ -341,6 +341,7 @@ test("supplementary detail patches preserve usable metadata and unchanged state 
 });
 
 function imageFixture(disk, invoke, now, failStorage = false) {
+  const reads = [];
   const effects = [];
   const states = [];
   let index = 0;
@@ -378,6 +379,7 @@ function imageFixture(disk, invoke, now, failStorage = false) {
       ),
       "@/lib/idb-cache": {
         idbCacheGet: async (key) => {
+          reads.push(key);
           if (failStorage) throw new Error("disabled storage");
           return disk.get(key);
         },
@@ -401,6 +403,7 @@ function imageFixture(disk, invoke, now, failStorage = false) {
   );
   return {
     ...f,
+    reads,
     render(url) {
       index = 0;
       effects.length = 0;
@@ -429,6 +432,27 @@ test("public poster requests opt into the native persistent cache and clearing r
   await first.clearThumbCache();
   assert.equal(disk.size, 0);
   assert.equal(calls.at(-1).name, "clear_thumb_cache");
+});
+
+test("a newly cached poster uses the asset path and skips unrelated legacy blob reads", async () => {
+  const disk = new Map([["season-poster:v1:other", { at: 1000, data: new Blob(["old"]) }]]);
+  const calls = [];
+  const f = imageFixture(
+    disk,
+    async (name, args) => {
+      calls.push({ name, args });
+      if (name === "cached_thumb_path") return null;
+      return { ok: true, body: "", contentType: "image/jpeg", assetPath: "C:\\cache\\new.jpg" };
+    },
+    () => 1000,
+    true,
+  );
+  const url = "https://artworks.thetvdb.com/new.jpg";
+  f.render(url);
+  await tick();
+  assert.equal(f.render(url), "asset:C:\\cache\\new.jpg");
+  assert.deepEqual(f.reads, []);
+  assert.equal(calls.find((call) => call.name === "harbor_fetch").args.args.returnImageAsset, true);
 });
 
 test("unavailable poster storage falls back to fetching the image", async () => {

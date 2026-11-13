@@ -4512,6 +4512,9 @@ html[data-theme-card="crunch"][dir="rtl"] .harbor-profile-dropdown {
   /* Paint containment must leave room for the outset arrows and card hovers. */
   overflow-clip-margin: 64px;
 }
+.harbor-row-shell[data-row-near] {
+  content-visibility: visible;
+}
 .harbor-preview-img {
   background-color: var(--color-raised);
   background-image: linear-gradient(

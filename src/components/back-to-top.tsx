@@ -19,7 +19,13 @@ export function BackToTop({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const onScroll = () => setShow(el.scrollTop > threshold);
+    let shown: boolean | undefined;
+    const onScroll = () => {
+      const next = el.scrollTop > threshold;
+      if (shown === next) return;
+      shown = next;
+      setShow(next);
+    };
     onScroll();
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);

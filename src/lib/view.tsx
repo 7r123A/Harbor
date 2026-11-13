@@ -1759,32 +1759,31 @@ function anchorOffsetIn(scrollEl: HTMLElement, anchor: HTMLElement): number {
   );
 }
 
-function pickAnchor(el: HTMLElement, scrollTop: number): { key: string; delta: number } | null {
+function pickAnchor(el: HTMLElement): { key: string; delta: number } | null {
   const anchors = el.querySelectorAll<HTMLElement>("[data-scroll-anchor]");
   if (anchors.length === 0) return null;
-  let best: { key: string; offset: number } | null = null;
   const scrollerTop = el.getBoundingClientRect().top;
-  for (const a of anchors) {
-    const k = a.dataset.scrollAnchor;
-    if (!k) continue;
-    const off = a.getBoundingClientRect().top - scrollerTop + scrollTop;
-    if (off > scrollTop + 1) continue;
-    if (!best || off > best.offset) best = { key: k, offset: off };
+  let closest: { key: string; delta: number } | null = null;
+  for (const anchor of anchors) {
+    const key = anchor.dataset.scrollAnchor;
+    if (!key) continue;
+    const rect = anchor.getBoundingClientRect();
+    if (rect.height === 0) continue;
+    const delta = scrollerTop - rect.top;
+    if (!closest || (delta >= -1 && (closest.delta < -1 || delta < closest.delta))) {
+      closest = { key, delta };
+    }
   }
-  if (!best) {
-    const first = anchors[0];
-    const k = first.dataset.scrollAnchor;
-    if (!k) return null;
-    return { key: k, delta: scrollTop - anchorOffsetIn(el, first) };
-  }
-  return { key: best.key, delta: scrollTop - best.offset };
+  return closest;
 }
 
 function targetForSnap(el: HTMLElement, snap: ScrollSnapshot): number | null {
   if (snap.anchor) {
     const sel = `[data-scroll-anchor="${CSS.escape(snap.anchor)}"]`;
     const anchorEl = el.querySelector<HTMLElement>(sel);
-    if (anchorEl) return Math.max(0, anchorOffsetIn(el, anchorEl) + snap.delta);
+    if (anchorEl?.getClientRects().length) {
+      return Math.max(0, anchorOffsetIn(el, anchorEl) + snap.delta);
+    }
   }
   return snap.fallback >= 0 ? snap.fallback : null;
 }
@@ -1820,7 +1819,7 @@ export function useScrollMemory(
     let settleId: number | null = null;
     let saveTimer: number | null = null;
     let revealId: number | null = null;
-    let pendingSnap: ScrollSnapshot | null = null;
+    let pendingTop: number | null = null;
     let parked = el.clientHeight === 0;
     let everVisible = !parked;
     let retries = 0;
@@ -1907,18 +1906,13 @@ export function useScrollMemory(
       reveal();
     };
 
-    const capture = (): ScrollSnapshot => {
-      const top = el.scrollTop;
-      const found = pickAnchor(el, top);
-      return {
-        anchor: found?.key,
-        delta: found?.delta ?? 0,
-        fallback: top,
-      };
-    };
     const saveNow = () => {
-      if (el.clientHeight === 0) return;
-      rememberScroll(key, capture());
+      if (pendingTop === null) return;
+      const visible = !el.closest("[data-layer-inactive]") && el.clientHeight > 0;
+      const top = visible ? el.scrollTop : pendingTop;
+      const anchor = visible && top > 0 ? pickAnchor(el) : null;
+      rememberScroll(key, { anchor: anchor?.key, delta: anchor?.delta ?? 0, fallback: top });
+      pendingTop = null;
     };
 
     const cancelSave = () => {
@@ -1928,17 +1922,17 @@ export function useScrollMemory(
       }
     };
 
-    const flushParked = () => {
-      if (saveTimer === null || restoring || !pendingSnap) return;
+    const flushSave = () => {
+      if (restoring) return;
       cancelSave();
-      rememberScroll(key, pendingSnap);
+      saveNow();
     };
 
     const onResize = () => {
       const hidden = el.clientHeight === 0;
       if (hidden && !parked) {
         parked = true;
-        flushParked();
+        flushSave();
         return;
       }
       if (!hidden && parked) {
@@ -1954,15 +1948,13 @@ export function useScrollMemory(
     };
 
     const onScroll = () => {
-      if (restoring) return;
-      if (el.clientHeight === 0) return;
-      // Capture geometry while the page is visible. Navigation can hide it
-      // before the debounce runs, when anchor offsets can no longer be read.
-      pendingSnap = capture();
+      if (restoring || parked || el.closest("[data-layer-inactive]")) return;
+      // Keep the offset for navigation during a gesture. Measure an anchor after scrolling settles.
+      pendingTop = el.scrollTop;
       cancelSave();
       saveTimer = window.setTimeout(() => {
         saveTimer = null;
-        if (pendingSnap) rememberScroll(key, pendingSnap);
+        saveNow();
       }, 200);
     };
 
@@ -1976,8 +1968,7 @@ export function useScrollMemory(
     el.addEventListener("scroll", onScroll, { passive: true });
 
     return () => {
-      if (!restoring && el.clientHeight > 0 && el.scrollTop > 0) saveNow();
-      else if (el.clientHeight === 0) flushParked();
+      flushSave();
       cancelSave();
       cancelSettle();
       cancelRetry();

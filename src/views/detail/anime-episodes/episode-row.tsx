@@ -73,7 +73,7 @@ export function AnimeEpisodeRow({
       data-ep={ep.number}
       data-epid={ep.id}
       data-no-card-ring
-      style={{ contentVisibility: "auto", containIntrinsicSize: "auto 160px" }}
+      style={{ contentVisibility: "auto", containIntrinsicBlockSize: "auto 113px" }}
       onContextMenu={(e) =>
         onContextMenu?.(
           e,

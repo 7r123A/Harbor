@@ -1,6 +1,7 @@
 import { usePinnedCatalogRows } from "./home/hooks/use-pinned-rows";
 import { RotateCcw, SlidersHorizontal } from "lucide-react";
 import {
+  startTransition,
   useCallback,
   useEffect,
   useMemo,
@@ -165,10 +166,17 @@ export function AnimeView({ active = true }: { active?: boolean }) {
             try {
               const metas = await s.fetcher(1);
               if (cancelled) return;
-              setRowsByKey((prev) => ({
-                ...prev,
-                [s.key]: { metas, page: 1, hasMore: metas.length >= ROW_MIN_VISIBLE, ready: true },
-              }));
+              startTransition(() => {
+                setRowsByKey((prev) => ({
+                  ...prev,
+                  [s.key]: {
+                    metas,
+                    page: 1,
+                    hasMore: metas.length >= ROW_MIN_VISIBLE,
+                    ready: true,
+                  },
+                }));
+              });
             } catch {
               if (cancelled) return;
               setRowsByKey((prev) => ({
@@ -804,6 +812,7 @@ export function AnimeView({ active = true }: { active?: boolean }) {
   }, [rowsByKey, heroMetas, topPicks]);
 
   useEffect(() => {
+    if (!active) return;
     for (const spec of SPECS) {
       const raw = rowsByKey[spec.key];
       if (!raw?.ready || raw.failed || !raw.hasMore || raw.page >= ROW_MAX_PAGES) continue;
@@ -811,7 +820,7 @@ export function AnimeView({ active = true }: { active?: boolean }) {
       if (!shown || shown.metas.length >= ROW_MIN_VISIBLE) continue;
       loadMore(spec.key);
     }
-  }, [rowsByKey, filteredRowsByKey, loadMore]);
+  }, [active, rowsByKey, filteredRowsByKey, loadMore]);
 
   const dedupedAddonRows = useMemo(() => {
     const seen = new Set<string>();

@@ -81,16 +81,26 @@ const SeasonCardTitle = memo(function SeasonCardTitle({
 function SeasonPoster({
   src,
   name,
+  enabled = true,
   onError,
 }: {
   src?: string;
   name: string;
+  enabled?: boolean;
   onError: (src: string) => void;
 }) {
   const [failed, setFailed] = useState<string | null>(null);
+  const [activated, setActivated] = useState(enabled);
   useEffect(() => setFailed(null), [src]);
+  useEffect(() => {
+    if (enabled) setActivated(true);
+  }, [enabled]);
   const usable = src && src !== failed ? src : undefined;
-  const cachedSrc = useProxiedImageSrc(usable, { forceProxy: true, persistent: true });
+  const cachedSrc = useProxiedImageSrc(usable, {
+    forceProxy: true,
+    persistent: true,
+    enabled: enabled || activated,
+  });
   return usable ? (
     <img
       src={cachedSrc}
@@ -206,7 +216,12 @@ const SeasonCard = memo(function SeasonCard({
       className={`season-explorer-card flex w-[136px] shrink-0 snap-start flex-col items-stretch rounded-xl p-1 text-start transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:w-[164px] ${selected ? "bg-accent/10 text-ink ring-1 ring-accent" : "text-ink-muted hover:bg-ink/5 hover:text-ink"}`}
     >
       <div className="aspect-[2/3] w-full shrink-0 overflow-hidden rounded-lg">
-        <SeasonPoster src={poster} name={item.name} onError={rejectPoster} />
+        <SeasonPoster
+          src={poster}
+          name={item.name}
+          enabled={nearby || focused || selected}
+          onError={rejectPoster}
+        />
       </div>
       <SeasonCardTitle
         text={title || label || item.name}

@@ -11,11 +11,16 @@ type HarborFetchResponse = {
   status: number;
   ok: boolean;
   body: string;
+  assetPath?: string;
   contentType?: string | null;
   headers?: Record<string, string>;
 };
 
-function base64ToBytes(b64: string): Uint8Array {
+function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
+  const bytes = Uint8Array as typeof Uint8Array & {
+    fromBase64?: (value: string) => Uint8Array<ArrayBuffer>;
+  };
+  if (bytes.fromBase64) return bytes.fromBase64(b64);
   const bin = atob(b64.trim());
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
@@ -79,28 +84,15 @@ const inflight = new Map<string, Promise<ProxyImageResult | null>>();
 // Legacy poster blobs share a database with pinned music; only this prefix is disposable.
 const POSTER_PREFIX = "season-poster:v1:";
 const POSTER_TTL = 7 * 24 * 60 * 60_000;
-let legacyPruned = false;
-let pruning: Promise<void> | undefined;
+let legacyPosterKeys: Promise<Set<string>> | undefined;
 let cacheGeneration = 0;
 
-function prunePosters(): void {
-  if (pruning) return;
-  pruning = (async () => {
-    const keys = (await idbCacheKeys()).filter((key) => key.startsWith(POSTER_PREFIX));
-    const entries = await Promise.all(
-      keys.map(async (key) => ({ key, entry: await idbCacheGet(key) })),
-    );
-    entries.sort((a, b) => (b.entry?.at ?? 0) - (a.entry?.at ?? 0));
-    await Promise.all(
-      entries
-        .filter(({ entry }, i) => i >= 120 || !entry || Date.now() - entry.at >= POSTER_TTL)
-        .map(({ key }) => idbCacheDelete(key)),
-    );
-  })()
-    .catch(() => {})
-    .finally(() => {
-      pruning = undefined;
-    });
+function getLegacyPosterKeys(): Promise<Set<string>> {
+  // Most installs have no legacy entries. Check the key index once without
+  // opening a separate IndexedDB transaction and cloning a blob for each miss.
+  return (legacyPosterKeys ??= idbCacheKeys()
+    .then((keys) => new Set(keys.filter((key) => key.startsWith(POSTER_PREFIX))))
+    .catch(() => new Set<string>()));
 }
 
 export async function clearThumbCache(): Promise<void> {
@@ -108,8 +100,9 @@ export async function clearThumbCache(): Promise<void> {
   blobCache.clear();
   inflight.clear();
   deadUrls.clear();
-  const keys = (await idbCacheKeys()).filter((key) => key.startsWith(POSTER_PREFIX));
-  await Promise.all(keys.map(idbCacheDelete));
+  const keys = await getLegacyPosterKeys();
+  await Promise.all([...keys].map(idbCacheDelete));
+  keys.clear();
   await invoke("clear_thumb_cache");
 }
 
@@ -146,10 +139,6 @@ function proxyImage(
       const siteReferer = sourceImageReferer(url);
       const diskKey = `${POSTER_PREFIX}${thumbWidthPx ?? 0}\n${url}`;
       const persist = persistent && !auth;
-      if (persist && !legacyPruned) {
-        legacyPruned = true;
-        prunePosters();
-      }
       if (persist) {
         // A fresh native entry can be served straight through the asset
         // protocol; this avoids the base64 IPC + Blob path on warm posters.
@@ -161,13 +150,16 @@ function proxyImage(
         if (typeof path === "string" && path) return convertFileSrc(path);
       }
       if (persist && migrateLegacy) {
-        const entry = await Promise.resolve()
-          .then(() => idbCacheGet(diskKey))
-          .catch(() => null);
+        const legacyKeys = await getLegacyPosterKeys();
         if (generation !== cacheGeneration) return null;
-        if (entry && Date.now() - entry.at < POSTER_TTL && entry.data instanceof Blob) {
-          const created = blobCache.set(key, entry.data);
-          return created;
+        if (legacyKeys.has(diskKey)) {
+          const entry = await idbCacheGet(diskKey).catch(() => null);
+          if (generation !== cacheGeneration) return null;
+          if (entry && Date.now() - entry.at < POSTER_TTL && entry.data instanceof Blob) {
+            return blobCache.set(key, entry.data);
+          }
+          legacyKeys.delete(diskKey);
+          void idbCacheDelete(diskKey).catch(() => {});
         }
       }
       const fetchCover = (useCache: boolean, acceptImage = false) =>
@@ -176,6 +168,7 @@ function proxyImage(
             url,
             method: "GET",
             responseType: "base64",
+            returnImageAsset: useCache,
             timeoutMs: 30000,
             headers: auth
               ? { authorization: auth }
@@ -216,6 +209,7 @@ function proxyImage(
         });
       const type = resp.headers?.["content-type"] || resp.contentType || "image/jpeg";
       if (type && !type.startsWith("image/")) throw new Error(`type ${type}`);
+      if (resp.assetPath) return convertFileSrc(resp.assetPath);
       phase = "base64-decode";
       const bytes = base64ToBytes(resp.body);
       phase = "blob";

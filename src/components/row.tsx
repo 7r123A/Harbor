@@ -29,9 +29,30 @@ function columnSpan(value?: string): number {
   const span = value?.match(/span\s+(\d+)/)?.[1];
   return span ? Math.max(1, Number(span)) : 1;
 }
-const EAGER_COUNT = 6;
 const NEAR_MARGIN = "300px";
+const PAGE_MARGIN = "800px 0px";
 const FAR_RELEASE_MS = 15000;
+const CARD_MOUNTS_PER_FRAME = 6;
+const pendingCardMounts = new Set<() => void>();
+let cardMountFrame: number | undefined;
+
+function mountQueuedCards() {
+  cardMountFrame = undefined;
+  startTransition(() => {
+    for (let i = 0; i < CARD_MOUNTS_PER_FRAME; i++) {
+      const mount = pendingCardMounts.values().next().value;
+      if (!mount) break;
+      pendingCardMounts.delete(mount);
+      mount();
+    }
+  });
+  if (pendingCardMounts.size) cardMountFrame = requestAnimationFrame(mountQueuedCards);
+}
+
+function queueCardMount(mount: () => void) {
+  pendingCardMounts.add(mount);
+  cardMountFrame ??= requestAnimationFrame(mountQueuedCards);
+}
 
 export type RowShape = "portrait" | "landscape" | "service" | "rank" | "tile" | "square" | "cta";
 
@@ -78,58 +99,55 @@ function LazyChild({
   };
 }) {
   const root = useContext(RowTrackContext);
-  const [visible, setVisible] = useState(eager && active);
+  const [visible, setVisible] = useState(eager);
+  const mounted = useRef(eager);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!root) return;
     const el = ref.current;
-    if (!el) return;
-    // An observer rooted in the horizontal track cannot tell whether the entire row is
-    // off-screen. Gate it with the row's page visibility before mounting card subscriptions.
-    if (!active) {
-      const timer = window.setTimeout(() => {
-        if (!el.contains(document.activeElement)) setVisible(false);
+    if (!root || !el || eager) return;
+    let releaseTimer: number | undefined;
+    const cancelRelease = () => {
+      if (releaseTimer !== undefined) window.clearTimeout(releaseTimer);
+      releaseTimer = undefined;
+    };
+    const release = () => {
+      if (!mounted.current || releaseTimer !== undefined) return;
+      releaseTimer = window.setTimeout(() => {
+        releaseTimer = undefined;
+        if (el.contains(document.activeElement)) return;
+        mounted.current = false;
+        setVisible(false);
       }, FAR_RELEASE_MS);
-      return () => window.clearTimeout(timer);
+    };
+    // The row's observer controls the vertical range. The track's observer then only
+    // mounts cells around the current horizontal offset, including restored offsets.
+    if (!active) {
+      release();
+      return cancelRelease;
     }
-    if (eager) startTransition(() => setVisible(true));
-    let hideTimer: number | null = null;
-    const stopIo = observeWithin(
+    const mount = () => {
+      mounted.current = true;
+      setVisible(true);
+    };
+    const stop = observeWithin(
       el,
       NEAR_MARGIN,
       (entry) => {
-        if (entry.isIntersecting) {
-          if (hideTimer != null) {
-            window.clearTimeout(hideTimer);
-            hideTimer = null;
-          }
-          startTransition(() => setVisible(true));
-        } else if (!eager && hideTimer == null) {
-          hideTimer = window.setTimeout(() => {
-            hideTimer = null;
-            if (!el.contains(document.activeElement)) setVisible(false);
-          }, FAR_RELEASE_MS);
+        if (!entry.isIntersecting) {
+          pendingCardMounts.delete(mount);
+          release();
+          return;
         }
+        cancelRelease();
+        if (!mounted.current) queueCardMount(mount);
       },
       root,
     );
-    const recheck = window.setTimeout(() => {
-      const rect = el.getBoundingClientRect();
-      const rr = root.getBoundingClientRect();
-      if (rr.width === 0 || rr.height === 0) return;
-      const near = 300;
-      const within =
-        rect.right > rr.left - near &&
-        rect.left < rr.right + near &&
-        rect.bottom > rr.top - near &&
-        rect.top < rr.bottom + near;
-      if (within) startTransition(() => setVisible(true));
-    }, 400);
     return () => {
-      stopIo();
-      window.clearTimeout(recheck);
-      if (hideTimer != null) window.clearTimeout(hideTimer);
+      stop();
+      pendingCardMounts.delete(mount);
+      cancelRelease();
     };
   }, [root, eager, active]);
 
@@ -155,7 +173,7 @@ function LazyChild({
             : undefined
       }
     >
-      {visible ? (
+      {eager || visible ? (
         expansion ? (
           <RowCardExpansionProvider
             index={expansion.index}
@@ -170,7 +188,7 @@ function LazyChild({
           children
         )
       ) : (
-        <Skeleton shape={shape} />
+        <RowSkeletonCard shape={shape} />
       )}
     </div>
   );
@@ -191,7 +209,7 @@ function batchWrite(fn: () => void): void {
   });
 }
 
-const Skeleton = memo(function Skeleton({ shape }: { shape: RowShape }) {
+export const RowSkeletonCard = memo(function RowSkeletonCard({ shape }: { shape: RowShape }) {
   const { settings } = useSettings();
   const radius = settings.posterRadius;
   if (shape === "service") {
@@ -278,6 +296,7 @@ export function Row({
   const dockEnabled = effShape === "portrait" && settings.posterDockMagnification;
   const posterHeightRatio = effShape === "landscape" ? 9 / 16 : effShape === "square" ? 1 : 1.5;
   const containerRef = useRef<HTMLDivElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const [trackEl, setTrackEl] = useState<HTMLDivElement | null>(null);
   const trackCb = useCallback((el: HTMLDivElement | null) => {
@@ -291,21 +310,26 @@ export function Row({
     index: number;
     widthScale: number;
   } | null>(null);
+  const hasEndCallback = onEndReached !== undefined;
   const onEndRef = useRef(onEndReached);
   useEffect(() => {
     onEndRef.current = onEndReached;
   });
 
   const [near, setNear] = useState(false);
+  const nearRef = useRef(false);
   useEffect(() => {
-    const el = containerRef.current;
+    const el = shellRef.current;
     if (!el) return;
-    const onNear = (e: IntersectionObserverEntry) => {
-      startTransition(() => setNear(e.isIntersecting));
-    };
-    return pageScrollRoot
-      ? observeWithin(el, "1600px 0px", onNear, pageScrollRoot)
-      : observeWithin(el, "1600px 0px", onNear);
+    return observeWithin(
+      el,
+      PAGE_MARGIN,
+      (entry) => {
+        nearRef.current = entry.isIntersecting;
+        startTransition(() => setNear(entry.isIntersecting));
+      },
+      pageScrollRoot ?? undefined,
+    );
   }, [pageScrollRoot]);
   const measuredRef = useRef({ width: 0, effMin: 0 });
   // Width reported by the ResizeObserver for this row's container, so the measurement below does
@@ -352,7 +376,9 @@ export function Row({
       setCanPrev(pos > 1);
       setCanNext(remaining > 1);
     });
-    if (el.clientWidth > 0 && remaining < 800) onEndRef.current?.();
+    if (el.clientWidth > 0 && remaining < 800 && (alwaysActive || nearRef.current)) {
+      onEndRef.current?.();
+    }
   };
 
   const drag = useRef({
@@ -452,7 +478,7 @@ export function Row({
       measureScroll();
     });
     return () => cancelAnimationFrame(frame);
-  }, [childCount, trackEl, cellWidth, effMin, rtl]);
+  }, [childCount, trackEl, cellWidth, effMin, rtl, near, alwaysActive, hasEndCallback]);
   useLayoutEffect(() => {
     if (!trackEl || cellWidth == null) return;
     if (memoryKey && !restoredRef.current && childCount > 0) {
@@ -465,6 +491,8 @@ export function Row({
         writePos(trackEl, target);
       }
       restoredRef.current = true;
+      // A restored position is intentional even if another page of cards arrives later.
+      userInteractedRef.current = n != null && n > 0;
       return;
     }
     if (!userInteractedRef.current && lastScrollPosRef.current !== 0) {
@@ -806,6 +834,8 @@ export function Row({
 
   return (
     <div
+      ref={shellRef}
+      data-row-near={near ? "" : undefined}
       className={`harbor-row-shell flex min-w-0 flex-col gap-5 ps-[9px] ${shellRoom} ${className}`}
     >
       {hasHeader && (
@@ -918,7 +948,7 @@ export function Row({
                   : Math.max(baseWidth, Math.min(desiredExpandedWidth, viewportLimit));
               return (
                 <LazyChild
-                  eager={alwaysActive || i < EAGER_COUNT}
+                  eager={alwaysActive}
                   active={alwaysActive || near}
                   shape={effShape}
                   span={span}
