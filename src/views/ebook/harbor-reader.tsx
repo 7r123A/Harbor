@@ -1580,6 +1580,7 @@ export function HarborReader({
       await new Promise<void>((resolve, reject) => {
         player.onended = () => resolve();
         player.onerror = () => reject(new Error(t("The generated audio could not be played")));
+        void player.play().catch(reject);
       });
       URL.revokeObjectURL(url);
       audioUrl.current = "";
