@@ -171,6 +171,18 @@ function currentEpisode(i: LibraryItem): { season: number; episode: number } | n
   return resolvedEpisodeCoords(i);
 }
 
+/** A locally completed checkpoint is input for advancement, not a resume card.
+ * Keep synthetic external-provider checkpoints visible on lookup failure: their
+ * zero-duration "watched" marker is not a local playback completion proof.
+ * A verified next episode resets watched state; airing timers stay visible. */
+function isPlayableCwDisplay(i: LibraryItem, advancementEnabled: boolean): boolean {
+  if (!isCwDisplayReady(i)) return false;
+  if (!advancementEnabled || i.type !== "series" || i.external || i.waitingForAir || !isFinishedSeries(i))
+    return true;
+  const cur = currentEpisode(i);
+  return cur != null && manualWatchedState(i._id, cur.season, cur.episode) === false;
+}
+
 function scopedSplitItem(id: string): boolean {
   return isSplitFranchiseKitsu(parseKitsuId(id) ?? parseKitsuId(getAnimeCwId(id) ?? ""));
 }
@@ -1812,16 +1824,16 @@ export function useCwAdvance(
         .map((i) =>
           i.removed && i.temp ? i : (restoredDisplay.advanced.get(i._id) ?? i),
         )
-        .filter((i) => isCwDisplayReady(i) && !isCwDismissed(i)),
+        .filter((i) => isPlayableCwDisplay(i, enabled) && !isCwDismissed(i)),
       Infinity,
     );
   // Dismissal targets the displayed up-next episode, which may differ from the
   // library entry. Filter stored display results immediately, without refetching.
   const base = items
     .map((i) => displayAdvanced.get(i._id) ?? i)
-    // Keep completed temp source checkpoints in the worker inputs; only hide
-    // their already-watched card until a verified next/timer state is ready.
-    .filter((i) => isCwDisplayReady(i) && !displayRemoved.has(i._id) && !isCwDismissed(i));
+    // Completed source checkpoints still reach the advancement worker through
+    // `items`, but cannot flash as resumable cards before next-up verification.
+    .filter((i) => isPlayableCwDisplay(i, enabled) && !displayRemoved.has(i._id) && !isCwDismissed(i));
   if (displayExtra.length === 0) return dedupeCwItems(dedupeAnimeCw(base), Infinity);
   const keyOf = (i: LibraryItem) => `${i.type}|${franchiseDedupKey(i.name ?? "")}`;
   const animeIdentity = (i: LibraryItem) =>
