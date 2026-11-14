@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 // @ts-expect-error Node test types are outside the browser tsconfig.
 import test from "node:test";
 import type { LibraryItem } from "../src/lib/stremio.ts";
+import { providerMappedEpisode } from "../src/lib/cw-anime-episode.ts";
 import {
   cwDisplayOwnerKey,
   restoreCwDisplaySnapshot,
@@ -81,6 +82,38 @@ test("restores verified next episode without restoring source or dismissal owner
   assert.doesNotMatch(payload, /playback-1|Fixture Show|account-a/);
 });
 
+test("verified Black Clover E4 replays provider S2 without rewriting playback coordinates", () => {
+  const s = store();
+  const source = item("mal:61967", 3);
+  const upNext: LibraryItem = {
+    ...advanced(source),
+    state: {
+      ...advanced(source).state!,
+      season: 1,
+      episode: 4,
+      video_id: "kitsu:50024:4",
+    },
+    cwVerifiedProviderMapping: { imdbSeason: 2, imdbEpisode: 4 },
+  };
+  saveCwDisplaySnapshot(owner, [source], new Map([[source._id, upNext]]), new Set(), {
+    store: s, now: start,
+  });
+  const restored = restoreCwDisplaySnapshot(owner, [source], {
+    store: s, now: start + 1000,
+  }).advanced.get(source._id)!;
+  assert.equal(restored.state?.season, 1);
+  assert.equal(restored.state?.episode, 4);
+  assert.equal(restored.state?.video_id, "kitsu:50024:4");
+  assert.deepEqual(restored.cwVerifiedProviderMapping, { imdbSeason: 2, imdbEpisode: 4 });
+  assert.deepEqual(
+    providerMappedEpisode(restored.cwVerifiedProviderMapping, {
+      season: restored.state!.season!,
+      episode: restored.state!.episode!,
+    }),
+    { season: 2, episode: 4 },
+  );
+  assert.equal(source.cwVerifiedProviderMapping, undefined);
+});
 test("another account, profile, source, or Nuvio login cannot reuse a snapshot", () => {
   const s = store();
   const input = item();
@@ -173,6 +206,65 @@ test("verified removals have a shorter expiry and cannot hide changed checkpoint
   );
 });
 
+test("partial startup hydration retains an absent Simkl anime's verified next episode", () => {
+  const s = store();
+  const blackClover = { ...item("mal:61967", 3), upNext: true, state: {
+    ...item("mal:61967", 3).state!, flaggedWatched: 1, timeOffset: 0,
+  }} as LibraryItem;
+  const e4 = {
+    ...advanced(blackClover),
+    state: {
+      ...advanced(blackClover).state!,
+      episode: 4,
+      video_id: "mal:61967:1:4",
+    },
+  } as LibraryItem;
+  const other = item("tt-other");
+  saveCwDisplaySnapshot(owner, [blackClover], new Map([[blackClover._id, e4]]), new Set(), {
+    store: s, now: start,
+  });
+  // Home can commit an unrelated partial row before the Simkl source arrives.
+  saveCwDisplaySnapshot(owner, [other], new Map(), new Set(), {
+    store: s, now: start + 1000,
+  });
+  const restored = restoreCwDisplaySnapshot(owner, [blackClover, other], {
+    store: s, now: start + 2000,
+  });
+  assert.equal(restored.advanced.get(blackClover._id)?.state?.episode, 4);
+
+  // Repeated partial passes must not extend the original 30-minute proof.
+  saveCwDisplaySnapshot(owner, [other], new Map(), new Set(), {
+    store: s, now: start + 29 * 60_000,
+  });
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [blackClover], {
+      store: s, now: start + 31 * 60_000,
+    }).advanced.has(blackClover._id),
+    false,
+  );
+});
+
+test("an unresolved metadata request retains the same-checkpoint verified display", () => {
+  const s = store();
+  const blackClover = item("mal:61967", 3);
+  saveCwDisplaySnapshot(owner, [blackClover], new Map([[blackClover._id, advanced(blackClover)]]), new Set(), {
+    store: s, now: start,
+  });
+  saveCwDisplaySnapshot(owner, [blackClover], new Map(), new Set(), {
+    store: s, now: start + 1000, unresolvedIds: new Set([blackClover._id]),
+  });
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [blackClover], { store: s, now: start + 2000 })
+      .advanced.get(blackClover._id)?.state?.episode,
+    2,
+  );
+  const changed = { ...blackClover, state: { ...blackClover.state!, episode: 4 } } as LibraryItem;
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [changed], { store: s, now: start + 2000 }).advanced.size,
+    0,
+  );
+});
+
 test("a later successful pass with no decisions replaces prior display results", () => {
   const s = store();
   const input = item();
@@ -184,6 +276,23 @@ test("a later successful pass with no decisions replaces prior display results",
   assert.equal(
     restoreCwDisplaySnapshot(owner, [input], { store: s, now: start + 2000 }).advanced.size,
     0,
+  );
+});
+
+test("a partial pass cannot renew the expiry of a verified removal", () => {
+  const s = store();
+  const removed = item("tt-removed");
+  saveCwDisplaySnapshot(owner, [removed], new Map(), new Set([removed._id]), {
+    store: s, now: start,
+  });
+  saveCwDisplaySnapshot(owner, [item("tt-other")], new Map(), new Set(), {
+    store: s, now: start + 90_000,
+  });
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [removed], {
+      store: s, now: start + 121_000,
+    }).removed.has(removed._id),
+    false,
   );
 });
 

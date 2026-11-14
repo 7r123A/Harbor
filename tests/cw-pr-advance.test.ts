@@ -750,6 +750,130 @@ test("Phase 4C restores a verified up-next card before the live provider request
   assert.equal(confirmed?.state?.episode, 4);
 });
 
+test("live Black Clover advancement preserves verified provider S2 coordinates across reopening", async () => {
+  const storage = new Map<string, string>();
+  const source = anchor(3, "mal:61967");
+  const original = harness(storage);
+  original.setRemote(progress([3], source._id));
+  original.setEpisodes([1, 2, 3, 4].map((episode) => ({
+    season: 1,
+    episode,
+    imdbSeason: 2,
+    imdbEpisode: episode,
+    airDate: "2020-01-01",
+    kitsuStreamId: "kitsu:50024:" + episode,
+  })));
+  original.render([source], "", true, []);
+  const [verified] = await original.flush();
+  assert.equal(verified?.state?.season, 1, "native playback remains entry-relative");
+  assert.equal(verified?.state?.episode, 4);
+  assert.deepEqual(verified?.cwVerifiedProviderMapping, {
+    imdbSeason: 2, imdbEpisode: 4,
+  });
+
+  const reopened = harness(storage);
+  let release: () => void = () => {};
+  reopened.setGate(new Promise<void>((resolve) => (release = resolve)));
+  try {
+    const [provisional] = reopened.render([{ ...source }], "", true, []);
+    assert.equal(provisional?.state?.episode, 4);
+    assert.equal(provisional?.state?.season, 1);
+    assert.deepEqual(provisional?.cwVerifiedProviderMapping, {
+      imdbSeason: 2, imdbEpisode: 4,
+    });
+  } finally {
+    release();
+  }
+  await reopened.flush();
+});
+test("a partial live row still replays Black Clover's verified E4 when Simkl arrives late", async () => {
+  const storage = new Map<string, string>();
+  const source = anchor(3, "mal:61967");
+  const other = item(1, iso(-3600000), "tt-other");
+  const original = harness(storage);
+  original.setRemote(progress([3], "mal:61967"));
+  original.render([source], "", true, []);
+  const [verified] = await original.flush();
+  assert.equal(verified?.state?.episode, 4);
+  assert.equal(verified?.upNext, true);
+
+  // The rest of Home hydrates and completes a live pass without the Simkl
+  // anime source. That must not overwrite or disable its last verified E4.
+  const reopened = harness(storage);
+  reopened.setRemote(progress([3], "mal:61967"));
+  reopened.render([other], "", true, []);
+  await reopened.flush();
+  let release: () => void = () => {};
+  reopened.setGate(new Promise<void>((resolve) => (release = resolve)));
+  try {
+    const early = reopened.render([other, { ...source }], "", true, []);
+    assert.equal(
+      early.find((card: any) => card._id === source._id)?.state.episode,
+      4,
+      "Simkl E3 flashed after an unrelated live pass already finished",
+    );
+    assert.equal(early.find((card: any) => card._id === source._id)?.upNext, true);
+
+    const changed = { ...source, state: { ...source.state, episode: 4, video_id: "mal:61967:1:4" } };
+    const fresh = reopened.render([other, changed], "", true, []);
+    assert.equal(
+      fresh.find((card: any) => card._id === source._id)?.state.episode,
+      4,
+      "new source checkpoints must not reuse the older snapshot",
+    );
+  } finally {
+    release();
+  }
+  await reopened.flush();
+});
+
+test("a definitive live no-next result retires a cached episode advancement", async () => {
+  const storage = new Map<string, string>();
+  const source = anchor(3, "mal:61967");
+  const original = harness(storage);
+  original.setRemote(progress([3], "mal:61967"));
+  original.render([source], "", true, []);
+  const [verified] = await original.flush();
+  assert.equal(verified?.state?.episode, 4);
+
+  const reopened = harness(storage);
+  reopened.setRemote(progress([3], "mal:61967"));
+  reopened.setEpisodes([1, 2, 3].map((episode) => ({
+    season: 1, episode, airDate: "2020-01-01",
+  })));
+  const provisional = reopened.render([{ ...source }], "", true, []);
+  assert.equal(provisional[0]?.state?.episode, 4);
+  const live = await reopened.flush();
+  assert.equal(live.some((card: any) => card._id === source._id), false,
+    "a successfully verified caught-up series must not keep its old saved E4");
+});
+
+test("late Simkl session hydration can replay only its own verified E4 checkpoint", async () => {
+  const storage = new Map<string, string>();
+  const blackClover = anchor(3, "mal:61967");
+  const seed = harness(storage);
+  seed.setRemote(progress([3], blackClover._id));
+  seed.render([blackClover], "", true, []);
+  assert.equal((await seed.flush())[0]?.state.episode, 4);
+
+  const reopened = harness(storage);
+  reopened.setSession(null);
+  reopened.render([item(1, iso(-3600000), "tt-other")], "", true, []);
+  await reopened.flush();
+  let release: () => void = () => {};
+  reopened.setGate(new Promise<void>((resolve) => (release = resolve)));
+  try {
+    reopened.setSession({ username: "fixture" });
+    reopened.setRemote(progress([3], blackClover._id));
+    const early = reopened.render([{ ...blackClover }], "", true, []);
+    assert.equal(early[0]?.state?.episode, 4,
+      "late account hydration displayed the already-watched E3 despite a scoped proof");
+    assert.equal(early[0]?.upNext, true);
+  } finally {
+    release();
+  }
+  assert.equal((await reopened.flush())[0]?.state.episode, 4);
+});
 test("Phase 4C refuses a saved decision after a same-slot Nuvio account change", async () => {
   const storage = new Map<string, string>();
   const first = harness(storage);

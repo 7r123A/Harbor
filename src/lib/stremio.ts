@@ -50,6 +50,9 @@ export type LibraryItem = {
   cwMembers?: LibraryItem[];
   isAnime?: boolean;
   upNext?: boolean;
+  /** Provisional, verified provider episode coordinates for CW card presentation only.
+   * Never use this for playback progress, ownership, or provider dismissal. */
+  cwVerifiedProviderMapping?: { imdbSeason: number; imdbEpisode: number };
   waitingForAir?: boolean;
   nextAirDate?: string;
   local?: boolean;
