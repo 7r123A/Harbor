@@ -241,6 +241,14 @@ function harness(persistentStorage = new Map<string, string>()) {
       return { next: idx < 0 ? null : (episodes[idx + 1] ?? null) };
     },
   };
+  // The hook's persistent CW list wrapper is tested independently. These
+  // advancement tests retain direct control over metadata timing and failures.
+  mocks["@/lib/cw-episode-list-cache"] = {
+    cwEpisodeListCacheToken: () => "test-cache-generation",
+    cwEpisodeListCacheTtl: () => 12 * 60 * 60_000,
+    fetchCachedCwEpisodeList: (meta: any, opts: any) =>
+      mocks["@/lib/series-episodes"].fetchEpisodeList(meta, { ...opts, requireComplete: true }),
+  };
   const load = (name: string): any => {
     if (name in mocks) return mocks[name];
     if (name === "./anime-detect") return mocks["@/lib/anime-detect"];

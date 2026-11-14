@@ -253,6 +253,14 @@ function harness() {
       return { next: idx < 0 ? null : (episodes[idx + 1] ?? null) };
     },
   };
+  // This hook suite controls provider responses directly; persistence is
+  // verified independently in the CW episode-list cache tests.
+  mocks["@/lib/cw-episode-list-cache"] = {
+    cwEpisodeListCacheToken: () => "test-cache-generation",
+    cwEpisodeListCacheTtl: () => 12 * 60 * 60_000,
+    fetchCachedCwEpisodeList: (meta: any, opts: any) =>
+      mocks["@/lib/series-episodes"].fetchEpisodeList(meta, { ...opts, requireComplete: true }),
+  };
   const load = (name: string): any => {
     if (name in mocks) return mocks[name];
     if (name === "./anime-detect") return mocks["@/lib/anime-detect"];
