@@ -3,7 +3,7 @@ import type { Meta } from "@/lib/cinemeta";
 import type { RailDef } from "@/lib/feed";
 import { FeedShelf } from "@/components/feed-shelf";
 import { LazyMount } from "@/components/lazy-mount";
-import { ScrollRootContext } from "@/components/row";
+import { resolveRowScrollRoot, ScrollRootContext } from "@/components/row";
 import { useT } from "@/lib/i18n";
 import { useViewActions } from "@/lib/view";
 import { observeWithin } from "@/lib/visibility";
@@ -33,17 +33,15 @@ export const Rail = memo(function Rail({
   const element = useRef<HTMLDivElement>(null);
   const [near, setNear] = useState(false);
   useEffect(() => {
-    if (!active || !root || !element.current) return;
+    const el = element.current;
+    if (!active || !el) return;
+    const scrollRoot = resolveRowScrollRoot(root, el);
+    if (!scrollRoot) return;
     if (typeof IntersectionObserver === "undefined") {
       setNear(true);
       return;
     }
-    return observeWithin(
-      element.current,
-      "2400px 0px",
-      (entry) => setNear(entry.isIntersecting),
-      root,
-    );
+    return observeWithin(el, "2400px 0px", (entry) => setNear(entry.isIntersecting), scrollRoot);
   }, [active, root]);
   useEffect(() => {
     if (!active || !near) return;

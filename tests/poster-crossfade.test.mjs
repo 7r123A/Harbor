@@ -22,13 +22,22 @@ test("already loaded poster stays revealed without scheduling a redundant crossf
   });
   const settings = { posterEffect: "fade", posterQuality: "max" };
   const probes = [];
+  const observerRoots = [];
+  const ScrollRootContext = React.createContext(null);
+  const detailRef = { current: document.querySelector("#app") };
   const mocks = {
     react: React,
-    "./row": { ScrollRootContext: React.createContext(null) },
+    "./row": { ScrollRootContext, resolveRowScrollRoot: (ref) => ref?.current },
     "react/jsx-runtime": jsx,
     "@/lib/settings": { useSettings: () => ({ settings }) },
     "@/lib/img-size": imgSize,
-    "@/lib/visibility": { observeWithin: () => () => {}, observeResize: () => () => {} },
+    "@/lib/visibility": {
+      observeWithin: (_el, _margin, _callback, root) => {
+        observerRoots.push(root);
+        return () => {};
+      },
+      observeResize: () => () => {},
+    },
     "@/lib/render-cause": { noteProbe: (label) => probes.push(label), recordRenderCause: () => {} },
     "@/lib/remote-image-proxy": { useProxiedImageSrc: (url) => url },
   };
@@ -39,23 +48,22 @@ test("already loaded poster stays revealed without scheduling a redundant crossf
   const exports = {};
   new Function("require", "exports", code)((name) => mocks[name] ?? {}, exports);
   const root = createRoot(document.querySelector("#app"));
-  try {
-    await React.act(() =>
-      root.render(React.createElement(exports.Poster, { src: "cached.jpg", seed: "title" })),
+  const render = (props) =>
+    root.render(
+      React.createElement(
+        ScrollRootContext.Provider,
+        { value: detailRef },
+        React.createElement(exports.Poster, props),
+      ),
     );
+  try {
+    await React.act(() => render({ src: "cached.jpg", seed: "title" }));
     assert.ok(document.querySelector("[data-loaded]"));
+    assert.deepEqual(observerRoots, [detailRef.current]);
     assert.equal(document.querySelectorAll("img").length, 1);
     assert.equal(probes.filter((label) => label === "poster:committed-render").length, 1);
     loaded = false;
-    await React.act(() =>
-      root.render(
-        React.createElement(exports.Poster, {
-          src: "slow.jpg",
-          seed: "title",
-          fallbacks: ["fallback.jpg"],
-        }),
-      ),
-    );
+    await React.act(() => render({ src: "slow.jpg", seed: "title", fallbacks: ["fallback.jpg"] }));
     assert.equal(
       document.querySelectorAll("img").length,
       2,
@@ -77,9 +85,7 @@ test("already loaded poster stays revealed without scheduling a redundant crossf
       1,
       "crossfade base is released after reveal",
     );
-    await React.act(() =>
-      root.render(React.createElement(exports.Poster, { src: "replacement.jpg", seed: "title" })),
-    );
+    await React.act(() => render({ src: "replacement.jpg", seed: "title" }));
     assert.ok(document.querySelector("[data-loaded]"));
     await React.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
     assert.equal(document.querySelectorAll("img").length, 1);

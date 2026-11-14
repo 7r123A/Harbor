@@ -106,7 +106,7 @@ export function railFixture(source, active = true) {
       },
       "@/components/feed-shelf": { FeedShelf: "FeedShelf" },
       "@/components/lazy-mount": { LazyMount: "LazyMount" },
-      "@/components/row": { ScrollRootContext: {} },
+      "@/components/row": { ScrollRootContext: {}, resolveRowScrollRoot: (root) => root },
       "@/lib/i18n": { useT: () => (text) => text },
       "@/lib/view": {
         useView: () => ({ openGrid: () => {} }),

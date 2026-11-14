@@ -80,7 +80,18 @@ export function usePosterRow(min = 144, kids = false): { min: number; shape: Row
 }
 
 const RowTrackContext = createContext<HTMLDivElement | null>(null);
-export const ScrollRootContext = createContext<HTMLElement | null>(null);
+export const ScrollRootContext = createContext<
+  HTMLElement | React.RefObject<HTMLElement | null> | null
+>(null);
+
+export function resolveRowScrollRoot(
+  root: React.ContextType<typeof ScrollRootContext>,
+  element: HTMLElement,
+): HTMLElement | undefined {
+  const scrollRoot = root && "current" in root ? root.current : root;
+  // A portal can inherit the page context while living outside its scroller.
+  return scrollRoot?.contains(element) ? scrollRoot : undefined;
+}
 
 function LazyChild({
   children,
@@ -334,7 +345,7 @@ export function Row({
         nearRef.current = entry.isIntersecting;
         startTransition(() => setNear(entry.isIntersecting));
       },
-      pageScrollRoot ?? undefined,
+      resolveRowScrollRoot(pageScrollRoot, el),
     );
   }, [pageScrollRoot]);
   const measuredRef = useRef({ width: 0, effMin: 0 });

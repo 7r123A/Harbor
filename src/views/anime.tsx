@@ -14,6 +14,7 @@ import { AnimeGenrePicker } from "@/components/anime-genre-picker";
 import { preloadAnimeGenreArt } from "@/lib/anime-genre-art-map";
 import { AnimeHero, AnimeHeroSkeleton } from "@/components/anime-hero";
 import { BackToTop } from "@/components/back-to-top";
+import { LazyMount } from "@/components/lazy-mount";
 import { ContinueCard } from "@/components/continue-card";
 import { dismissCw, isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import { PickCard } from "@/components/pick-card";
@@ -87,7 +88,7 @@ import {
 } from "@/lib/providers/anime-hero-art-static";
 import { useAnnouncement } from "@/lib/announcements";
 import { AnnouncementHero } from "@/components/announcement-hero";
-import { fetchAnilistTrendingAnime } from "@/lib/anilist/browse";
+import { useAnilistBrowseState } from "@/lib/use-anilist-top";
 import { useSettings } from "@/lib/settings";
 import { useCollectionRowsForPage } from "@/lib/page-collection-rows";
 import { useContentDrag } from "@/lib/window-drag";
@@ -268,7 +269,8 @@ export function AnimeView({ active = true }: { active?: boolean }) {
   const heroBuildingRef = useRef(false);
   const heroActivateRef = useRef(false);
   const filtersInitRef = useRef(true);
-  const [anilistTrending, setAnilistTrending] = useState<Meta[]>([]);
+  const trendingBrowse = useAnilistBrowseState("trending", active);
+  const anilistTrending = useMemo(() => trendingBrowse.metas.slice(0, 30), [trendingBrowse.metas]);
   const [hostedHero, setHostedHero] = useState<HostedHeroItem[] | null>(() => peekHostedHero());
   useEffect(() => {
     if (!active) return;
@@ -276,18 +278,6 @@ export function AnimeView({ active = true }: { active?: boolean }) {
     fetchHostedHero()
       .then((h) => {
         if (!cancelled && h) setHostedHero(h);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [active]);
-  useEffect(() => {
-    if (!active) return;
-    let cancelled = false;
-    fetchAnilistTrendingAnime(30)
-      .then((m) => {
-        if (!cancelled) setAnilistTrending(m);
       })
       .catch(() => {});
     return () => {
@@ -801,10 +791,11 @@ export function AnimeView({ active = true }: { active?: boolean }) {
       const seen = pools[spec.pool ?? "general"];
       const filtered: Meta[] = [];
       for (const m of row.metas) {
-        const fk = animeFranchiseKey(m.name);
+        const name = stripFranchiseSuffix(m.name);
+        const fk = name.toLowerCase();
         if (seen.has(fk)) continue;
         seen.add(fk);
-        filtered.push(cleanMeta(m));
+        filtered.push(name === m.name ? m : { ...m, name });
       }
       out[spec.key] = { ...row, metas: filtered };
     }
@@ -972,7 +963,12 @@ export function AnimeView({ active = true }: { active?: boolean }) {
             </button>
           </div>
           {(() => {
-            const rd: { key: string; name: string; node: ReactNode }[] = [];
+            const rd: {
+              key: string;
+              name: string;
+              node: ReactNode;
+              defer?: boolean;
+            }[] = [];
             const nameOf = (key: string, fallback: string) =>
               settings.animeRows.renamed[key] ?? fallback;
             if (cwItems.length > 0) {
@@ -1024,7 +1020,7 @@ export function AnimeView({ active = true }: { active?: boolean }) {
             rd.push({
               key: "anilistTrending",
               name: nameOf("anilistTrending", t("Trending")),
-              node: <AnilistTrendingRow />,
+              node: <AnilistTrendingRow browse={trendingBrowse} />,
             });
             rd.push({
               key: "anilistTop100",
@@ -1070,6 +1066,7 @@ export function AnimeView({ active = true }: { active?: boolean }) {
               rd.push({
                 key: spec.key,
                 name: spec.rank ? rankName : specName,
+                defer: true,
                 node: r.failed ? (
                   <>
                     <AnimeRowStatus title={specName} onRetry={() => retryRow(spec.key)} />
@@ -1114,6 +1111,7 @@ export function AnimeView({ active = true }: { active?: boolean }) {
               rd.push({
                 key: `addon:${row.key}`,
                 name: addonName,
+                defer: true,
                 node: (
                   <Row
                     title={addonName}
@@ -1159,6 +1157,7 @@ export function AnimeView({ active = true }: { active?: boolean }) {
               rd.push({
                 key: row.key,
                 name: nm,
+                defer: true,
                 node: (
                   <Row
                     title={nm}
@@ -1182,6 +1181,7 @@ export function AnimeView({ active = true }: { active?: boolean }) {
               rd.push({
                 key,
                 name: nm,
+                defer: true,
                 node: (
                   <Row title={nm}>
                     {c.items.map((it, i) => (
@@ -1196,7 +1196,7 @@ export function AnimeView({ active = true }: { active?: boolean }) {
             }
             const orderKeys = animeEffectiveOrder(rd, settings.animeRows);
             const shown = applyAnimeRowCustomization(rd, settings.animeRows, editMode);
-            return shown.map((d) => {
+            return shown.map((d, index) => {
               const rowHidden = settings.animeRows.hidden.includes(d.key);
               const idx = orderKeys.indexOf(d.key);
               return (
@@ -1225,7 +1225,12 @@ export function AnimeView({ active = true }: { active?: boolean }) {
                       isRenamed={d.key in settings.animeRows.renamed}
                     />
                   )}
-                  {!rowHidden && d.node}
+                  {!rowHidden &&
+                    (d.defer && index >= 2 ? (
+                      <LazyMount minHeight={340}>{d.node}</LazyMount>
+                    ) : (
+                      d.node
+                    ))}
                 </div>
               );
             });

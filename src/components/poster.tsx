@@ -37,7 +37,7 @@ import { shouldLocalizePosters } from "@/lib/providers/tmdb/tmdb-image-lang";
 import { useProxiedImageSrc } from "@/lib/remote-image-proxy";
 import { observeResize, observeWithin } from "@/lib/visibility";
 import { noteProbe, recordRenderCause } from "@/lib/render-cause";
-import { ScrollRootContext } from "./row";
+import { resolveRowScrollRoot, ScrollRootContext } from "./row";
 
 type Ratio = "portrait" | "landscape" | "wide" | "square";
 
@@ -376,7 +376,7 @@ function PosterBody({
         imageEnabledRef.current = true;
         setImageEnabled(true);
       },
-      pageScrollRoot ?? undefined,
+      resolveRowScrollRoot(pageScrollRoot, el),
     );
   }, [pageScrollRoot]);
   useEffect(() => {

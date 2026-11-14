@@ -1,3 +1,4 @@
+import { ScrollRootContext } from "@/components/row";
 import { addonBaseUrl } from "@/lib/addon-url";
 import {
   startTransition,
@@ -270,15 +271,27 @@ function FadeInUp({ children }: { children: ReactNode }) {
   return <div className="harbor-fade-in-up">{children}</div>;
 }
 
-export function DetailView({
-  meta,
-  liveContext = false,
-  episodeHint,
-}: {
+type DetailViewProps = {
   meta: Meta;
   liveContext?: boolean;
   episodeHint?: { season: number; episode: number };
-}) {
+};
+
+export function DetailView(props: DetailViewProps) {
+  const scrollRef = useRef<HTMLElement>(null);
+  return (
+    <ScrollRootContext.Provider value={scrollRef}>
+      <DetailContent {...props} scrollRef={scrollRef} />
+    </ScrollRootContext.Provider>
+  );
+}
+
+function DetailContent({
+  meta,
+  liveContext = false,
+  episodeHint,
+  scrollRef,
+}: DetailViewProps & { scrollRef: React.RefObject<HTMLElement | null> }) {
   const t = useT();
   const { settings } = useSettings();
   const contentDrag = useContentDrag();
@@ -422,7 +435,6 @@ export function DetailView({
     detail?.imdbId ?? (meta.id.startsWith("tt") ? meta.id : null),
     meta.type === "movie" ? "movie" : "show",
   );
-  const scrollRef = useRef<HTMLElement>(null);
 
   const {
     setNavStack,
