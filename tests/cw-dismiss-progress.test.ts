@@ -394,6 +394,7 @@ function advanceHarness(
       stremioAuthKey: null,
       traktIdentity: "|",
       nuvioSlot: 1,
+      nuvioAccountId: null,
       accountProvider: undefined,
       tmdbKey: "",
       sources: "00000",
@@ -413,6 +414,7 @@ function advanceHarness(
     },
     "@/lib/auth": { readActiveStremioAuthKey: () => null },
     "@/lib/active-profile-id": { getNuvioActiveSlot: () => 1 },
+    "@/lib/nuvio/nuvio-client": { getNuvioAccountId: () => null },
     react: {
       useState: () => [state[slot++], () => {}],
       useRef: (current: unknown) => ({ current }),

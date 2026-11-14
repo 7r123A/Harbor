@@ -86,6 +86,14 @@ function harness() {
     remoteReads = 0,
     episodeReads = 0,
     metadataFails = false;
+  let episodeGate: Promise<void> | null = null,
+    activeReads = 0,
+    maxActiveReads = 0,
+    resolverReads = 0,
+    resolverFails = false,
+    resolverGate: Promise<void> | null = null,
+    nuvioAccount: string | null = null;
+  const readIds: string[] = [];
   let episodes = [1, 2, 3, 4].map((episode) => ({ season: 1, episode, airDate: "2020-01-01" }));
   const states: any[] = [],
     refs: any[] = [],
@@ -178,9 +186,15 @@ function harness() {
       dedupeAnimeCw: (items: any[]) => items,
       warmCwAnimeIdentities: async () => {},
     },
+    "@/lib/nuvio/nuvio-client": { getNuvioAccountId: () => nuvioAccount },
     "@/lib/anime-tracker-entry": {
       resolveTrackerAnimeEntry: async () => null,
-      resolveTrackerAnimeEntryStrict: async () => null,
+      resolveTrackerAnimeEntryStrict: async () => {
+        resolverReads++;
+        if (resolverGate) await resolverGate;
+        if (resolverFails) throw new Error("resolver offline");
+        return null;
+      },
     },
     "@/lib/providers/anime-franchise-root": { isSplitFranchiseKitsu: () => false },
     "@/lib/providers/kitsu": { parseKitsuId: () => null },
@@ -202,10 +216,18 @@ function harness() {
       },
       nextFn.getText(parsed),
     ),
-    fetchEpisodeList: async () => {
+    fetchEpisodeList: async (meta: any) => {
       episodeReads++;
-      if (metadataFails) throw new Error("metadata offline");
-      return episodes;
+      readIds.push(meta.id);
+      activeReads++;
+      maxActiveReads = Math.max(maxActiveReads, activeReads);
+      try {
+        if (episodeGate) await episodeGate;
+        if (metadataFails) throw new Error("metadata offline");
+        return episodes;
+      } finally {
+        activeReads--;
+      }
     },
     fetchAdjacentEpisodes: async (_meta: any, cur: any) => {
       episodeReads++;
@@ -274,6 +296,30 @@ function harness() {
     },
     get episodeReads() {
       return episodeReads;
+    },
+    get maxActiveReads() {
+      return maxActiveReads;
+    },
+    get activeReads() {
+      return activeReads;
+    },
+    get resolverReads() {
+      return resolverReads;
+    },
+    get readIds() {
+      return readIds.slice();
+    },
+    setNuvioAccount(id: string | null) {
+      nuvioAccount = id;
+    },
+    setGate(gate: Promise<void> | null) {
+      episodeGate = gate;
+    },
+    setResolverGate(gate: Promise<void> | null) {
+      resolverGate = gate;
+    },
+    failResolver(value = true) {
+      resolverFails = value;
     },
   };
 }
@@ -453,4 +499,179 @@ test("series with completed season is removed when no subsequent seasons exist",
   h.render([mobland], "", true);
   const out = await h.flush();
   assert.equal(out.length, 0);
+});
+
+test("independent episode-list requests overlap with a bounded concurrency of 3", async () => {
+  const h = harness();
+  const ids = ["tt210", "tt211", "tt212", "tt213", "tt214", "tt215"];
+  const items = ids.map((id) => ({ ...item(1, iso(-3600000), id), upNext: true }));
+  const watched = new Map(ids.map((id) => [id, new Set(["1:1"])]));
+  h.setRemote({
+    statuses: new Map(ids.map((id) => [id, "watching"])),
+    watched,
+    watchedAt: new Map(ids.map((id) => [id, new Map([["1:1", now]])])),
+    completedSeries: [],
+  });
+  let release: () => void = () => {};
+  h.setGate(new Promise<void>((resolve) => (release = resolve)));
+  h.render(items, "", true, []);
+  for (let tick = 0; tick < 30 && h.activeReads < 3; tick++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    h.render();
+  }
+  assert.equal(h.activeReads, 3);
+  assert.equal(h.maxActiveReads, 3);
+  release();
+  h.setGate(null);
+  await h.flush();
+  assert.equal(h.episodeReads, ids.length);
+  assert.ok(h.maxActiveReads <= 3, `saw ${h.maxActiveReads} concurrent reads`);
+});
+
+test("a rerun with unchanged entries reuses pass decisions without refetching", async () => {
+  const h = harness();
+  h.setRemote(progress([1]));
+  h.render([item(1)], "", true, []);
+  await h.flush();
+  const reads = h.episodeReads;
+  assert.ok(reads > 0);
+  // Same contents, new array/object identities: this is exactly what the pass
+  // writing its own results produces.
+  h.render([{ ...item(1) }], "", true, []);
+  await h.flush();
+  assert.equal(h.episodeReads, reads);
+});
+
+test("an unavailable anime resolver is not retried by every pass", async () => {
+  const h = harness();
+  h.failResolver();
+  h.setRemote(progress([1, 2, 3, 4]));
+  const played = item(5);
+  const current = {
+    ...played,
+    upNext: true,
+    state: { ...played.state, timeOffset: 0 },
+  };
+  h.render([current], "", true, []);
+  const out = await h.flush();
+  assert.equal(h.resolverReads, 1);
+  assert.equal(out[0]?.state.episode, 5);
+  assert.notEqual(out[0]?.removed, true);
+  h.render([{ ...current }], "", true, []);
+  await h.flush();
+  assert.equal(h.resolverReads, 1);
+});
+
+test("a delayed resolver failure from the previous account cannot cool down the new account", async () => {
+  const h = harness();
+  h.failResolver();
+  h.setRemote(progress([1, 2, 3, 4]));
+  const played = item(5);
+  const current = {
+    ...played,
+    upNext: true,
+    state: { ...played.state, timeOffset: 0 },
+  };
+  h.setNuvioAccount("acct-a");
+  let release: () => void = () => {};
+  h.setResolverGate(new Promise<void>((resolve) => (release = resolve)));
+  h.render([current], "", true, []);
+  for (let tick = 0; tick < 30 && h.resolverReads < 1; tick++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    h.render();
+  }
+  assert.equal(h.resolverReads, 1);
+  // Owner A's resolver is still in flight when the account switches.
+  h.setNuvioAccount("acct-b");
+  h.render([current], "", true, []);
+  release();
+  h.setResolverGate(null);
+  await h.flush();
+  assert.equal(h.resolverReads, 2, "the new account obeyed the previous account's cooldown");
+});
+
+test("queued episode-list requests stop when the owner aborts", async () => {
+  const h = harness();
+  const ids = ["tt220", "tt221", "tt222", "tt223", "tt224"];
+  const items = ids.map((id) => ({ ...item(1, iso(-3600000), id), upNext: true }));
+  h.setRemote({
+    statuses: new Map(ids.map((id) => [id, "watching"])),
+    watched: new Map(ids.map((id) => [id, new Set(["1:1"])])),
+    watchedAt: new Map(ids.map((id) => [id, new Map([["1:1", now]])])),
+    completedSeries: [],
+  });
+  let release: () => void = () => {};
+  h.setGate(new Promise<void>((resolve) => (release = resolve)));
+  h.render(items, "", true, []);
+  for (let tick = 0; tick < 30 && h.activeReads < 3; tick++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    h.render();
+  }
+  h.render(items, "", false, []);
+  release();
+  await h.flush();
+  assert.ok(h.episodeReads <= 3, `started ${h.episodeReads} requests after abort`);
+});
+
+test("an owner switch invalidates completed episode lists", async () => {
+  const h = harness();
+  h.setPrivate(true);
+  const played = item(1);
+  const current = { ...played, upNext: true, state: { ...played.state, timeOffset: 0 } };
+  h.render([current], "", true, []);
+  await h.flush();
+  const before = h.episodeReads;
+  assert.ok(before > 0);
+  h.setProfile("b");
+  h.setEpisodes([
+    { season: 1, episode: 1, airDate: "2020-01-01" },
+    { season: 1, episode: 2, airDate: "2020-01-01" },
+    { season: 1, episode: 3, airDate: "2020-01-01" },
+  ]);
+  h.render([{ ...current }], "", true, []);
+  await h.flush();
+  assert.ok(h.episodeReads > before, "profile B reused profile A's cached list");
+});
+
+test("a superseded pass stops queueing and the replacement reuses started requests", async () => {
+  const h = harness();
+  const ids = ["tt230", "tt231", "tt232", "tt233", "tt234", "tt235"];
+  const items = ids.map((id) => ({ ...item(1, iso(-3600000), id), upNext: true }));
+  h.setRemote({
+    statuses: new Map(ids.map((id) => [id, "watching"])),
+    watched: new Map(ids.map((id) => [id, new Set(["1:1"])])),
+    watchedAt: new Map(ids.map((id) => [id, new Map([["1:1", now]])])),
+    completedSeries: [],
+  });
+  let release: () => void = () => {};
+  h.setGate(new Promise<void>((resolve) => (release = resolve)));
+  h.render(items, "", true, [], "all", 0);
+  for (let tick = 0; tick < 30 && h.activeReads < 3; tick++) {
+    await new Promise((resolve) => setImmediate(resolve));
+    h.render();
+  }
+  assert.equal(h.activeReads, 3);
+  // New inputs arrive while the first three requests are still gated.
+  h.render(items, "", true, [], "all", 1);
+  release();
+  h.setGate(null);
+  await h.flush();
+  const read = h.readIds;
+  assert.equal(new Set(read).size, read.length, `refetched: ${read.join(",")}`);
+  assert.equal(read.length, ids.length);
+});
+
+test("a Nuvio account change on the same slot invalidates cached CW work", async () => {
+  const h = harness();
+  const played = item(1);
+  const current = { ...played, upNext: true, state: { ...played.state, timeOffset: 0 } };
+  h.setNuvioAccount("acct-a");
+  h.render([current], "", true, []);
+  await h.flush();
+  const before = h.episodeReads;
+  assert.ok(before > 0);
+  h.setNuvioAccount("acct-b");
+  h.render([{ ...current }], "", true, []);
+  await h.flush();
+  assert.ok(h.episodeReads > before, "same-slot account switch reused the previous cache");
 });
