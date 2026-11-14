@@ -3,6 +3,7 @@ import type { SocialKey } from "@/lib/social/socials";
 import type { RatingsSummary } from "@/lib/ratings/types";
 import type { FavoriteMedia } from "@/lib/providers/favorites-types";
 import type { PresenceStatus } from "@/lib/social/presence";
+import type { ProfileCardAppearance } from "@/lib/social/profile-card-appearance-types";
 
 export type SocialEntry = { service: SocialKey; value: string };
 
@@ -114,6 +115,8 @@ export type ProfileSummary = {
   hideTopBanner?: boolean;
   hideCardTitles?: boolean;
   dmPolicy?: "everyone" | "friends";
+  /** Card-only appearance. Never used to paint the profile page itself. */
+  profileCard?: ProfileCardAppearance;
 };
 
 export type SimklPublished = {

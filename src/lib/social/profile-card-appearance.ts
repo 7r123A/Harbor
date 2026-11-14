@@ -1,0 +1,135 @@
+import { authToken } from "@/lib/theme-auth";
+import { HARBOR_API_BASE } from "@/lib/config/endpoints";
+import { socialPatch } from "./client";
+import type { ProfileSummary } from "@/views/profile/profile-types";
+
+// Custom profile-card appearance. The card is a separate surface from the profile page:
+// these settings change what the card image and the card-shaped quick menu look like,
+// and nothing else.
+
+const API = `${HARBOR_API_BASE}/themes/api`;
+
+export type CardThemeId = "harbor" | "aurora" | "midnight" | "ember" | "forest" | "rose" | "mono";
+
+export type CardThemePreset = {
+  id: CardThemeId;
+  label: string;
+  from: string;
+  to: string;
+  accent: string;
+};
+
+/**
+ * Mirrors `ecosystem/social/card-appearance.js`. The server rejects an unknown id, so a
+ * drift between the two is a visible 422 rather than a silently different card. The
+ * gradient is only used to draw the picker before anything is saved; what the app
+ * renders afterwards comes from the API, which is the single source of truth.
+ */
+export const CARD_THEMES: CardThemePreset[] = [
+  { id: "harbor", label: "Harbor", from: "#7b5cff", to: "#1b1030", accent: "#7b5cff" },
+  { id: "aurora", label: "Aurora", from: "#22d3ee", to: "#4f46e5", accent: "#22d3ee" },
+  { id: "midnight", label: "Midnight", from: "#1e293b", to: "#020617", accent: "#94a3b8" },
+  { id: "ember", label: "Ember", from: "#f97316", to: "#7f1d1d", accent: "#fb923c" },
+  { id: "forest", label: "Forest", from: "#10b981", to: "#064e3b", accent: "#34d399" },
+  { id: "rose", label: "Rose", from: "#f43f5e", to: "#4c0519", accent: "#fb7185" },
+  { id: "mono", label: "Mono", from: "#262626", to: "#0a0a0a", accent: "#a3a3a3" },
+];
+
+export const CARD_MAX_BYTES = 8 * 1024 * 1024;
+export const CARD_MAX_FRAMES = 200;
+export const CARD_MIN_WIDTH = 320;
+export const CARD_MIN_HEIGHT = 160;
+
+/** What the server publishes about a card. Absent means "default appearance". */
+export type ProfileCardLook = {
+  theme: CardThemeId | null;
+  gradient: string | null;
+  from: string | null;
+  to: string | null;
+  accent: string | null;
+  bgUrl: string | null;
+  bgKind: "image" | "gif" | null;
+  customised: boolean;
+};
+
+export function cardThemeById(id: string | null | undefined): CardThemePreset | null {
+  if (!id) return null;
+  return CARD_THEMES.find((t) => t.id === id) ?? null;
+}
+
+/** The CSS a card surface should paint, given what the API published. */
+export function cardBackground(look: { bgUrl?: string | null; gradient?: string | null } | undefined): {
+  backgroundImage?: string;
+  backgroundColor?: string;
+} {
+  if (!look) return {};
+  if (look.bgUrl) return { backgroundImage: `url("${look.bgUrl}")` };
+  if (look.gradient) return { backgroundImage: look.gradient };
+  return {};
+}
+
+export function saveCardAppearance(input: {
+  cardTheme?: CardThemeId | null;
+  cardAccent?: string | null;
+}): Promise<ProfileSummary> {
+  const body: Record<string, unknown> = {};
+  if (input.cardTheme !== undefined) body.cardTheme = input.cardTheme;
+  if (input.cardAccent !== undefined) body.cardAccent = input.cardAccent;
+  return socialPatch<ProfileSummary>("/social/me/profile", body);
+}
+
+function unwrap(r: Response): Promise<ProfileSummary> {
+  return r
+    .json()
+    .catch(() => ({}))
+    .then((d: { error?: string }) => {
+      if (!r.ok) throw new Error(cardUploadError(d.error));
+      return d as ProfileSummary;
+    });
+}
+
+function cardUploadError(code: string | undefined): string {
+  switch (code) {
+    case "too_large":
+      return "That file is too large. Use something under 8 MB.";
+    case "too_small":
+      return "That image is too small for a card background.";
+    case "too_many_frames":
+      return "That GIF has too many frames.";
+    case "unsupported_format":
+      return "Cards accept PNG, JPEG, WebP or GIF.";
+    case "no_image":
+      return "No image was sent.";
+    default:
+      return "That file could not be used as a card background.";
+  }
+}
+
+/**
+ * Sends the original file rather than a canvas re-encode: a canvas would flatten an
+ * animated GIF to one frame, and an animated card background is the point of allowing
+ * GIFs at all. The server validates the bytes with sharp and re-encodes stills.
+ */
+export async function uploadCardBackground(file: File): Promise<ProfileSummary> {
+  const token = authToken();
+  if (!token) throw new Error("Sign in first.");
+  if (file.size > CARD_MAX_BYTES) throw new Error(cardUploadError("too_large"));
+  const fd = new FormData();
+  fd.append("card", file, file.name || "card");
+  const r = await fetch(`${API}/social/profile/card-background`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  return unwrap(r);
+}
+
+export async function removeCardBackground(): Promise<ProfileSummary> {
+  const token = authToken();
+  if (!token) throw new Error("Sign in first.");
+  const r = await fetch(`${API}/social/profile/card-background/remove`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return unwrap(r);
+}
