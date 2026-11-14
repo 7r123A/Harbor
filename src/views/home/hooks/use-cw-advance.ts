@@ -44,6 +44,7 @@ import { isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import { anyProfileSharesStremioWith, stremioSourceProfileId, useProfiles } from "@/lib/profiles";
 import { readActiveStremioAuthKey } from "@/lib/auth";
 import { getNuvioActiveSlot } from "@/lib/active-profile-id";
+import { getNuvioAccountId } from "@/lib/nuvio/nuvio-client";
 import { listLocalCw, localCwSourceEnabled } from "@/lib/local-cw";
 import { localToLibraryItem } from "@/lib/continue-watching";
 import {
@@ -76,6 +77,12 @@ const ANIME_ID = /^(kitsu|mal|anilist|anidb):/;
 // The trace's 10 s window is diagnostic only. The worker needs its own deadline
 // so one hanging request cannot hold the single-flight slot forever.
 const WORKER_TIMEOUT_MS = 30_000;
+// Independent episode-list requests overlap up to this many, so a pass does not
+// wait a full provider round trip per card. Kitsu keeps its own queue limit.
+const LIST_CONCURRENCY = 3;
+// A resolver outage is retried later, not on every pass. The card stays put
+// meanwhile: this is a cooldown, never an "unavailable means finished" answer.
+const ANIME_FAILURE_RETRY_MS = 60_000;
 
 type AdvanceOwner = {
   enabled: boolean;
@@ -88,6 +95,7 @@ type AdvanceOwner = {
   simklEnabled: boolean;
   accountProvider: string;
   nuvioSlot: number;
+  nuvioAccountId: string | null;
   tmdbKey: string;
   sources: string;
 };
@@ -115,6 +123,11 @@ type ActiveAdvance = {
 
 type PendingAdvance = { run: AdvanceRun; owner: AdvanceOwner };
 
+type ListFetch = { ok: boolean; eps: PlayEpisode[]; aborted: boolean };
+
+/** What a completed pass decided for one CW entry, reusable while it is unchanged. */
+type PassDecision = { item: LibraryItem; next?: LibraryItem; remove?: boolean };
+
 function sameOwner(a: AdvanceOwner, b: AdvanceOwner): boolean {
   return (
     a.enabled === b.enabled &&
@@ -127,6 +140,7 @@ function sameOwner(a: AdvanceOwner, b: AdvanceOwner): boolean {
     a.simklEnabled === b.simklEnabled &&
     a.accountProvider === b.accountProvider &&
     a.nuvioSlot === b.nuvioSlot &&
+    a.nuvioAccountId === b.nuvioAccountId &&
     a.tmdbKey === b.tmdbKey &&
     a.sources === b.sources
   );
@@ -172,6 +186,7 @@ async function animeEntryFollowUp(
   listCache: Map<string, PlayEpisode[]>,
   signal: AbortSignal,
   isCurrent: () => boolean,
+  failureMemo: Map<string, number>,
 ): Promise<PlayEpisode | null> {
   const stream = animeStreamAnchor(item);
   // The played entry recorded at playback time (recordAnimePlayId) is the
@@ -214,17 +229,23 @@ async function animeEntryFollowUp(
   const entryMissesSeason =
     list.length === 0 || (coveredSeasons.size > 0 && !coveredSeasons.has(from.season));
   if (entryMissesSeason) {
+    // A resolver outage is cached by the provider for minutes; retrying it every
+    // pass only re-raises the same failure. Key by checkpoint so real progress
+    // still gets its own attempt. Keep the card and retry later.
+    const failureKey = `${item._id}:${from.season}:${from.episode}`;
+    if ((failureMemo.get(failureKey) ?? 0) > Date.now())
+      throw new Error("anime-resolution-cooldown");
     const resolved = await resolveTrackerAnimeEntryStrict(item._id, {
       season: from.season,
       episode: from.episode,
-    })
-      .then((value) => {
-        return value;
-      })
-      .catch((error: unknown) => {
-        if ((error as { name?: string })?.name === "AbortError") return null;
-        throw error;
-      });
+    }).catch((error: unknown) => {
+      if ((error as { name?: string })?.name === "AbortError") return null;
+      // A pass that is already obsolete must not memoize a cooldown that the
+      // replacement pass (or the next owner) will then obey.
+      if (isCurrent() && !signal.aborted)
+        failureMemo.set(failureKey, Date.now() + ANIME_FAILURE_RETRY_MS);
+      throw error;
+    });
     if (!isCurrent() || signal.aborted) return null;
     if (resolved && resolved.id !== animeId) {
       const nextList = await entryList(resolved.id);
@@ -538,6 +559,8 @@ export function useCwAdvance(
   const stremioSourceId = stremioSourceProfileId(activeProfile, profiles);
   const stremioAuthKey = readActiveStremioAuthKey();
   const nuvioSlot = getNuvioActiveSlot();
+  // Same slot can be a different Nuvio account after a re-login; it owns CW data.
+  const nuvioAccountId = getNuvioAccountId();
   const traktIdentity = `${settings.traktUsername ?? ""}|${settings.traktAccessToken ?? ""}`;
   const sourceKey = [
     settings.cwSources.library,
@@ -555,6 +578,7 @@ export function useCwAdvance(
     stremioAuthKey,
     traktIdentity,
     nuvioSlot,
+    nuvioAccountId,
     accountProvider: settings.accountProvider,
     tmdbKey,
     sources: sourceKey,
@@ -591,6 +615,7 @@ export function useCwAdvance(
     simklEnabled,
     accountProvider: settings.accountProvider,
     nuvioSlot,
+    nuvioAccountId,
     tmdbKey,
     sources: sourceKey,
   };
@@ -599,6 +624,96 @@ export function useCwAdvance(
   const cacheOwnerRef = useRef<AdvanceOwner | null>(null);
   const activeAdvanceRef = useRef<ActiveAdvance | null>(null);
   const pendingAdvanceRef = useRef<PendingAdvance | null>(null);
+  // Owner-scoped request plumbing: one abort scope for the owner, one shared
+  // in-flight slot per title, and a resolver cooldown per title.
+  const ownerAbortRef = useRef<AbortController | null>(null);
+  const listInflightRef = useRef(new Map<string, Promise<ListFetch>>());
+  const animeFailureRef = useRef(new Map<string, number>());
+  const lastPassRef = useRef<{ inputs: unknown[]; decisions: Map<string, PassDecision> } | null>(
+    null,
+  );
+
+  function ownerSignal(): AbortSignal {
+    ownerAbortRef.current ??= new AbortController();
+    return ownerAbortRef.current.signal;
+  }
+
+  function dropOwnerWork(): void {
+    ownerAbortRef.current?.abort();
+    ownerAbortRef.current = null;
+    // Completed lists can come from a different metadata configuration; never
+    // hand one owner's result to the next.
+    listCacheRef.current.clear();
+    listInflightRef.current.clear();
+    // Replace, never share: a resolver that started under the previous owner
+    // may still fail, and must not write its cooldown into this owner's map.
+    animeFailureRef.current = new Map();
+    lastPassRef.current = null;
+  }
+
+  function fetchAdvanceList(item: LibraryItem): Promise<ListFetch> {
+    const cached = listCacheRef.current.get(item._id);
+    if (cached) return Promise.resolve({ ok: true, eps: cached, aborted: false });
+    // A superseded pass must not make the following pass fetch the same list
+    // again: the request belongs to the owner, not to one pass.
+    const shared = listInflightRef.current.get(item._id);
+    if (shared) return shared;
+    const meta: Meta = {
+      id: item._id,
+      type: libraryMetaType(item.type),
+      name: item.name,
+      poster: item.poster,
+      background: item.background,
+    };
+    const requestSignal = ownerSignal();
+    const pending = fetchEpisodeList(meta, {
+      tmdbKey,
+      signal: requestSignal,
+      requireComplete: true,
+    })
+      .then((eps): ListFetch => {
+        if (!requestSignal.aborted && eps.length > 0) listCacheRef.current.set(item._id, eps);
+        return { ok: true, eps, aborted: false };
+      })
+      .catch((error: unknown): ListFetch => {
+        const aborted = (error as { name?: string })?.name === "AbortError";
+        return { ok: false, eps: [], aborted };
+      })
+      .finally(() => {
+        // Only remove our own slot: an older request must not unhook the
+        // replacement owner's in-flight entry for the same title.
+        if (listInflightRef.current.get(item._id) === pending)
+          listInflightRef.current.delete(item._id);
+      });
+    listInflightRef.current.set(item._id, pending);
+    return pending;
+  }
+
+  /** Warm independent episode lists with bounded concurrency before deciding. */
+  async function prefetchAdvanceLists(
+    pending: LibraryItem[],
+    passSignal: AbortSignal,
+    results: Map<string, ListFetch>,
+    isSuperseded: () => boolean,
+  ): Promise<void> {
+    const queue = pending.filter(
+      (item) => !listCacheRef.current.has(item._id) && !results.has(item._id),
+    );
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < queue.length) {
+        // A superseded pass keeps its already-started requests (the trailing
+        // pass can reuse them) but must not queue more work on stale inputs.
+        if (passSignal.aborted || isSuperseded()) return;
+        const item = queue[cursor++];
+        const result = await fetchAdvanceList(item);
+        if (!passSignal.aborted) results.set(item._id, result);
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(LIST_CONCURRENCY, queue.length) }, () => worker()),
+    );
+  }
 
   function finishAdvance(
     active: ActiveAdvance,
@@ -626,7 +741,7 @@ export function useCwAdvance(
 
   function startAdvance(run: AdvanceRun, runOwner: AdvanceOwner): void {
     if (cacheOwnerRef.current && !sameOwner(cacheOwnerRef.current, runOwner)) {
-      listCacheRef.current.clear();
+      dropOwnerWork();
       const emptyMap = new Map<string, LibraryItem>();
       const emptyExtra: LibraryItem[] = [];
       const emptyRemoved = new Set<string>();
@@ -695,6 +810,7 @@ export function useCwAdvance(
 
   function cancelAdvance(): void {
     pendingAdvanceRef.current = null;
+    dropOwnerWork();
     const active = activeAdvanceRef.current;
     if (active) {
       active.controller.abort();
@@ -892,37 +1008,78 @@ export function useCwAdvance(
         candidates.map((i) => i._id),
         passId,
       );
+      // The pass rewrites its own inputs; when nothing else moved, its decisions
+      // for unchanged entries are still valid. Repeating them re-fetches lists
+      // and re-resolves anime for no new information.
+      const passInputs = [
+        library,
+        watchedVersion,
+        traktWatched,
+        simklWatched,
+        anilistWatched,
+        simklStatus,
+        progressPool,
+        animeVersion,
+        episodeHiding,
+        hideCaughtUp,
+        animeCwEnd,
+        animeMode,
+        tmdbKey,
+        privacyOwner,
+        airTick,
+        simkl,
+      ];
+      const priorPass = lastPassRef.current;
+      const reusable =
+        priorPass && priorPass.inputs.every((value, index) => Object.is(value, passInputs[index]))
+          ? priorPass.decisions
+          : null;
+      const decisions = new Map<string, PassDecision>();
+      const fetched = new Map<string, ListFetch>();
+      await prefetchAdvanceLists(candidates, signal, fetched, ctx.isSuperseded);
+      if (!ctx.isCurrent()) return;
+      // Newer inputs are already queued: release this pass now so the queued one
+      // can reuse its started requests instead of working on a stale snapshot.
+      if (ctx.isSuperseded()) {
+        ctx.supersede();
+        return;
+      }
       for (const i of candidates) {
-        const finishCandidate = () => cwAdvanceOutcome(i._id, "success", passId);
+        if (ctx.isSuperseded()) {
+          ctx.supersede();
+          return;
+        }
+        const prior = reusable?.get(i._id);
+        if (prior && sameCwItem(prior.item, i)) {
+          if (prior.next) next.set(i._id, prior.next);
+          if (prior.remove) remove.add(i._id);
+          cwAdvanceOutcome(i._id, "success", passId);
+          decisions.set(i._id, prior);
+          continue;
+        }
+        const finishCandidate = () => {
+          cwAdvanceOutcome(i._id, "success", passId);
+          decisions.set(i._id, {
+            item: i,
+            next: next.get(i._id),
+            remove: remove.has(i._id) || undefined,
+          });
+        };
         const cur = currentEpisode(i)!;
         const isAnime = isAnimeCwItem(i) || ANIME_ID.test(i._id);
         let list = listCacheRef.current.get(i._id);
         let fetchOk = list !== undefined;
         if (list === undefined) {
-          const meta: Meta = {
-            id: i._id,
-            type: libraryMetaType(i.type),
-            name: i.name,
-            poster: i.poster,
-            background: i.background,
-          };
-          const res = await fetchEpisodeList(meta, { tmdbKey, signal, requireComplete: true })
-            .then((eps) => ({ ok: true, eps, aborted: false }))
-            .catch((error: unknown) => ({
-              ok: false,
-              eps: [] as PlayEpisode[],
-              aborted: (error as { name?: string })?.name === "AbortError",
-            }));
+          const res = fetched.get(i._id) ?? (await fetchAdvanceList(i));
           if (!ctx.isCurrent()) return;
+          if (ctx.isSuperseded()) {
+            ctx.supersede();
+            return;
+          }
           fetchOk = res.ok;
           if (!res.ok) cwAdvanceOutcome(i._id, res.aborted ? "cancelled" : "failure", passId);
           if (res.aborted) return;
-          if (res.ok) {
-            list = res.eps;
-            // A provider that cannot answer is coerced to [] by the episode
-            // sources. Never cache that as a real, empty episode list.
-            if (list.length > 0) listCacheRef.current.set(i._id, list);
-          }
+          if (res.ok) list = res.eps;
         }
         // An empty list is not proof the show has no episodes. Advancing or
         // removing on it would drop a card because a provider was unreachable;
@@ -1042,6 +1199,7 @@ export function useCwAdvance(
                       listCacheRef.current,
                       signal,
                       ctx.isCurrent,
+                      animeFailureRef.current,
                     );
                   } catch {
                     // The sequel list could not be read. That is not proof the
@@ -1235,6 +1393,7 @@ export function useCwAdvance(
               listCacheRef.current,
               signal,
               ctx.isCurrent,
+              animeFailureRef.current,
             );
             if (!ctx.isCurrent()) return;
             if (followUp) {
@@ -1340,6 +1499,7 @@ export function useCwAdvance(
         }
         finishCandidate();
       }
+      lastPassRef.current = { inputs: passInputs, decisions };
       const baseLibrary = privacyOwner
         ? listLocalCw(true)
             .filter((entry) => localCwSourceEnabled(entry, settings.cwSources))
@@ -1455,6 +1615,7 @@ export function useCwAdvance(
           stremioAuthKey,
           traktIdentity,
           nuvioSlot,
+          nuvioAccountId,
           accountProvider: settings.accountProvider,
           tmdbKey,
           sources: sourceKey,
@@ -1470,6 +1631,7 @@ export function useCwAdvance(
           resolvedOwner.stremioAuthKey !== nextOwner.stremioAuthKey ||
           resolvedOwner.traktIdentity !== nextOwner.traktIdentity ||
           resolvedOwner.nuvioSlot !== nextOwner.nuvioSlot ||
+          resolvedOwner.nuvioAccountId !== nextOwner.nuvioAccountId ||
           resolvedOwner.accountProvider !== nextOwner.accountProvider ||
           resolvedOwner.tmdbKey !== nextOwner.tmdbKey ||
           resolvedOwner.sources !== nextOwner.sources ||
@@ -1517,6 +1679,7 @@ export function useCwAdvance(
     stremioAuthKey,
     traktIdentity,
     nuvioSlot,
+    nuvioAccountId,
     simklSession,
     simklEnabled,
     simkl,
@@ -1536,6 +1699,7 @@ export function useCwAdvance(
     resolvedOwner.stremioAuthKey !== stremioAuthKey ||
     resolvedOwner.traktIdentity !== traktIdentity ||
     resolvedOwner.nuvioSlot !== nuvioSlot ||
+    resolvedOwner.nuvioAccountId !== nuvioAccountId ||
     resolvedOwner.accountProvider !== settings.accountProvider ||
     resolvedOwner.tmdbKey !== tmdbKey ||
     resolvedOwner.sources !== sourceKey ||
