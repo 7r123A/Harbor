@@ -276,6 +276,7 @@ const id: Record<string, string> = {
   ...mediaStart,
   ...spooktober,
   ...videoCast,
+  ...castStudio,
   ...music,
   ...contextActionsFallback,
 
@@ -383,3 +384,4 @@ const id: Record<string, string> = {
 
 export default id;
 import videoCast from "./id/video-cast";
+import castStudio from "./id/cast-studio";

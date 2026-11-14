@@ -275,6 +275,7 @@ const tr: Record<string, string> = {
   ...mediaStart,
   ...spooktober,
   ...videoCast,
+  ...castStudio,
   ...music,
   ...contextActionsFallback,
 
@@ -380,3 +381,4 @@ const tr: Record<string, string> = {
 
 export default tr;
 import videoCast from "./tr/video-cast";
+import castStudio from "./tr/cast-studio";

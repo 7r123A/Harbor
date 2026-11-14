@@ -2884,6 +2884,9 @@ const MPV_ALLOWED_COMMANDS: &[&str] = &[
     "frame-step",
     "frame-back-step",
     "loadfile",
+    // The audio menu attaches a synced external audio track and can detach it again.
+    "audio-add",
+    "audio-remove",
     "ao-reload",
     // Auto-sync's live tap writes the buffered minute to a temp file.
     "dump-cache",

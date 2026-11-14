@@ -273,6 +273,7 @@ const ko: Record<string, string> = {
   ...mediaStart,
   ...spooktober,
   ...videoCast,
+  ...castStudio,
   ...music,
   ...contextActionsFallback,
 
@@ -379,3 +380,4 @@ const ko: Record<string, string> = {
 
 export default ko;
 import videoCast from "./ko/video-cast";
+import castStudio from "./ko/cast-studio";

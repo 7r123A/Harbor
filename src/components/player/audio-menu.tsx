@@ -1,4 +1,17 @@
-import { Check, Languages, RotateCcw, Search, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  Download,
+  FolderOpen,
+  Languages,
+  Loader2,
+  Plus,
+  RotateCcw,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Flag } from "@/components/flag";
@@ -9,6 +22,16 @@ import { useT } from "@/lib/i18n";
 import { useMenuSide } from "./menu-side";
 import { Tooltip } from "./transport/tooltip";
 import { watchOutsideMouseDown } from "@/lib/player/overlay-dismiss";
+import {
+  attachUnsynced,
+  cancelExternalAudioJob,
+  dismissExternalAudioJob,
+  exportAudioTrack,
+  pickExternalAudio,
+  removeExternalAudio,
+  syncExternalAudio,
+  useExternalAudioJob,
+} from "@/lib/player/external-audio";
 
 type Props = {
   tracks: TrackInfo[];
@@ -163,6 +186,7 @@ function MenuBody(props: Props & { onClose: () => void }) {
   const t = useT();
   const { tracks, selectedId, onSelect, onClose, delaySec, onDelay, engine } = props;
   const [query, setQuery] = useState("");
+  const [actionsFor, setActionsFor] = useState<string | null>(null);
   const searchable = tracks.length >= SEARCH_FROM;
   const shown = useMemo(() => {
     const term = query.trim();
@@ -220,14 +244,43 @@ function MenuBody(props: Props & { onClose: () => void }) {
             tracks={shown}
             selectedId={selectedId}
             engine={engine}
+            actionsFor={actionsFor}
+            onToggleActions={(id) => setActionsFor((current) => (current === id ? null : id))}
+            onExport={(track) => {
+              setActionsFor(null);
+              void exportAudioTrack(track, tracks);
+            }}
+            onRemove={(track) => {
+              setActionsFor(null);
+              void removeExternalAudio(track.id);
+            }}
             onSelect={(id) => {
               onSelect(id);
               onClose();
             }}
           />
         )}
+        {engine === "mpv" && (
+          <button
+            type="button"
+            onClick={() => void pickExternalAudio(tracks)}
+            className="mt-1 flex w-full items-center gap-2.5 rounded-lg border border-dashed border-edge-soft px-2.5 py-2 text-start text-[12.5px] font-medium text-ink-muted transition-colors hover:border-edge hover:bg-canvas/55 hover:text-ink"
+          >
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/20 text-accent">
+              <Plus size={12} strokeWidth={2.6} />
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span>{t("Add audio from your files")}</span>
+              <span className="text-[10.5px] text-ink-subtle">
+                {t("Harbor checks it is this film and syncs it automatically.")}
+              </span>
+            </span>
+            <FolderOpen size={13} className="shrink-0 text-ink-subtle" />
+          </button>
+        )}
       </div>
 
+      {engine === "mpv" && <ExternalAudioStatus tracks={tracks} />}
       <DelayRow delay={delaySec} onDelay={onDelay} disabled={engine === "html5"} />
     </div>
   );
@@ -238,11 +291,19 @@ function TrackSection({
   selectedId,
   engine,
   onSelect,
+  actionsFor,
+  onToggleActions,
+  onExport,
+  onRemove,
 }: {
   tracks: TrackInfo[];
   selectedId: string | null;
   engine: "html5" | "mpv";
   onSelect: (id: string) => void;
+  actionsFor: string | null;
+  onToggleActions: (id: string) => void;
+  onExport: (track: TrackInfo) => void;
+  onRemove: (track: TrackInfo) => void;
 }) {
   const tr = useT();
   if (tracks.length === 0) {
@@ -260,40 +321,254 @@ function TrackSection({
     <div className="flex flex-col gap-0.5">
       {tracks.map((t) => {
         const isSel = t.id === selectedId;
+        const open = actionsFor === t.id;
         return (
-          <button
-            key={t.id}
-            onClick={() => onSelect(t.id)}
-            className={`flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-start transition-colors ${
-              isSel ? "bg-elevated ring-1 ring-edge" : "hover:bg-canvas/55"
-            }`}
-          >
-            <span
-              className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${
-                isSel ? "bg-accent text-canvas" : "bg-raised text-ink-subtle"
-              }`}
-              aria-hidden
-            >
-              {isSel ? <Check size={9} strokeWidth={3} /> : null}
-            </span>
-            {t.lang && (
-              <span className="mt-0.5 shrink-0">
-                <Flag language={trackLanguageName(t.lang, t.title)} size="sm" showLabel={false} />
-              </span>
-            )}
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="truncate text-[12.5px] font-medium leading-snug text-ink">
-                {trackTitle(t, tr)}
-              </span>
-              <span className="truncate text-[10.5px] uppercase tracking-[0.1em] text-ink-subtle">
-                {trackSubtitle(t, tr)}
-              </span>
+          <div key={t.id} className="flex flex-col">
+            <div className="flex items-stretch gap-1">
+              <button
+                onClick={() => onSelect(t.id)}
+                className={`flex min-w-0 flex-1 items-start gap-2.5 rounded-lg px-2.5 py-2 text-start transition-colors ${
+                  isSel ? "bg-elevated ring-1 ring-edge" : "hover:bg-canvas/55"
+                }`}
+              >
+                <span
+                  className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${
+                    isSel ? "bg-accent text-canvas" : "bg-raised text-ink-subtle"
+                  }`}
+                  aria-hidden
+                >
+                  {isSel ? <Check size={9} strokeWidth={3} /> : null}
+                </span>
+                {t.lang && (
+                  <span className="mt-0.5 shrink-0">
+                    <Flag
+                      language={trackLanguageName(t.lang, t.title)}
+                      size="sm"
+                      showLabel={false}
+                    />
+                  </span>
+                )}
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="truncate text-[12.5px] font-medium leading-snug text-ink">
+                    {trackTitle(t, tr)}
+                  </span>
+                  <span className="truncate text-[10.5px] uppercase tracking-[0.1em] text-ink-subtle">
+                    {trackSubtitle(t, tr)}
+                  </span>
+                </div>
+              </button>
+              {engine === "mpv" && (
+                <button
+                  type="button"
+                  aria-expanded={open}
+                  aria-label={tr("More for this audio track")}
+                  onClick={() => onToggleActions(t.id)}
+                  className={`flex w-8 shrink-0 items-center justify-center rounded-lg transition-colors ${
+                    open
+                      ? "bg-accent/20 text-accent"
+                      : "text-ink-subtle hover:bg-canvas/55 hover:text-ink"
+                  }`}
+                >
+                  <Plus
+                    size={14}
+                    strokeWidth={2.4}
+                    className={`transition-transform ${open ? "rotate-45" : ""}`}
+                  />
+                </button>
+              )}
             </div>
-          </button>
+            {open && (
+              <div className="ms-7 mt-1 flex flex-wrap gap-1.5 pb-1">
+                <button
+                  type="button"
+                  onClick={() => onExport(t)}
+                  className="flex items-center gap-1.5 rounded-md bg-raised px-2.5 py-1.5 text-[11.5px] font-semibold text-ink transition-colors hover:bg-canvas"
+                >
+                  <Download size={12} />
+                  {tr("Save this audio as a file")}
+                </button>
+                {t.external && (
+                  <button
+                    type="button"
+                    onClick={() => onRemove(t)}
+                    className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[11.5px] font-semibold text-ink-muted transition-colors hover:bg-raised hover:text-ink"
+                  >
+                    <Trash2 size={12} />
+                    {tr("Remove")}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         );
       })}
     </div>
   );
+}
+
+function syncStageLabel(stage: string, tr: (key: string) => string): string {
+  switch (stage) {
+    case "analyze":
+      return tr("Matching the audio to the film…");
+    case "render":
+      return tr("Writing the synced audio…");
+    case "verify":
+      return tr("Checking the sync…");
+    case "done":
+      return tr("Finishing…");
+    default:
+      return tr("Reading both audio tracks…");
+  }
+}
+
+function ExternalAudioStatus({ tracks }: { tracks: TrackInfo[] }) {
+  const tr = useT();
+  const job = useExternalAudioJob();
+  if (job.kind === "idle") return null;
+  const frame = "flex flex-col gap-2 border-t border-edge-soft bg-canvas/30 px-4 py-3 text-[12px]";
+  const dismiss = (
+    <button
+      type="button"
+      onClick={dismissExternalAudioJob}
+      className="self-start rounded-md px-2 py-1 text-[11.5px] font-semibold text-ink-muted hover:bg-raised hover:text-ink"
+    >
+      {tr("Dismiss")}
+    </button>
+  );
+  if (job.kind === "choose") {
+    return (
+      <div className={frame}>
+        <span className="font-semibold text-ink">{tr("Which audio track from this file?")}</span>
+        <div className="flex flex-col gap-1">
+          {job.info.streams.map((stream) => (
+            <button
+              key={stream.ordinal}
+              type="button"
+              onClick={() => void syncExternalAudio(job.path, stream.ordinal, tracks, job.info)}
+              className="flex items-center gap-2 rounded-md bg-raised px-2.5 py-1.5 text-start text-[12px] text-ink hover:bg-canvas"
+            >
+              <span className="flex-1 truncate">
+                {[
+                  stream.language ? languageName(stream.language) : null,
+                  stream.title,
+                  stream.codec.toUpperCase(),
+                  `${stream.channels}ch`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            </button>
+          ))}
+        </div>
+        {dismiss}
+      </div>
+    );
+  }
+  if (job.kind === "syncing" || job.kind === "exporting") {
+    const label =
+      job.kind === "exporting" ? tr("Saving the audio track…") : syncStageLabel(job.stage, tr);
+    return (
+      <div className={frame} role="status">
+        <div className="flex items-center gap-2 text-ink">
+          <Loader2 size={13} className="shrink-0 animate-spin text-accent" />
+          <span className="flex-1">{label}</span>
+          <span className="font-mono text-[11px] tabular-nums text-ink-subtle">
+            {Math.round(job.progress * 100)}%
+          </span>
+        </div>
+        <div className="h-1 overflow-hidden rounded-full bg-raised">
+          <div
+            className="h-full rounded-full bg-accent transition-[width] duration-300"
+            style={{ width: `${Math.max(3, job.progress * 100)}%` }}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={cancelExternalAudioJob}
+          className="self-start rounded-md px-2 py-1 text-[11.5px] font-semibold text-ink-muted hover:bg-raised hover:text-ink"
+        >
+          {tr("Cancel")}
+        </button>
+      </div>
+    );
+  }
+  if (job.kind === "done") {
+    const r = job.result;
+    const offset = `${r.offsetSec >= 0 ? "+" : ""}${r.offsetSec.toFixed(2)}s`;
+    return (
+      <div className={frame} role="status">
+        <div className="flex items-start gap-2 text-ink">
+          <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-300" />
+          <div className="flex flex-col gap-0.5">
+            <span className="font-semibold">
+              {r.verdict === "match"
+                ? tr("Same film. Audio added and synced.")
+                : tr("Matches most of this film (a different cut). Synced where it matches.")}
+            </span>
+            <span className="text-[11px] text-ink-subtle">
+              {tr("Shifted {offset}, {parts} part(s), accuracy within {ms} ms", {
+                offset,
+                parts: Math.max(1, r.segments),
+                ms: Math.max(1, Math.round(r.verifyMaxMs || r.verifyMedianMs || 0)),
+              })}
+              {Math.abs(r.speed - 1) > 0.005 ? ` · ${tr("speed corrected")}` : ""}
+            </span>
+          </div>
+        </div>
+        {dismiss}
+      </div>
+    );
+  }
+  if (job.kind === "mismatch") {
+    return (
+      <div className={frame} role="alert">
+        <div className="flex items-start gap-2 text-amber-100">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          <span>
+            {tr("This audio does not seem to belong to this film, so it was not synced.")}
+          </span>
+        </div>
+        <div className="flex gap-1.5">
+          <button
+            type="button"
+            onClick={() => void attachUnsynced(job.path, job.language)}
+            className="rounded-md bg-raised px-2.5 py-1 text-[11.5px] font-semibold text-ink hover:bg-canvas"
+          >
+            {tr("Add anyway")}
+          </button>
+          {dismiss}
+        </div>
+      </div>
+    );
+  }
+  if (job.kind === "exported") {
+    return (
+      <div className={frame} role="status">
+        <div className="flex items-start gap-2 text-ink">
+          <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-300" />
+          <span className="min-w-0 break-all">{tr("Saved to {path}", { path: job.dest })}</span>
+        </div>
+        {dismiss}
+      </div>
+    );
+  }
+  return (
+    <div className={frame} role="alert">
+      <div className="flex items-start gap-2 text-rose-100">
+        <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+        <span className="min-w-0 break-words">{jobErrorText(job.message, tr)}</span>
+      </div>
+      {dismiss}
+    </div>
+  );
+}
+
+/** Rust errors put FFmpeg's detail after the sentence: translate the sentence, keep the detail. */
+function jobErrorText(message: string, tr: (key: string) => string): string {
+  const whole = tr(message);
+  if (whole !== message) return whole;
+  const cut = message.search(/: | \(/);
+  return cut > 0 ? tr(message.slice(0, cut)) + message.slice(cut) : message;
 }
 
 function trackTitle(t: TrackInfo, tr: (key: string) => string): string {

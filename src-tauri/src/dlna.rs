@@ -72,6 +72,11 @@ fn connection_managers() -> &'static Mutex<HashMap<String, String>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn rendering_controls() -> &'static Mutex<HashMap<String, String>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 fn remember_vendor(control_url: &str, vendor: DlnaVendor) {
     if let Ok(mut map) = vendor_cache().lock() {
         map.insert(control_url.to_string(), vendor);
@@ -409,7 +414,123 @@ async fn fetch_device(
             cache.insert(control.clone(), resolve_url(location, &manager));
         }
     }
+    if let Some(rendering) = extract_service_control(&xml, "RenderingControl") {
+        if let Ok(mut cache) = rendering_controls().lock() {
+            cache.insert(control.clone(), resolve_url(location, &rendering));
+        }
+    }
     Ok((name, model, manufacturer, control))
+}
+
+/// Finds a renderer again by its UPnP UUID. Some receivers (EShare among them) restart their
+/// renderer on a new port after every stop or error, which leaves the cached control URL dead.
+pub async fn rediscover(uuid: &str) -> Option<String> {
+    let uuid = uuid.trim().trim_start_matches("uuid:").to_string();
+    if uuid.is_empty() {
+        return None;
+    }
+    let target = uuid.clone();
+    let locations = tokio::task::spawn_blocking(move || ssdp_find_uuid(&target, 3500))
+        .await
+        .unwrap_or_default();
+    for location in locations {
+        if let Ok((name, model, manufacturer, control)) = fetch_device(&location).await {
+            let vendor = classify_vendor(&name, model.as_deref().unwrap_or(""), manufacturer.as_deref().unwrap_or(""));
+            remember_vendor(&control, vendor);
+            eprintln!("[harbor::dlna] rediscovered {name} → {control}");
+            return Some(control);
+        }
+    }
+    None
+}
+
+fn ssdp_find_uuid(uuid: &str, timeout_ms: u64) -> Vec<String> {
+    let mut sockets: Vec<UdpSocket> = local_ipv4_interfaces()
+        .into_iter()
+        .filter_map(|iface| UdpSocket::bind(SocketAddr::new(IpAddr::V4(iface), 0)).ok())
+        .collect();
+    if sockets.is_empty() {
+        if let Ok(s) = UdpSocket::bind("0.0.0.0:0") {
+            sockets.push(s);
+        }
+    }
+    for s in &sockets {
+        let _ = s.set_read_timeout(Some(Duration::from_millis(150)));
+        let _ = s.set_multicast_ttl_v4(4);
+    }
+    let targets = [format!("uuid:{uuid}"), "urn:schemas-upnp-org:service:AVTransport:1".to_string()];
+    let needle = uuid.to_ascii_lowercase();
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    let mut next_send = Instant::now();
+    let mut found: Vec<String> = Vec::new();
+    let mut buf = [0u8; 4096];
+    while Instant::now() < deadline && found.is_empty() {
+        if Instant::now() >= next_send {
+            for st in &targets {
+                let msg = build_m_search(st);
+                for s in &sockets {
+                    let _ = s.send_to(&msg, SSDP_TARGET);
+                }
+            }
+            next_send = Instant::now() + Duration::from_millis(700);
+        }
+        for s in &sockets {
+            if let Ok((n, _)) = s.recv_from(&mut buf) {
+                let resp = String::from_utf8_lossy(&buf[..n]);
+                let usn = extract_header(&resp, "usn").unwrap_or_default().to_ascii_lowercase();
+                if usn.contains(&needle) {
+                    if let Some(loc) = extract_header(&resp, "location") {
+                        if !found.contains(&loc) {
+                            found.push(loc);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    found
+}
+
+/// The RenderingControl service of a renderer, for volume.
+fn rendering_control_for(control_url: &str) -> Option<String> {
+    rendering_controls().lock().ok()?.get(control_url).cloned()
+}
+
+fn rendering_envelope(action: &str, body: String) -> String {
+    soap_envelope(action, body).replace("service:AVTransport:1", "service:RenderingControl:1")
+}
+
+pub async fn get_volume(control_url: &str) -> Result<(u32, bool), String> {
+    let rc = rendering_control_for(control_url).ok_or("This TV does not report its volume")?;
+    let body = rendering_envelope("GetVolume", "<InstanceID>0</InstanceID><Channel>Master</Channel>".into());
+    let resp = soap_post_service(&rc, "RenderingControl", "GetVolume", &body).await?;
+    let volume = extract_xml_tag(&resp, "CurrentVolume").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let body = rendering_envelope("GetMute", "<InstanceID>0</InstanceID><Channel>Master</Channel>".into());
+    let muted = soap_post_service(&rc, "RenderingControl", "GetMute", &body)
+        .await
+        .ok()
+        .and_then(|r| extract_xml_tag(&r, "CurrentMute"))
+        .is_some_and(|m| m == "1" || m.eq_ignore_ascii_case("true"));
+    Ok((volume, muted))
+}
+
+pub async fn set_volume(control_url: &str, volume: Option<u32>, mute: Option<bool>) -> Result<(), String> {
+    let rc = rendering_control_for(control_url).ok_or("This TV does not accept volume changes")?;
+    if let Some(v) = volume {
+        let body = rendering_envelope(
+            "SetVolume",
+            format!("<InstanceID>0</InstanceID><Channel>Master</Channel><DesiredVolume>{}</DesiredVolume>", v.min(100)),
+        );
+        soap_post_service(&rc, "RenderingControl", "SetVolume", &body).await?;
+    }
+    if let Some(m) = mute {
+        let body = rendering_envelope(
+            "SetMute",
+            format!("<InstanceID>0</InstanceID><Channel>Master</Channel><DesiredMute>{}</DesiredMute>", m as u8),
+        );
+        soap_post_service(&rc, "RenderingControl", "SetMute", &body).await?;
+    }
+    Ok(())
 }
 
 fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
@@ -506,7 +627,8 @@ pub async fn load(
     }
     let play_body = soap_envelope("Play", "<InstanceID>0</InstanceID><Speed>1</Speed>".into());
     soap_action(&control_url, "Play", &play_body).await?;
-    if let Some(s) = start_sec {
+    // A converted stream already begins at the start position; seeking it again would skip ahead.
+    if let Some(s) = start_sec.filter(|_| !is_live) {
         if s > 1.0 {
             tokio::time::sleep(Duration::from_millis(1200)).await;
             let hms = format_hms(s);
