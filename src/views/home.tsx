@@ -113,7 +113,7 @@ import { recentlyPlayed, subscribePlayback, type WatchedSet } from "@/lib/playba
 import { collapseWatchedKeys, isTitleWatched } from "@/lib/watched-title";
 import { useWatchedFlagIds } from "@/lib/watched-flag";
 import { useMovieWatchedIds } from "@/lib/movie-watched";
-import { detectAnimeForCw, useDetectedAnimeVersion } from "@/lib/anime-detect";
+import { detectAnimeForCw, useDetectedAnimeVersion, warmCwAnimeRoomAliases } from "@/lib/anime-detect";
 import { buildSimklHomeRows } from "@/lib/simkl/home-rails";
 import {
   loadSimklWatchedMap,
@@ -994,6 +994,22 @@ export function Home({
   useEffect(() => {
     void detectAnimeForCw(items);
   }, [items]);
+
+  // The IMDb anime can be detected while its TMDB CW alias is still unknown.
+  // Verify external IDs for watched entries, then re-filter on detection bump.
+  useEffect(() => {
+    if (!settings.animeOnlyInAnimeRoom && !settings.hideContent.anime) return;
+    void warmCwAnimeRoomAliases(
+      cwProgressPool.filter((item) => isCwMember(item)),
+      settings.tmdbKey,
+    );
+  }, [
+    cwProgressPool,
+    settings.animeOnlyInAnimeRoom,
+    settings.hideContent.anime,
+    settings.tmdbKey,
+    animeDetectVer,
+  ]);
 
   useEffect(() => {
     publishResumeStates(cwItems);

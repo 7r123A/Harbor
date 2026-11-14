@@ -5,6 +5,7 @@ import { meta as fetchMeta, type Meta } from "@/lib/cinemeta";
 import { imdbToKitsu, tmdbTvToKitsu } from "@/lib/providers/anime-mapping";
 import { kitsuAnime } from "@/lib/providers/kitsu";
 import { setItemWithRecovery } from "@/lib/storage-recovery";
+import { tmdbImdbCached, tmdbImdbId } from "@/lib/providers/tmdb/tmdb-imdb-resolve";
 
 const STORAGE_KEY = "harbor.anime.detected.v2";
 const NEGATIVE_KEY = "harbor.anime.notanime.v2";
@@ -97,7 +98,12 @@ function bump(): void {
 }
 
 export function isDetectedAnime(id: string): boolean {
-  return detected.has(id);
+  if (detected.has(id)) return true;
+  // A verified external ID link is stronger than a title match. A recognized
+  // IMDb entry can be known before its separate TMDB CW record is checked.
+  if (!/^tmdb:tv:[1-9]\d*$/.test(id)) return false;
+  const imdb = tmdbImdbCached(id);
+  return typeof imdb === "string" && /^tt\d+$/.test(imdb) && detected.has(imdb);
 }
 
 const ANIME_ID_RE = /^(kitsu|mal|anilist|anidb):/;
@@ -314,4 +320,80 @@ export async function detectAnimeForCw(items: Array<{ _id: string; type: string 
   for (const it of eligible.slice(EAGER_BUDGET)) queue.push(it);
   scheduleDrain();
   await Promise.all([runPool(eligible.slice(0, EAGER_BUDGET)), ...waits]);
+}
+
+/**
+ * CW-only alias reconciliation: TMDB -> IMDb external IDs are authoritative,
+ * whereas a matching title or an episode number is not evidence of identity.
+ * Run only for watched CW members, never the whole media catalog.
+ */
+const cwAliasLookups = new Map<string, { imdb: string | null; expiresAt: number }>();
+const cwAliasInflight = new Map<string, Promise<void>>();
+const CW_ALIAS_POSITIVE_TTL = 24 * 60 * 60 * 1000;
+const CW_ALIAS_NEGATIVE_TTL = 60 * 1000;
+
+async function warmCwAnimeAlias(tmdbId: string, tmdbKey: string): Promise<void> {
+  // Only the persisted positive mark can skip promotion. A positive answer via
+  // the IMDb cache still needs to be saved under this TMDB ID for later runs.
+  if (detected.has(tmdbId)) return;
+  // API keys are never persisted in cache identities.
+  const cacheKey = tmdbId + "|" + (tmdbKey ? "tmdb" : "public");
+  const existing = cwAliasInflight.get(cacheKey);
+  if (existing) return existing;
+  const task = (async () => {
+    let imdb: string | null = null;
+    const saved = cwAliasLookups.get(cacheKey);
+    if (saved && saved.expiresAt > Date.now()) {
+      imdb = saved.imdb;
+    } else {
+      const fromTmdb = tmdbImdbCached(tmdbId);
+      if (typeof fromTmdb === "string") imdb = fromTmdb;
+      if (!imdb && tmdbKey) {
+        imdb = await tmdbImdbId(tmdbKey, tmdbId).catch(() => null);
+      }
+      if (!imdb) {
+        const { getImdbForTmdb } = await import("@/lib/publicmetadb/mappings");
+        const id = Number(tmdbId.slice("tmdb:tv:".length));
+        imdb = await getImdbForTmdb(id, "tv").catch(() => null);
+      }
+      if (!imdb || !/^tt[1-9]\d*$/.test(imdb)) imdb = null;
+      cwAliasLookups.set(cacheKey, {
+        imdb,
+        expiresAt: Date.now() + (imdb ? CW_ALIAS_POSITIVE_TTL : CW_ALIAS_NEGATIVE_TTL),
+      });
+    }
+    if (!imdb) return;
+    if (!detected.has(imdb)) {
+      // The linked IMDb record must independently pass the existing strict
+      // anime detector; merely having an external ID is insufficient.
+      await detectAnimeForCw([{ _id: imdb, type: "series" }]);
+    }
+    if (!detected.has(imdb) || detected.has(tmdbId)) return;
+    detected.add(tmdbId);
+    if (negatives.delete(tmdbId)) persistNegatives();
+    persist();
+    bump();
+  })().catch(() => {}).finally(() => cwAliasInflight.delete(cacheKey));
+  cwAliasInflight.set(cacheKey, task);
+  return task;
+}
+
+export async function warmCwAnimeRoomAliases(
+  items: Array<{ _id: string; type: string }>,
+  tmdbKey = "",
+): Promise<void> {
+  const ids = [...new Set(
+    items
+      .filter((i) => i.type !== "movie" && /^tmdb:tv:[1-9]\d*$/.test(i._id))
+      .map((i) => i._id),
+  )].filter((id) => !detected.has(id));
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, ids.length) }, async () => {
+      while (cursor < ids.length) {
+        const id = ids[cursor++];
+        if (id) await warmCwAnimeAlias(id, tmdbKey);
+      }
+    }),
+  );
 }

@@ -1858,7 +1858,7 @@ export function useCwAdvance(
         .map((i) =>
           i.removed && i.temp ? i : (restoredDisplay.advanced.get(i._id) ?? i),
         )
-        .filter((i) => isPlayableCwDisplay(i, enabled) && !isCwDismissed(i)),
+        .filter((i) => isPlayableCwDisplay(i, enabled) && !isCwDismissed(i) && (animeMode !== "exclude" || !isAnimeCwItem(i))),
       Infinity,
     );
   // Dismissal targets the displayed up-next episode, which may differ from the
@@ -1867,14 +1867,14 @@ export function useCwAdvance(
     .map((i) => displayAdvanced.get(i._id) ?? i)
     // Completed source checkpoints still reach the advancement worker through
     // `items`, but cannot flash as resumable cards before next-up verification.
-    .filter((i) => isPlayableCwDisplay(i, enabled) && !displayRemoved.has(i._id) && !isCwDismissed(i));
+    .filter((i) => isPlayableCwDisplay(i, enabled) && !displayRemoved.has(i._id) && !isCwDismissed(i) && (animeMode !== "exclude" || !isAnimeCwItem(i)));
   if (displayExtra.length === 0) return dedupeCwItems(dedupeAnimeCw(base), Infinity);
   const keyOf = (i: LibraryItem) => `${i.type}|${franchiseDedupKey(i.name ?? "")}`;
   const animeIdentity = (i: LibraryItem) =>
     isAnimeCwItem(i) || cwAnimeIdentityKey(i._id, i.state?.video_id, i.state) != null;
   const baseKeys = new Set(base.filter((i) => !animeIdentity(i)).map(keyOf));
   const dedupExtra = displayExtra.filter(
-    (i) => (animeIdentity(i) || !baseKeys.has(keyOf(i))) && !isCwDismissed(i),
+    (i) => (animeIdentity(i) || !baseKeys.has(keyOf(i))) && !isCwDismissed(i) && (animeMode !== "exclude" || !isAnimeCwItem(i)),
   );
   return dedupeCwItems(
     dedupeAnimeCw(dedupExtra.length === 0 ? base : base.concat(dedupExtra)),
