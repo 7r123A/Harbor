@@ -21,6 +21,7 @@ import {
   type LibraryItem,
 } from "@/lib/stremio";
 import { isEpisodeHidden } from "@/lib/hidden-episodes";
+import { cwEpisodeListCacheToken, cwEpisodeListCacheTtl, fetchCachedCwEpisodeList } from "@/lib/cw-episode-list-cache";
 import {
   isNextAired,
   resurfaceCandidates,
@@ -627,6 +628,13 @@ export function useCwAdvance(
     hideCaughtUp,
     animeCwEnd,
   ]);
+  // Episode metadata has a different lifetime from CW display decisions:
+  // tracker refresh sessions, hide-mode settings and watched progress must
+  // not cause another episode-list download for the same source account.
+  const episodeListScope = cwDisplayOwnerKey([
+    privacyOwner, profileId, stremioSourceId, stremioAuthKey,
+    nuvioSlot, nuvioAccountId, settings.accountProvider,
+  ]);
   const [liveDisplayScope, setLiveDisplayScope] = useState<string | null>(null);
   const [verifiedInputs, setVerifiedInputs] = useState<{
     scope: string;
@@ -660,6 +668,8 @@ export function useCwAdvance(
   const displayRemoved = hasLiveDisplay ? removed : restoredDisplay.removed;
   const displayExtra = hasLiveDisplay ? extra : restoredDisplay.extra;
   const listCacheRef = useRef<Map<string, PlayEpisode[]>>(new Map());
+  const listExpiryRef = useRef(new Map<string, number>());
+  const listTokenRef = useRef<string | null>(null);
   const stateCommitPassRef = useRef<ActiveAdvance | null>(null);
   const advancedRef = useRef(advanced);
   const extraRef = useRef(extra);
@@ -715,6 +725,7 @@ export function useCwAdvance(
     // Completed lists can come from a different metadata configuration; never
     // hand one owner's result to the next.
     listCacheRef.current.clear();
+    listExpiryRef.current.clear();
     listInflightRef.current.clear();
     // Replace, never share: a resolver that started under the previous owner
     // may still fail, and must not write its cooldown into this owner's map.
@@ -723,8 +734,21 @@ export function useCwAdvance(
   }
 
   function fetchAdvanceList(item: LibraryItem): Promise<ListFetch> {
+    const token = cwEpisodeListCacheToken();
+    if (listTokenRef.current !== token) {
+      // Disk cache clearing or metadata-setting changes invalidate the live
+      // owner's warm lists too; never reuse an old provider configuration.
+      listCacheRef.current.clear();
+      listExpiryRef.current.clear();
+      listInflightRef.current.clear();
+      listTokenRef.current = token;
+      lastPassRef.current = null;
+    }
     const cached = listCacheRef.current.get(item._id);
-    if (cached) return Promise.resolve({ ok: true, eps: cached, aborted: false });
+    if (cached && (listExpiryRef.current.get(item._id) ?? 0) > Date.now())
+      return Promise.resolve({ ok: true, eps: cached, aborted: false });
+    listCacheRef.current.delete(item._id);
+    listExpiryRef.current.delete(item._id);
     // A superseded pass must not make the following pass fetch the same list
     // again: the request belongs to the owner, not to one pass.
     const shared = listInflightRef.current.get(item._id);
@@ -737,13 +761,17 @@ export function useCwAdvance(
       background: item.background,
     };
     const requestSignal = ownerSignal();
-    const pending = fetchEpisodeList(meta, {
+    const pending = fetchCachedCwEpisodeList(meta, {
       tmdbKey,
       signal: requestSignal,
-      requireComplete: true,
-    })
+    }, episodeListScope)
       .then((eps): ListFetch => {
-        if (!requestSignal.aborted && eps.length > 0) listCacheRef.current.set(item._id, eps);
+        if (requestSignal.aborted || token !== cwEpisodeListCacheToken())
+          return { ok: false, eps: [], aborted: true };
+        if (eps.length > 0) {
+          listCacheRef.current.set(item._id, eps);
+          listExpiryRef.current.set(item._id, Date.now() + cwEpisodeListCacheTtl(eps));
+        }
         return { ok: true, eps, aborted: false };
       })
       .catch((error: unknown): ListFetch => {
@@ -768,7 +796,7 @@ export function useCwAdvance(
     isSuperseded: () => boolean,
   ): Promise<void> {
     const queue = pending.filter(
-      (item) => !listCacheRef.current.has(item._id) && !results.has(item._id),
+      (item) => (listExpiryRef.current.get(item._id) ?? 0) <= Date.now() && !results.has(item._id),
     );
     let cursor = 0;
     const worker = async (): Promise<void> => {
@@ -1099,8 +1127,14 @@ export function useCwAdvance(
         privacyOwner,
         airTick,
         simkl,
+        cwEpisodeListCacheToken(),
       ];
-      const priorPass = lastPassRef.current;
+      // Expired metadata cannot justify replaying an earlier decision.
+      const hasExpiredList = candidates.some(
+        (i) => listCacheRef.current.has(i._id) &&
+          (listExpiryRef.current.get(i._id) ?? 0) <= Date.now(),
+      );
+      const priorPass = hasExpiredList ? null : lastPassRef.current;
       const reusable =
         priorPass && priorPass.inputs.every((value, index) => Object.is(value, passInputs[index]))
           ? priorPass.decisions
