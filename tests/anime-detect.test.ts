@@ -32,6 +32,11 @@ function fixture(initial: Record<string, string> = {}) {
         return tmdbMapping.get(id) ?? null;
       },
     },
+    "@/lib/providers/tmdb/tmdb-imdb-resolve": {
+      tmdbImdbCached: () => undefined,
+      tmdbImdbId: async () => null,
+    },
+    "@/lib/publicmetadb/mappings": { getImdbForTmdb: async () => null },
     "@/lib/providers/kitsu": { kitsuAnime: async () => null },
     "@/lib/storage-recovery": {
       setItemWithRecovery: (key: string, value: string) => storage.set(key, value),
