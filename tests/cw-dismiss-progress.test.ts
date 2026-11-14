@@ -415,6 +415,11 @@ function advanceHarness(
     "@/lib/auth": { readActiveStremioAuthKey: () => null },
     "@/lib/active-profile-id": { getNuvioActiveSlot: () => 1 },
     "@/lib/nuvio/nuvio-client": { getNuvioAccountId: () => null },
+    "@/lib/cw-display-snapshot": {
+      cwDisplayOwnerKey: () => "dismiss-harness",
+      restoreCwDisplaySnapshot: () => ({ advanced: new Map(), removed: new Set(), extra: [] }),
+      saveCwDisplaySnapshot: () => {},
+    },
     react: {
       useState: () => [state[slot++], () => {}],
       useRef: (current: unknown) => ({ current }),

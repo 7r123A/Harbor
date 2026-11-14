@@ -55,6 +55,11 @@ import {
 } from "@/lib/cw-anime-identity";
 import { dedupeCwItems } from "@/lib/cw-dedupe";
 import {
+  cwDisplayOwnerKey,
+  restoreCwDisplaySnapshot,
+  saveCwDisplaySnapshot,
+} from "@/lib/cw-display-snapshot";
+import {
   cwAdvanceCandidates,
   cwAdvanceComplete,
   cwAdvanceOutcome,
@@ -588,6 +593,38 @@ export function useCwAdvance(
   const [advanced, setAdvanced] = useState<Map<string, LibraryItem>>(new Map());
   const [extra, setExtra] = useState<LibraryItem[]>([]);
   const [removed, setRemoved] = useState<Set<string>>(new Set());
+  // A stored presentation is provisional until this owner has completed a live
+  // pass. Keep it distinct from provider progress and deletion ownership.
+  const displayScope = cwDisplayOwnerKey([
+    privacyOwner,
+    profileId,
+    stremioSourceId,
+    stremioAuthKey,
+    traktIdentity,
+    nuvioSlot,
+    nuvioAccountId,
+    settings.accountProvider,
+    tmdbKey,
+    sourceKey,
+    simklSession,
+    simklEnabled,
+    animeMode,
+    episodeHiding,
+    hideCaughtUp,
+    animeCwEnd,
+  ]);
+  const [liveDisplayScope, setLiveDisplayScope] = useState<string | null>(null);
+  const restoredDisplay = useMemo(
+    () => restoreCwDisplaySnapshot(displayScope, items, { library: library ?? items }),
+    [displayScope, items, library],
+  );
+  // A restored disk view is only a fallback for an initially empty hook.
+  // Never hide already-published in-memory results (or seeded test state).
+  const hasLiveDisplay =
+    liveDisplayScope === displayScope || advanced.size > 0 || removed.size > 0 || extra.length > 0;
+  const displayAdvanced = hasLiveDisplay ? advanced : restoredDisplay.advanced;
+  const displayRemoved = hasLiveDisplay ? removed : restoredDisplay.removed;
+  const displayExtra = hasLiveDisplay ? extra : restoredDisplay.extra;
   const listCacheRef = useRef<Map<string, PlayEpisode[]>>(new Map());
   const stateCommitPassRef = useRef<ActiveAdvance | null>(null);
   const advancedRef = useRef(advanced);
@@ -829,10 +866,10 @@ export function useCwAdvance(
   } | null>(null);
   const warmItems = useMemo(
     () =>
-      [...items.map((item) => advanced.get(item._id) ?? item), ...extra].filter(
-        (item) => isCwMember(item) && !removed.has(item._id) && !isCwDismissed(item),
+      [...items.map((item) => displayAdvanced.get(item._id) ?? item), ...displayExtra].filter(
+        (item) => isCwMember(item) && !displayRemoved.has(item._id) && !isCwDismissed(item),
       ),
-    [items, advanced, extra, removed, dismissVersion],
+    [items, displayAdvanced, displayExtra, displayRemoved, dismissVersion],
   );
   // Warm only when a checkpoint actually changes; a new array identity from Home
   // must not restart the identity pass.
@@ -1638,6 +1675,16 @@ export function useCwAdvance(
           resolvedOwner.simklSession !== nextOwner.simklSession ||
           resolvedOwner.simklEnabled !== nextOwner.simklEnabled;
         if (ownerChanged) setResolvedOwner(nextOwner);
+        // Restore only independently verified checkpoint decisions. Source
+        // records, provider ownership and dismissals remain live-only.
+        saveCwDisplaySnapshot(displayScope, items, next, remove, {
+          library: lib,
+          extra: extraItems,
+        });
+        // An empty startup pass is not evidence that the provider/library
+        // snapshot is ready. Keep the validated display available when data
+        // arrives later during hydration.
+        if (items.length > 0 || lib.length > 0) setLiveDisplayScope(displayScope);
         const advancedChanged = !sameMap(advancedRef.current, next);
         const extraChanged = !sameList(extraRef.current, extraItems);
         const removedChanged = !sameSet(removedRef.current, remove);
@@ -1713,14 +1760,14 @@ export function useCwAdvance(
   // Dismissal targets the displayed up-next episode, which may differ from the
   // library entry. Filter stored display results immediately, without refetching.
   const base = items
-    .map((i) => advanced.get(i._id) ?? i)
-    .filter((i) => !removed.has(i._id) && !isCwDismissed(i));
-  if (extra.length === 0) return dedupeCwItems(dedupeAnimeCw(base), Infinity);
+    .map((i) => displayAdvanced.get(i._id) ?? i)
+    .filter((i) => !displayRemoved.has(i._id) && !isCwDismissed(i));
+  if (displayExtra.length === 0) return dedupeCwItems(dedupeAnimeCw(base), Infinity);
   const keyOf = (i: LibraryItem) => `${i.type}|${franchiseDedupKey(i.name ?? "")}`;
   const animeIdentity = (i: LibraryItem) =>
     isAnimeCwItem(i) || cwAnimeIdentityKey(i._id, i.state?.video_id, i.state) != null;
   const baseKeys = new Set(base.filter((i) => !animeIdentity(i)).map(keyOf));
-  const dedupExtra = extra.filter(
+  const dedupExtra = displayExtra.filter(
     (i) => (animeIdentity(i) || !baseKeys.has(keyOf(i))) && !isCwDismissed(i),
   );
   return dedupeCwItems(

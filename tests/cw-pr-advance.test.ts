@@ -41,6 +41,7 @@ function compile(
   require: (name: string) => any,
   source = readFileSync(path, "utf8"),
   events: Record<string, () => void> = {},
+  persistentStorage?: Map<string, string>,
 ) {
   const module = { exports: {} as any };
   const code = ts.transpileModule(source, {
@@ -49,7 +50,7 @@ function compile(
       target: ts.ScriptTarget.ES2022,
     },
   }).outputText;
-  new Function("require", "module", "exports", "window", "document", code)(
+  new Function("require", "module", "exports", "window", "document", "localStorage", code)(
     require,
     module,
     module.exports,
@@ -69,11 +70,15 @@ function compile(
       },
     },
     { visibilityState: "visible", addEventListener: () => {}, removeEventListener: () => {} },
+    {
+      getItem: (key: string) => persistentStorage?.get(key) ?? null,
+      setItem: (key: string, value: string) => persistentStorage?.set(key, value),
+    },
   );
   return module.exports;
 }
 
-function harness() {
+function harness(persistentStorage = new Map<string, string>()) {
   const events: Record<string, () => void> = {};
   const resumes = new Map<string, any>(),
     manual = new Map<string, boolean>();
@@ -241,7 +246,10 @@ function harness() {
     if (name === "./anime-detect") return mocks["@/lib/anime-detect"];
     assert.ok(name.startsWith("@/"), `unexpected import ${name}`);
     if (!modules.has(name))
-      modules.set(name, compile(`src/${name.slice(2)}.ts`, load, undefined, events));
+      modules.set(
+        name,
+        compile(`src/${name.slice(2)}.ts`, load, undefined, events, persistentStorage),
+      );
     return modules.get(name);
   };
   const { useCwAdvance } = load("@/views/home/hooks/use-cw-advance");
@@ -674,4 +682,107 @@ test("a Nuvio account change on the same slot invalidates cached CW work", async
   h.render([{ ...current }], "", true, []);
   await h.flush();
   assert.ok(h.episodeReads > before, "same-slot account switch reused the previous cache");
+});
+
+test("Phase 4C restores a verified up-next card before the live provider request finishes", async () => {
+  const storage = new Map<string, string>();
+  const initial = harness(storage);
+  initial.setRemote(progress([1, 2, 3]));
+  const source = item(1);
+  initial.render([source], "", true, []);
+  const [settled] = await initial.flush();
+  assert.equal(settled?.state?.episode, 4);
+  assert.equal(settled?.upNext, true);
+  assert.ok(storage.size > 0, "the completed pass did not persist a display decision");
+
+  const reopened = harness(storage);
+  reopened.setRemote(progress([1, 2, 3]));
+  let release: () => void = () => {};
+  reopened.setGate(new Promise<void>((resolve) => (release = resolve)));
+  try {
+    const immediately = reopened.render([{ ...source }], "", true, []);
+    assert.equal(immediately[0]?.state?.episode, 4, "reopened Home showed a stale episode");
+    assert.equal(immediately[0]?.upNext, true);
+  } finally {
+    release();
+  }
+  const [confirmed] = await reopened.flush();
+  assert.equal(confirmed?.state?.episode, 4);
+});
+
+test("Phase 4C refuses a saved decision after a same-slot Nuvio account change", async () => {
+  const storage = new Map<string, string>();
+  const first = harness(storage);
+  first.setNuvioAccount("account-a");
+  first.setRemote(progress([1, 2, 3]));
+  const source = item(1);
+  first.render([source], "", true, []);
+  const [settled] = await first.flush();
+  assert.equal(settled?.state?.episode, 4);
+  assert.ok(storage.size > 0);
+
+  const second = harness(storage);
+  second.setNuvioAccount("account-b");
+  let release: () => void = () => {};
+  second.setGate(new Promise<void>((resolve) => (release = resolve)));
+  try {
+    const immediately = second.render([{ ...source }], "", true, []);
+    assert.equal(immediately[0]?.state?.episode, 1, "another account reused an old checkpoint");
+  } finally {
+    release();
+  }
+  await second.flush();
+});
+
+test("Phase 4C restores a proven resurfaced next-up card before its recheck", async () => {
+  const storage = new Map<string, string>();
+  const finished = anchor(1, "tt200");
+  const original = harness(storage);
+  original.setRemote(progress([1], "tt200"));
+  original.render([], "", true, [finished]);
+  const confirmed = await original.flush();
+  assert.ok(confirmed.some((entry: any) => entry._id === "tt200" && entry.upNext === true));
+  assert.ok(storage.size > 0, "resurface decision was not saved");
+
+  const reopened = harness(storage);
+  reopened.setRemote(progress([1], "tt200"));
+  let release: () => void = () => {};
+  reopened.setGate(new Promise<void>((resolve) => (release = resolve)));
+  try {
+    const immediately = reopened.render([], "", true, [{ ...finished }]);
+    assert.ok(immediately.some((entry: any) => entry._id === "tt200" && entry.upNext === true));
+    assert.equal(immediately.find((entry: any) => entry._id === "tt200")?.state?.episode, 2);
+  } finally {
+    release();
+  }
+  await reopened.flush();
+});
+
+test("Phase 4C keeps a validated snapshot through an empty startup hydration pass", async () => {
+  const storage = new Map<string, string>();
+  const source = item(1);
+  const initial = harness(storage);
+  initial.setRemote(progress([1, 2, 3]));
+  initial.render([source], "", true, []);
+  const [settled] = await initial.flush();
+  assert.equal(settled?.state?.episode, 4);
+  assert.ok(storage.size > 0);
+  const before = [...storage.values()][0];
+
+  const reopened = harness(storage);
+  reopened.setRemote(progress([1, 2, 3]));
+  reopened.render([], "", true, []);
+  await reopened.flush();
+  assert.equal([...storage.values()][0], before, "initial hydration erased the valid snapshot");
+
+  let release: () => void = () => {};
+  reopened.setGate(new Promise<void>((resolve) => (release = resolve)));
+  try {
+    const immediately = reopened.render([{ ...source }], "", true, []);
+    assert.equal(immediately[0]?.state?.episode, 4, "empty startup pass blocked restoration");
+  } finally {
+    release();
+  }
+  const [confirmed] = await reopened.flush();
+  assert.equal(confirmed?.state?.episode, 4);
 });

@@ -1,0 +1,383 @@
+// @ts-expect-error Node test types are outside the browser tsconfig.
+import assert from "node:assert/strict";
+// @ts-expect-error Node test types are outside the browser tsconfig.
+import test from "node:test";
+import type { LibraryItem } from "../src/lib/stremio.ts";
+import {
+  cwDisplayOwnerKey,
+  restoreCwDisplaySnapshot,
+  saveCwDisplaySnapshot,
+} from "../src/lib/cw-display-snapshot.ts";
+
+const start = Date.parse("2026-11-14T04:00:00.000Z");
+const owner = cwDisplayOwnerKey(["profile-a", "stremio", "account-a", "simkl-a"]);
+
+function store() {
+  const data = new Map<string, string>();
+  return {
+    data,
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      data.set(key, value);
+    },
+  };
+}
+
+function item(id = "tt100", episode = 1): LibraryItem {
+  return {
+    _id: id,
+    type: "series",
+    name: "Fixture Show",
+    _ctime: "2026-11-13T02:00:00.000Z",
+    _mtime: "2026-11-13T02:00:00.000Z",
+    state: {
+      season: 1,
+      episode,
+      video_id: id + ":1:" + episode,
+      timeOffset: 1750000,
+      duration: 1800000,
+      flaggedWatched: 0,
+      lastWatched: "2026-11-13T02:00:00.000Z",
+    },
+    external: "simkl",
+    providerPlaybackIds: { simkl: "playback-1" },
+    altIds: ["tmdb:tv:20"],
+  } as LibraryItem;
+}
+
+function advanced(input: LibraryItem): LibraryItem {
+  return {
+    ...input,
+    state: {
+      ...input.state,
+      season: 1,
+      episode: 2,
+      video_id: input._id + ":1:2",
+      timeOffset: 0,
+      flaggedWatched: 0,
+    },
+    upNext: true,
+  };
+}
+
+test("restores verified next episode without restoring source or dismissal ownership", () => {
+  const s = store();
+  const input = item();
+  saveCwDisplaySnapshot(owner, [input], new Map([[input._id, advanced(input)]]), new Set(), {
+    store: s,
+    now: start,
+  });
+  const output = restoreCwDisplaySnapshot(owner, [input], { store: s, now: start + 1000 });
+  const card = output.advanced.get(input._id)!;
+  assert.equal(card.state?.episode, 2);
+  assert.equal(card.state?.timeOffset, 0);
+  assert.equal(card.upNext, true);
+  assert.deepEqual(card.providerPlaybackIds, { simkl: "playback-1" });
+  assert.deepEqual(card.altIds, ["tmdb:tv:20"]);
+  assert.equal(card.cwMembers, undefined);
+  assert.equal(output.removed.size, 0);
+  assert.equal(s.data.size, 1);
+  const payload = [...s.data.values()][0];
+  assert.doesNotMatch(payload, /playback-1|Fixture Show|account-a/);
+});
+
+test("another account, profile, source, or Nuvio login cannot reuse a snapshot", () => {
+  const s = store();
+  const input = item();
+  saveCwDisplaySnapshot(owner, [input], new Map([[input._id, advanced(input)]]), new Set(), {
+    store: s,
+    now: start,
+  });
+  for (const parts of [
+    ["profile-b", "stremio", "account-a", "simkl-a"],
+    ["profile-a", "stremio", "account-b", "simkl-a"],
+    ["profile-a", "nuvio", "account-a", "simkl-a"],
+    ["profile-a", "stremio", "account-a", "simkl-b"],
+  ]) {
+    const result = restoreCwDisplaySnapshot(cwDisplayOwnerKey(parts), [input], {
+      store: s,
+      now: start + 1000,
+    });
+    assert.equal(result.advanced.size, 0);
+    assert.equal(result.removed.size, 0);
+  }
+});
+
+test("new playback, season, provider checkpoint and library timestamps invalidate display", () => {
+  const s = store();
+  const input = item();
+  saveCwDisplaySnapshot(owner, [input], new Map([[input._id, advanced(input)]]), new Set(), {
+    store: s,
+    now: start,
+  });
+  const altered = [
+    { ...input, state: { ...input.state!, episode: 3 } },
+    { ...input, state: { ...input.state!, timeOffset: 100 } },
+    { ...input, state: { ...input.state!, video_id: "tt100:2:1" } },
+    { ...input, state: { ...input.state!, lastWatched: "2026-11-14T03:00:00.000Z" } },
+    { ...input, providerPlaybackIds: { simkl: "playback-2" } },
+    { ...input, _mtime: "2026-11-14T03:00:00.000Z" },
+    { ...input, altIds: ["tmdb:tv:21"] },
+  ];
+  for (const changed of altered) {
+    const result = restoreCwDisplaySnapshot(owner, [changed as LibraryItem], {
+      store: s,
+      now: start + 1000,
+    });
+    assert.equal(result.advanced.size, 0);
+  }
+});
+
+test("advanced presentation expires rather than becoming permanent watched state", () => {
+  const s = store();
+  const input = item();
+  saveCwDisplaySnapshot(owner, [input], new Map([[input._id, advanced(input)]]), new Set(), {
+    store: s,
+    now: start,
+  });
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [input], { store: s, now: start + 29 * 60_000 }).advanced.size,
+    1,
+  );
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [input], { store: s, now: start + 31 * 60_000 }).advanced.size,
+    0,
+  );
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [input], { store: s, now: start - 1 }).advanced.size,
+    0,
+  );
+});
+
+test("verified removals have a shorter expiry and cannot hide changed checkpoints", () => {
+  const s = store();
+  const input = item();
+  saveCwDisplaySnapshot(owner, [input], new Map(), new Set([input._id]), {
+    store: s,
+    now: start,
+  });
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [input], { store: s, now: start + 60_000 }).removed.has(
+      input._id,
+    ),
+    true,
+  );
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [input], { store: s, now: start + 3 * 60_000 }).removed.size,
+    0,
+  );
+  const changed = { ...input, state: { ...input.state!, episode: 2 } } as LibraryItem;
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [changed], { store: s, now: start + 1000 }).removed.size,
+    0,
+  );
+});
+
+test("a later successful pass with no decisions replaces prior display results", () => {
+  const s = store();
+  const input = item();
+  saveCwDisplaySnapshot(owner, [input], new Map([[input._id, advanced(input)]]), new Set(), {
+    store: s,
+    now: start,
+  });
+  saveCwDisplaySnapshot(owner, [input], new Map(), new Set(), { store: s, now: start + 1000 });
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [input], { store: s, now: start + 2000 }).advanced.size,
+    0,
+  );
+});
+
+test("bad JSON and unavailable storage fail open to the live row", () => {
+  const s = store();
+  s.setItem("harbor:cw:validated-display:v1:" + owner, "{not-json");
+  const missing = restoreCwDisplaySnapshot(owner, [item()], { store: s });
+  assert.equal(missing.advanced.size, 0);
+  assert.equal(missing.removed.size, 0);
+  const broken = {
+    getItem: (_: string): string | null => {
+      throw new Error("storage denied");
+    },
+    setItem: (_: string, __: string) => {
+      throw new Error("storage denied");
+    },
+  };
+  assert.equal(restoreCwDisplaySnapshot(owner, [item()], { store: broken }).advanced.size, 0);
+  assert.doesNotThrow(() =>
+    saveCwDisplaySnapshot(owner, [item()], new Map(), new Set(), { store: broken }),
+  );
+});
+
+test("future/invalid display coordinates never override real progress", () => {
+  const s = store();
+  const input = item();
+  const output = advanced(input);
+  output.state = { ...output.state!, season: -1 };
+  saveCwDisplaySnapshot(owner, [input], new Map([[input._id, output]]), new Set(), {
+    store: s,
+    now: start,
+  });
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [input], { store: s, now: start + 1 }).advanced.size,
+    0,
+  );
+});
+
+test("only completed, playable up-next results are persisted as early display decisions", () => {
+  const s = store();
+  const input = item();
+  const paused = { ...advanced(input), upNext: false };
+  saveCwDisplaySnapshot(owner, [input], new Map([[input._id, paused]]), new Set(), {
+    store: s,
+    now: start,
+  });
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [input], { store: s, now: start + 1 }).advanced.size,
+    0,
+  );
+
+  const offset = advanced(input);
+  offset.state = { ...offset.state!, timeOffset: 2500 };
+  saveCwDisplaySnapshot(owner, [input], new Map([[input._id, offset]]), new Set(), {
+    store: s,
+    now: start,
+  });
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [input], { store: s, now: start + 1 }).advanced.size,
+    0,
+  );
+});
+
+test("restores a proven resurfaced card from the unchanged live source before a network pass", () => {
+  const s = store();
+  const source = item("tt200", 1);
+  const output = advanced(source);
+  const visible = item("tt100", 1);
+  saveCwDisplaySnapshot(owner, [visible], new Map(), new Set(), {
+    store: s,
+    now: start,
+    library: [visible, source],
+    extra: [output],
+  });
+  const result = restoreCwDisplaySnapshot(owner, [visible], {
+    store: s,
+    now: start + 1000,
+    library: [visible, source],
+  });
+  assert.equal(result.extra.length, 1);
+  assert.equal(result.extra[0]._id, "tt200");
+  assert.equal(result.extra[0].state?.episode, 2);
+  assert.equal(result.extra[0].upNext, true);
+  assert.deepEqual(result.extra[0].providerPlaybackIds, source.providerPlaybackIds);
+});
+
+test("a resurface snapshot cannot outlive a changed source, CW cohort, account or expiry", () => {
+  const s = store();
+  const source = item("tt200", 1);
+  const visible = item("tt100", 1);
+  saveCwDisplaySnapshot(owner, [visible], new Map(), new Set(), {
+    store: s,
+    now: start,
+    library: [visible, source],
+    extra: [advanced(source)],
+  });
+  const restore = (items: LibraryItem[], lib: LibraryItem[], key = owner, at = start + 1000) =>
+    restoreCwDisplaySnapshot(key, items, { store: s, now: at, library: lib }).extra;
+  assert.equal(
+    restore([visible], [{ ...source, state: { ...source.state!, episode: 3 } } as LibraryItem])
+      .length,
+    0,
+  );
+  assert.equal(
+    restore(
+      [{ ...visible, state: { ...visible.state!, episode: 2 } } as LibraryItem],
+      [visible, source],
+    ).length,
+    0,
+  );
+  assert.equal(restore([visible, source], [visible, source]).length, 0);
+  assert.equal(
+    restore([visible], [visible, source], cwDisplayOwnerKey(["another account"])).length,
+    0,
+  );
+  assert.equal(restore([visible], [visible, source], owner, start + 3 * 60_000).length, 0);
+  assert.equal(restore([visible], [visible]).length, 0);
+});
+
+test("resurfaced timer cards and unaired results are never restored", () => {
+  const s = store();
+  const source = item("tt200", 1);
+  const visible = item("tt100", 1);
+  const timer = {
+    ...advanced(source),
+    waitingForAir: true,
+    nextAirDate: new Date(start + 60_000).toISOString(),
+  };
+  saveCwDisplaySnapshot(owner, [visible], new Map(), new Set(), {
+    store: s,
+    now: start,
+    library: [visible, source],
+    extra: [timer],
+  });
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [visible], {
+      store: s,
+      now: start + 1000,
+      library: [visible, source],
+    }).extra.length,
+    0,
+  );
+  const future = {
+    ...advanced(source),
+    waitingForAir: false,
+    nextAirDate: new Date(start + 60_000).toISOString(),
+  };
+  saveCwDisplaySnapshot(owner, [visible], new Map(), new Set(), {
+    store: s,
+    now: start,
+    library: [visible, source],
+    extra: [future],
+  });
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [visible], {
+      store: s,
+      now: start + 1000,
+      library: [visible, source],
+    }).extra.length,
+    0,
+  );
+});
+
+test("empty or malformed resurface snapshots remain safe without live metadata", () => {
+  const s = store();
+  const visible = item();
+  saveCwDisplaySnapshot(owner, [visible], new Map(), new Set(), { store: s, now: start });
+  assert.deepEqual(restoreCwDisplaySnapshot(owner, [visible], { store: s, now: start }).extra, []);
+  const key = [...s.data.keys()][0];
+  const raw = JSON.parse(s.data.get(key)!);
+  raw.extras = [{ id: "tt200", fingerprint: "invalid", display: {} }];
+  s.setItem(key, JSON.stringify(raw));
+  assert.deepEqual(
+    restoreCwDisplaySnapshot(owner, [visible], { store: s, now: start, library: [item("tt200")] })
+      .extra,
+    [],
+  );
+});
+
+test("an empty pre-hydration pass does not overwrite a validated display snapshot", () => {
+  const s = store();
+  const input = item();
+  saveCwDisplaySnapshot(owner, [input], new Map([[input._id, advanced(input)]]), new Set(), {
+    store: s,
+    now: start,
+  });
+  const stored = [...s.data.values()][0];
+  saveCwDisplaySnapshot(owner, [], new Map(), new Set(), {
+    store: s,
+    now: start + 500,
+    library: [],
+    extra: [],
+  });
+  assert.equal([...s.data.values()][0], stored);
+  const restored = restoreCwDisplaySnapshot(owner, [input], { store: s, now: start + 1500 });
+  assert.equal(restored.advanced.get(input._id)?.state?.episode, 2);
+});
