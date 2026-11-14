@@ -20,7 +20,7 @@ const COMPLETE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const MEMORY_MAX = 512;
 const cache = new Map<string, { value: AniZipMapping | null; expiresAt: number }>();
 const negCache = new Map<string, number>();
-const inflight = new Map<string, Promise<AniZipMapping | null>>();
+const inflight = new Map<string, Promise<AniZipLookup>>();
 
 function remember(query: string, value: AniZipMapping | null, expiresAt: number): void {
   cache.delete(query);
@@ -52,6 +52,17 @@ function throttled(url: string, ac: AbortController): Promise<Response> {
     () => new Promise((r) => setTimeout(r, GAP_MS)),
   );
   return run;
+}
+
+/**
+ * A strict caller (CW advancement) must not read a provider outage as "this show
+ * has no anime entry". Best-effort callers keep the null.
+ */
+export class AniZipUnavailableError extends Error {
+  constructor() {
+    super("anizip unavailable");
+    this.name = "AniZipUnavailableError";
+  }
 }
 
 export type AniZipEpisode = {
@@ -94,19 +105,25 @@ export async function aniZipByKitsu(
   kitsuId: number,
   identity = false,
   maxAge?: number,
+  strict = false,
 ): Promise<AniZipMapping | null> {
-  return get(`kitsu_id=${kitsuId}`, maxAge, identity);
+  return get(`kitsu_id=${kitsuId}`, maxAge, identity, strict);
 }
 
 export async function aniZipByAnilist(
   anilistId: number,
   maxAge?: number,
+  strict = false,
 ): Promise<AniZipMapping | null> {
-  return get(`anilist_id=${anilistId}`, maxAge);
+  return get(`anilist_id=${anilistId}`, maxAge, false, strict);
 }
 
-export async function aniZipByMal(malId: number, maxAge?: number): Promise<AniZipMapping | null> {
-  return get(`mal_id=${malId}`, maxAge);
+export async function aniZipByMal(
+  malId: number,
+  maxAge?: number,
+  strict = false,
+): Promise<AniZipMapping | null> {
+  return get(`mal_id=${malId}`, maxAge, false, strict);
 }
 
 export async function aniZipByAnidb(
@@ -120,16 +137,18 @@ export async function aniZipByImdb(
   imdbId: string,
   identity = false,
   maxAge?: number,
+  strict = false,
 ): Promise<AniZipMapping | null> {
-  return get(`imdb_id=${imdbId}`, maxAge, identity);
+  return get(`imdb_id=${imdbId}`, maxAge, identity, strict);
 }
 
 export async function aniZipByTmdbTv(
   tmdbId: number,
   identity = false,
   maxAge?: number,
+  strict = false,
 ): Promise<AniZipMapping | null> {
-  return get(`themoviedb_id=${tmdbId}`, maxAge, identity);
+  return get(`themoviedb_id=${tmdbId}`, maxAge, identity, strict);
 }
 
 const TIMEOUT_MS = 4000;
@@ -212,83 +231,107 @@ function captureExactAliases(query: string, value: AniZipMapping): void {
   }
 }
 
+type AniZipLookup = { value: AniZipMapping | null; unavailable: boolean };
+
 async function get(
   query: string,
   maxAge?: number,
   identity = false,
+  strict = false,
 ): Promise<AniZipMapping | null> {
-  if (addonOnlyMetadata() && !identity) return null;
+  // An identity-only check must still run with addon-only metadata enabled:
+  // refusing to ask is not the same answer as "no such anime".
+  if (addonOnlyMetadata() && !identity && !strict) return null;
   const forceRefresh = maxAge === 0;
   const memory = cache.get(query);
   if (!forceRefresh && memory && memory.expiresAt > Date.now()) return memory.value;
   if (memory) cache.delete(query);
   if (!forceRefresh) {
     const negAt = negCache.get(query);
-    if (negAt != null && Date.now() - negAt < NEG_TTL_MS) return null;
+    // negCache only holds real failures: a 404 is remembered in `cache` as a
+    // null value, and an outage with a stored mapping returns that mapping.
+    if (negAt != null && Date.now() - negAt < NEG_TTL_MS) {
+      if (strict) throw new AniZipUnavailableError();
+      return null;
+    }
   }
-  const existing = inflight.get(query);
-  if (existing) return existing;
-  const p = (async () => {
-    let stored: AnimeProviderRecord<AniZipMapping | null> | null = null;
-    try {
-      stored = await animeDbReadProvider<AniZipMapping | null>(`anizip:${query}`);
-      const storedFresh =
-        stored != null &&
-        stored.expiresAt > Date.now() &&
-        (maxAge == null || Date.now() - stored.fetchedAt <= maxAge);
-      if (!forceRefresh && stored && storedFresh) {
-        remember(query, stored.value, stored.expiresAt);
-        if (stored.value) captureExactAliases(query, stored.value);
-        return stored.value;
+  // The shared request carries the raw outcome, never one caller's policy: a
+  // strict and a best-effort caller must both be able to join it safely.
+  let lookup = inflight.get(query);
+  if (!lookup) {
+    lookup = loadLookup(query, maxAge, forceRefresh);
+    inflight.set(query, lookup);
+  }
+  const result = await lookup;
+  if (result.unavailable && strict) throw new AniZipUnavailableError();
+  return result.value;
+}
+
+async function loadLookup(
+  query: string,
+  maxAge: number | undefined,
+  forceRefresh: boolean,
+): Promise<AniZipLookup> {
+  let stored: AnimeProviderRecord<AniZipMapping | null> | null = null;
+  try {
+    stored = await animeDbReadProvider<AniZipMapping | null>(`anizip:${query}`);
+    const storedFresh =
+      stored != null &&
+      stored.expiresAt > Date.now() &&
+      (maxAge == null || Date.now() - stored.fetchedAt <= maxAge);
+    if (!forceRefresh && stored && storedFresh) {
+      remember(query, stored.value, stored.expiresAt);
+      if (stored.value) captureExactAliases(query, stored.value);
+      return { value: stored.value, unavailable: false };
+    }
+    const ac = new AbortController();
+    const res = await throttled(`${ENDPOINT}?${query}`, ac);
+    if (!res.ok) {
+      if (res.status === 404) {
+        const fetchedAt = Date.now();
+        remember(query, null, fetchedAt + NEG_TTL_MS);
+        void animeDbWriteProvider({
+          key: `anizip:${query}`,
+          value: null,
+          fetchedAt,
+          expiresAt: fetchedAt + NEG_PERSIST_TTL_MS,
+        });
+        return { value: null, unavailable: false };
       }
-      const ac = new AbortController();
-      const res = await throttled(`${ENDPOINT}?${query}`, ac);
-      if (!res.ok) {
-        if (res.status === 404) {
-          const fetchedAt = Date.now();
-          remember(query, null, fetchedAt + NEG_TTL_MS);
-          void animeDbWriteProvider({
-            key: `anizip:${query}`,
-            value: null,
-            fetchedAt,
-            expiresAt: fetchedAt + NEG_PERSIST_TTL_MS,
-          });
-        } else if (stored?.value) {
-          // A provider outage must not make an already downloaded mapping
-          // disappear just because its refresh TTL elapsed.
-          remember(query, stored.value, Date.now() + NEG_TTL_MS);
-          return stored.value;
-        } else rememberNegative(query, Date.now());
-        return null;
-      }
-      const json = (await res.json()) as AniZipMapping;
-      const now = Date.now();
-      const episodes = json.episodes ?? {};
-      const complete =
-        !!json.mappings?.kitsu_id &&
-        !!json.mappings?.thetvdb_id &&
-        Object.keys(episodes).some((k) => /^\d+$/.test(k));
-      const airing = Object.values(episodes).some((ep) => {
-        const date = Date.parse(ep.airDateUtc ?? ep.airDate ?? ep.airdate ?? "");
-        return Number.isFinite(date) && date >= now - 45 * 86400000;
-      });
-      remember(query, json, now + (complete && !airing ? COMPLETE_TTL_MS : INCOMPLETE_TTL_MS));
-      negCache.delete(query);
-      persistMapping(query, json);
-      return json;
-    } catch {
       if (stored?.value) {
+        // A provider outage must not make an already downloaded mapping
+        // disappear just because its refresh TTL elapsed.
         remember(query, stored.value, Date.now() + NEG_TTL_MS);
-        return stored.value;
+        return { value: stored.value, unavailable: false };
       }
       rememberNegative(query, Date.now());
-      return null;
-    } finally {
-      inflight.delete(query);
+      return { value: null, unavailable: true };
     }
-  })();
-  inflight.set(query, p);
-  return p;
+    const json = (await res.json()) as AniZipMapping;
+    const now = Date.now();
+    const episodes = json.episodes ?? {};
+    const complete =
+      !!json.mappings?.kitsu_id &&
+      !!json.mappings?.thetvdb_id &&
+      Object.keys(episodes).some((k) => /^\d+$/.test(k));
+    const airing = Object.values(episodes).some((ep) => {
+      const date = Date.parse(ep.airDateUtc ?? ep.airDate ?? ep.airdate ?? "");
+      return Number.isFinite(date) && date >= now - 45 * 86400000;
+    });
+    remember(query, json, now + (complete && !airing ? COMPLETE_TTL_MS : INCOMPLETE_TTL_MS));
+    negCache.delete(query);
+    persistMapping(query, json);
+    return { value: json, unavailable: false };
+  } catch {
+    if (stored?.value) {
+      remember(query, stored.value, Date.now() + NEG_TTL_MS);
+      return { value: stored.value, unavailable: false };
+    }
+    rememberNegative(query, Date.now());
+    return { value: null, unavailable: true };
+  } finally {
+    inflight.delete(query);
+  }
 }
 
 /** AniZip carries the localized title map under `titles` or, on older entries, `title`. */

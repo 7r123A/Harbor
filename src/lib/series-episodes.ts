@@ -293,7 +293,35 @@ type EpisodeSourceOptions = {
   episodeSources?: string[];
   tvdbKey?: string;
   tvdbSeasonType?: string;
+  signal?: AbortSignal;
+  /**
+   * Callers that decide whether a card is finished (CW advancement) must know
+   * when a provider could not answer. With this set, an unavailable or
+   * incomplete list throws instead of arriving as [].
+   */
+  requireComplete?: boolean;
 };
+
+export class EpisodeListUnavailableError extends Error {
+  constructor() {
+    super("episode list unavailable");
+    this.name = "EpisodeListUnavailableError";
+  }
+}
+
+// Episode sources coerce a failed lookup to null. Playback can live with an
+// empty list; advancement cannot, because it removes finished cards.
+// Known limit: a provider that answers with a *nonempty but incomplete* season
+// list still looks complete here. That is source-data quality, not a signal we
+// can recover without a per-provider completeness contract.
+function completeList(eps: PlayEpisode[] | null, required: boolean | undefined): PlayEpisode[] {
+  if (required && (eps == null || eps.length === 0)) throw new EpisodeListUnavailableError();
+  return eps ?? [];
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+}
 
 type ConfiguredEpisodeSource =
   | { kind: "addon"; episodes: PlayEpisode[] }
@@ -483,6 +511,7 @@ export async function fetchAdjacentEpisodes(
     imdbSeason?: number;
     imdbEpisode?: number;
     episodeEndOffset?: number;
+    signal?: AbortSignal;
     skip?: (season: number, episode: number, metaId?: string) => boolean;
   },
 ): Promise<Adjacent> {
@@ -518,7 +547,7 @@ export async function fetchAdjacentEpisodes(
       preferCustomMeta(),
     ]);
     if (!opts.skip && ttCache.has(key)) return ttCache.get(key)!;
-    const eps = await loadCinemetaEpisodes(meta.id, opts.tmdbKey);
+    const eps = await loadCinemetaEpisodes(meta.id, opts.tmdbKey, opts.signal);
     if (!eps) return { prev: null, next: null };
     const result = computeAdjacent(eps, current, opts.skip);
     if (!opts.skip && generation === mediaCacheGeneration())
@@ -565,7 +594,7 @@ export async function fetchUpcomingEpisodes(
   }
   if ((meta.type !== "series" && !isAnimeId(meta.id)) || count <= 0) return [];
   if (meta.id.startsWith("tt")) {
-    const eps = await loadCinemetaEpisodes(meta.id, opts.tmdbKey);
+    const eps = await loadCinemetaEpisodes(meta.id, opts.tmdbKey, opts.signal);
     if (!eps) return [];
     const idx = eps.findIndex((v) => v.season === current.season && v.episode === current.episode);
     if (idx === -1) return eps.slice(0, count);
@@ -648,7 +677,12 @@ async function overlayTmdbEpisodeNames(
   return eps.map((e) => patched.get(e) ?? e);
 }
 
-async function loadCinemetaEpisodes(id: string, tmdbKey?: string): Promise<PlayEpisode[] | null> {
+async function loadCinemetaEpisodes(
+  id: string,
+  tmdbKey?: string,
+  signal?: AbortSignal,
+): Promise<PlayEpisode[] | null> {
+  throwIfAborted(signal);
   const cleanId = id.replace(/^(series|movie):/, "");
   if (!cleanId.startsWith("tt")) return null;
   const generation = mediaCacheGeneration();
@@ -661,9 +695,11 @@ async function loadCinemetaEpisodes(id: string, tmdbKey?: string): Promise<PlayE
     readAuthKey(),
   ]);
   if (cinemetaListCache.has(cacheKey)) return cinemetaListCache.get(cacheKey)!;
-  const res = await fetch(`https://v3-cinemeta.strem.io/meta/series/${cleanId}.json`);
+  const res = await fetch(`https://v3-cinemeta.strem.io/meta/series/${cleanId}.json`, { signal });
+  throwIfAborted(signal);
   if (!res.ok) return null;
   const json = await res.json();
+  throwIfAborted(signal);
   const raw = (json?.meta?.videos ?? []) as Array<{
     season?: number;
     episode?: number;
@@ -723,7 +759,9 @@ function uniqueAnimeSeasons(eps: PlayEpisode[] | null): number[] {
 }
 
 export async function fetchSeasonList(meta: Meta, opts: EpisodeSourceOptions): Promise<number[]> {
+  throwIfAborted(opts.signal);
   const configured = await configuredEpisodeSource(meta, opts);
+  throwIfAborted(opts.signal);
   if (configured) {
     if (configured.kind === "addon") return uniqueSeasons(configured.episodes);
     if (configured.kind === "tmdb") return configured.seasons;
@@ -736,7 +774,7 @@ export async function fetchSeasonList(meta: Meta, opts: EpisodeSourceOptions): P
     return uniqueSeasons(await getAddonEpisodes(meta.id));
   if (meta.type !== "series" && !isAnimeId(meta.id)) return [];
   if (meta.id.startsWith("tt")) {
-    const nums = uniqueSeasons(await loadCinemetaEpisodes(meta.id, opts.tmdbKey));
+    const nums = uniqueSeasons(await loadCinemetaEpisodes(meta.id, opts.tmdbKey, opts.signal));
     return filterForeignAnimeSeasons(meta.id, meta.id, nums);
   }
   if (parseTmdbTvId(meta.id) != null && opts.tmdbKey) {
@@ -753,7 +791,9 @@ export async function fetchSeasonEpisodes(
   season: number,
   opts: EpisodeSourceOptions,
 ): Promise<PlayEpisode[]> {
+  throwIfAborted(opts.signal);
   const configured = await configuredEpisodeSource(meta, opts);
+  throwIfAborted(opts.signal);
   if (configured) {
     if (configured.kind === "addon") {
       return configured.episodes.filter((episode) => episode.season === season);
@@ -770,7 +810,7 @@ export async function fetchSeasonEpisodes(
   // player's season browser until that path is modelled.
   if (season === 0 && !isAnimeId(meta.id)) return [];
   if (meta.id.startsWith("tt")) {
-    const eps = await loadCinemetaEpisodes(meta.id, opts.tmdbKey);
+    const eps = await loadCinemetaEpisodes(meta.id, opts.tmdbKey, opts.signal);
     return (eps ?? []).filter((e) => e.season === season);
   }
   const seasonTmdbTvId = parseTmdbTvId(meta.id);
@@ -785,22 +825,45 @@ export async function fetchEpisodeList(
   meta: Meta,
   opts: EpisodeSourceOptions,
 ): Promise<PlayEpisode[]> {
+  throwIfAborted(opts.signal);
   const configured = await configuredEpisodeSource(meta, opts);
+  throwIfAborted(opts.signal);
   if (configured) {
-    if (configured.kind === "addon") return configured.episodes;
-    if (configured.kind === "tvdb") return tvdbEpisodes(configured.order);
-    return tmdbSourceEpisodes(configured.id, configured.seasons, opts.tmdbKey);
+    if (configured.kind === "addon") return completeList(configured.episodes, opts.requireComplete);
+    if (configured.kind === "tvdb")
+      return completeList(tvdbEpisodes(configured.order), opts.requireComplete);
+    return tmdbSourceEpisodes(
+      configured.id,
+      configured.seasons,
+      opts.tmdbKey,
+      opts.requireComplete,
+    );
   }
-  if (addonOnlyMetadata() || preferCustomMeta()) return (await getAddonEpisodes(meta.id)) ?? [];
+  if (addonOnlyMetadata() || preferCustomMeta())
+    return completeList(await getAddonEpisodes(meta.id), opts.requireComplete);
   if (meta.type !== "series" && !isAnimeId(meta.id)) return [];
-  if (meta.id.startsWith("tt")) return (await loadCinemetaEpisodes(meta.id, opts.tmdbKey)) ?? [];
+  if (meta.id.startsWith("tt"))
+    return completeList(
+      await loadCinemetaEpisodes(meta.id, opts.tmdbKey, opts.signal),
+      opts.requireComplete,
+    );
   if (parseTmdbTvId(meta.id) != null && opts.tmdbKey) {
     const seasons = await fetchSeasonList(meta, opts);
     const all: PlayEpisode[] = [];
-    for (const s of seasons) all.push(...(await fetchSeasonEpisodes(meta, s, opts)));
+    let incomplete = seasons.length === 0;
+    for (const s of seasons) {
+      throwIfAborted(opts.signal);
+      const eps = await fetchSeasonEpisodes(meta, s, opts);
+      // A season the provider could not answer leaves a hole in the list that
+      // looks like "no next episode" to the caller.
+      if (eps.length === 0) incomplete = true;
+      all.push(...eps);
+    }
+    if (opts.requireComplete && (incomplete || all.length === 0))
+      throw new EpisodeListUnavailableError();
     return all;
   }
-  return (await getNonStandardEpisodes(meta)) ?? [];
+  return completeList(await getNonStandardEpisodes(meta), opts.requireComplete);
 }
 
 export function nextUnwatchedAfter(
@@ -944,9 +1007,16 @@ async function tmdbSourceEpisodes(
   id: number,
   seasons: number[],
   key: string,
+  requireComplete = false,
 ): Promise<PlayEpisode[]> {
   const out: PlayEpisode[] = [];
-  for (const season of seasons) out.push(...(await tmdbSeason(key, id, season)));
+  let incomplete = seasons.length === 0;
+  for (const season of seasons) {
+    const eps = await tmdbSeason(key, id, season);
+    if (eps.length === 0) incomplete = true;
+    out.push(...eps);
+  }
+  if (requireComplete && (incomplete || out.length === 0)) throw new EpisodeListUnavailableError();
   return out.sort((a, b) => a.season - b.season || a.episode - b.episode);
 }
 

@@ -100,6 +100,16 @@ async function fetchEdges(anilistId: number): Promise<RawEdge[]> {
   return request;
 }
 
+/**
+ * True while the last edge fetch for this entry failed. `animeRelations` answers
+ * [] for both "no relations" and "could not ask"; callers that must not confuse
+ * the two (CW advancement) check this before trusting an empty result.
+ */
+export function animeRelationsUnavailable(anilistId: number): boolean {
+  const failedAt = edgeFailures.get(anilistId);
+  return failedAt != null && Date.now() - failedAt < EDGE_FAILURE_TTL_MS;
+}
+
 function fmtDate(d: RawNode["startDate"]): string | undefined {
   if (!d?.year) return undefined;
   const mm = String(d.month ?? 1).padStart(2, "0");
@@ -166,13 +176,25 @@ export type AnimeRelation = {
 
 const MAX_RELATIONS = 20;
 
-export async function animeRelations(anilistId: number): Promise<AnimeRelation[]> {
+export async function animeRelations(
+  anilistId: number,
+  opts?: { strict?: boolean },
+): Promise<AnimeRelation[]> {
   const out: AnimeRelation[] = [];
   const seen = new Map<number, number>();
   let frontier: Array<{ id: number; dir: number }> = [{ id: anilistId, dir: 0 }];
   seen.set(anilistId, 0);
   while (frontier.length > 0 && out.length < MAX_RELATIONS) {
     const batches = await Promise.all(frontier.map((f) => fetchEdges(f.id)));
+    if (opts?.strict) {
+      // A franchise walk that loses one entry can select the wrong sequel or
+      // report none at all. Only an empty answer backed by a failure counts:
+      // a cached success stays usable even if a later refresh failed.
+      for (let i = 0; i < frontier.length; i++) {
+        if (batches[i].length === 0 && animeRelationsUnavailable(frontier[i].id))
+          throw new Error("anime relations unavailable");
+      }
+    }
     const next: Array<{ id: number; dir: number }> = [];
     for (let i = 0; i < frontier.length; i++) {
       const dir = frontier[i].dir;

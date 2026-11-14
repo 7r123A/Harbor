@@ -27,28 +27,35 @@ const EXTERNAL: Array<[prefix: string, source: string]> = [
  * separately by `resolveAnimeEntry` so its fresher sequel records keep
  * precedence.
  */
-export async function resolveExternalKitsuId(id: string, maxAge?: number): Promise<number | null> {
+export async function resolveExternalKitsuId(
+  id: string,
+  maxAge?: number,
+  strict = false,
+): Promise<number | null> {
   for (const [prefix, source] of EXTERNAL) {
     if (!id.startsWith(prefix)) continue;
     const n = Number(id.slice(prefix.length));
     if (!Number.isSafeInteger(n) || n <= 0) return null;
-    let kitsuId = await externalToKitsu(source, n, maxAge).catch(() => null);
+    const attempt = async <T>(run: () => Promise<T | null>): Promise<T | null> =>
+      strict ? run() : run().catch(() => null);
+    let kitsuId = await attempt(() => externalToKitsu(source, n, maxAge, strict));
     if (kitsuId == null && (source === "myanimelist" || source === "anilist")) {
-      try {
-        const { kitsuFromExternal } = await import("./kitsu-mapping");
-        kitsuId = await kitsuFromExternal(
+      const { kitsuFromExternal } = await import("./kitsu-mapping");
+      kitsuId = await attempt(() =>
+        kitsuFromExternal(
           source === "myanimelist" ? "myanimelist/anime" : "anilist/anime",
           n,
           maxAge,
-        ).catch(() => null);
-        if (kitsuId == null && source === "myanimelist") {
-          const { anilistAnimeEntry } = await import("@/lib/anilist/entry");
-          const entry = await anilistAnimeEntry(n, "mal", maxAge).catch(() => null);
-          if (entry)
-            kitsuId = await kitsuFromExternal("anilist/anime", entry.id, maxAge).catch(() => null);
-        }
-      } catch {
-        return null;
+          strict,
+        ),
+      );
+      if (kitsuId == null && source === "myanimelist") {
+        const { anilistAnimeEntry } = await import("@/lib/anilist/entry");
+        const entry = await attempt(() => anilistAnimeEntry(n, "mal", maxAge));
+        if (entry)
+          kitsuId = await attempt(() =>
+            kitsuFromExternal("anilist/anime", entry.id, maxAge, strict),
+          );
       }
     }
     return kitsuId;
