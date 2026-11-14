@@ -212,6 +212,7 @@ test("the anime TVDB panel uses the selected language on matched franchise episo
     ["fr", "L’avenir", "Suzuki regarde Tani monter dans le train."],
   ]) {
     const ep = { ...episode(), sourceMetaId: "kitsu:50634" };
+    let titleSelections = 0;
     const { useAnimeTvdbPanel } = load("src/views/detail/anime-episodes/use-anime-tvdb-panel.ts", {
       react: hooks([
         1,
@@ -228,13 +229,21 @@ test("the anime TVDB panel uses the selected language on matched franchise episo
       "@/lib/providers/anime-detail": {},
       "@/lib/providers/tvdb": {},
       "@/lib/providers/tmdb/tmdb-client": { tmdbLanguageIso: () => lang },
-      "@/lib/localized-text": text,
+      "@/lib/localized-text": {
+        ...text,
+        pickPreferredEpisodeTitle: (...args: Parameters<typeof pickPreferredEpisodeTitle>) => {
+          titleSelections++;
+          return pickPreferredEpisodeTitle(...args);
+        },
+      },
       "@/lib/providers/harbor-imdb": {},
       "@/lib/providers/tvdb-order": { seasonDateRange: () => ({}) },
       "@/lib/streams/anime-identity": {},
       "./anime-slot-match": { resolveAnimeSlotMatch },
     });
     const { panel } = useAnimeTvdbPanel(49372, null, [], "aired", "", true, [ep]);
+    assert.equal(panel.items.length, 2);
+    assert.equal(titleSelections, 1, "only the selected season resolves episode text");
     assert.deepEqual(panel.visibleEpisodes, [
       { ...ep, title: name, synopsis, titleLanguage: lang, synopsisLanguage: lang },
     ]);

@@ -1833,13 +1833,17 @@ export function useScrollMemory(
     const el = ref.current;
     if (!el || !active) return;
 
-    let restoring = true;
+    const initialSnap = recallScroll(key);
+    const startsAtTop = initialSnap?.fallback === 0 && !initialSnap.anchor;
+    // A fresh page or a saved top position needs no layout read during the commit.
+    const initialHeight = initialSnap && !startsAtTop ? el.clientHeight : undefined;
+    let restoring = initialSnap != null;
     let settleId: number | null = null;
     let saveTimer: number | null = null;
     let revealId: number | null = null;
     let lastScrollAt = 0;
-    let parked = el.clientHeight === 0;
-    let everVisible = !parked;
+    let parked = initialHeight === 0 || el.closest("[data-layer-inactive]") != null;
+    let everVisible = initialHeight !== undefined && !parked;
     let retries = 0;
     let retryId: number | null = null;
 
@@ -1850,9 +1854,9 @@ export function useScrollMemory(
       }
     };
 
-    const initialSnap = recallScroll(key);
-    const wantsHide =
-      hideUntilRestored && !!initialSnap && (targetForSnap(el, initialSnap) ?? 0) > 8;
+    const initialTarget =
+      initialSnap && !startsAtTop && hideUntilRestored ? targetForSnap(el, initialSnap) : undefined;
+    const wantsHide = (initialTarget ?? 0) > 8;
     let revealed = !wantsHide;
     const reveal = () => {
       if (revealed) return;
@@ -1882,7 +1886,7 @@ export function useScrollMemory(
       }, 30000);
     };
 
-    const tryRestore = (clamp = false) => {
+    const tryRestore = (clamp = false, height?: number, measuredTarget?: number | null) => {
       if (!restoring) return;
       const snap = recallScroll(key);
       if (!snap) {
@@ -1892,7 +1896,8 @@ export function useScrollMemory(
         reveal();
         return;
       }
-      if (el.clientHeight === 0) {
+      const viewportHeight = height ?? el.clientHeight;
+      if (viewportHeight === 0) {
         /* The layer is parked, or it has just been shown and has not been laid out yet. Giving up
          * here is what loses the position: the effect runs in the same commit that lifts the park,
          * so the element can still report no height, and the resize observer does not fire for a
@@ -1907,7 +1912,7 @@ export function useScrollMemory(
         }
         return;
       }
-      const target = targetForSnap(el, snap);
+      const target = measuredTarget === undefined ? targetForSnap(el, snap) : measuredTarget;
       if (target === null) {
         restoring = false;
         cancelSettle();
@@ -1915,7 +1920,7 @@ export function useScrollMemory(
         reveal();
         return;
       }
-      const max = el.scrollHeight - el.clientHeight;
+      const max = target === 0 ? 0 : el.scrollHeight - viewportHeight;
       if (max < target - 4 && !clamp) return;
       el.scrollTop = Math.min(target, max);
       restoring = false;
@@ -1945,7 +1950,8 @@ export function useScrollMemory(
     };
 
     const onResize = () => {
-      const hidden = el.clientHeight === 0;
+      const height = el.clientHeight;
+      const hidden = height === 0;
       if (hidden && !parked) {
         parked = true;
         flushSave();
@@ -1955,12 +1961,12 @@ export function useScrollMemory(
         parked = false;
         restoring = true;
         armSettle();
-        tryRestore(everVisible);
+        tryRestore(everVisible, height);
         everVisible = true;
         return;
       }
       if (!hidden) everVisible = true;
-      tryRestore();
+      tryRestore(false, height);
     };
 
     const saveAfterScroll = () => {
@@ -1985,9 +1991,11 @@ export function useScrollMemory(
     // before the scroll timer or comes from keyboard, controller, or app code.
     const unregisterScrollSave = registerScrollSave(flushSave);
 
-    armSettle();
-    if (wantsHide) revealId = window.setTimeout(reveal, 220);
-    tryRestore();
+    if (initialSnap) {
+      armSettle();
+      if (wantsHide) revealId = window.setTimeout(reveal, 220);
+      if (!startsAtTop) tryRestore(false, initialHeight, initialTarget);
+    }
 
     const ro = new ResizeObserver(onResize);
     ro.observe(el);

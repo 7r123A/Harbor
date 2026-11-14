@@ -29,7 +29,7 @@ import { manualWatchedVersion, subscribeManualWatched } from "@/lib/manual-watch
 import { useT } from "@/lib/i18n";
 import { AnimeEpisodeRow } from "./anime-episodes/episode-row";
 import { AnimeSeasonPicker } from "./anime-episodes/anime-season-picker";
-import { mapSeasonToEntry } from "./anime-episodes/anime-season-art";
+import { mapSeasonToEntry, type SeasonArtSelection } from "./anime-episodes/anime-season-art";
 import { MovieEntryCard } from "./anime-episodes/movie-entry-card";
 import { useAnimeOrder } from "./anime-episodes/use-anime-order";
 import { SeasonArcPicker } from "./series-episodes/season-arc-picker";
@@ -145,15 +145,7 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
   tmdbTvId?: number;
   tmdbSeasons?: Season[];
   seasonPosters?: Record<number, string>;
-  onSeasonArt?: (
-    sel: {
-      background?: string;
-      description?: string;
-      logo?: string;
-      name?: string;
-      entryId: string;
-    } | null,
-  ) => void;
+  onSeasonArt?: (sel: SeasonArtSelection | null) => void;
 }) {
   const t = useT();
   const { isConnected: traktConnected } = useTrakt();
@@ -345,8 +337,7 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
     () => mapSeasonToEntry(tvdbActiveSeason, franchise, currentId),
     [tvdbActiveSeason, franchise, currentId],
   );
-  // The matched franchise entry's episodes carry their TMDB season number (AniZip), which selects
-  // the right localized per-season overview so the hero changes per season instead of staying static.
+  // Use the TMDB season number carried by this franchise entry's mapped episodes.
   const seasonOverview = useMemo(() => {
     if (!seasonEntry || !seasonOverviews) return undefined;
     const counts = new Map<number, number>();
@@ -369,8 +360,6 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
       seasonEntry
         ? {
             background: seasonEntry.meta.background,
-            // Prefer the localized per-season TMDB overview, then the localized series overview,
-            // over the franchise entry's Kitsu synopsis (localized* is only set when localization is active).
             description: seasonOverview ?? localizedOverview ?? seasonEntry.meta.description,
             logo: seasonEntry.meta.logo,
             name: seasonEntry.meta.name,

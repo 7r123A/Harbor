@@ -988,8 +988,6 @@ async function loadAnimeDetails(
       const titleOk = !!tmdbFull.title && isTextInLanguage(tmdbFull.title, iso1);
       if (overviewOk) patch.overview = tmdbFull.overview;
       if (titleOk) patch.title = tmdbFull.title;
-      // TMDB's tv/{id} response carries per-season localized overviews; surface them so the season
-      // hero can vary per season instead of showing the static series overview everywhere.
       const seasonOverviews: Record<number, string> = {};
       for (const s of tmdbFull.seasons ?? []) {
         if (s.overview && isTextInLanguage(s.overview, iso1))

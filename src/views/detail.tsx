@@ -205,7 +205,7 @@ import { mergeTrailerCandidates } from "@/lib/trailer-candidates";
 import { SeriesEpisodes } from "./detail/series-episodes";
 import { CinemetaEpisodes } from "./detail/cinemeta-episodes";
 import { AnimeEpisodes } from "./detail/anime-episodes";
-import type { SeasonArt } from "./detail/anime-episodes/anime-season-art";
+import type { SeasonArt, SeasonArtSelection } from "./detail/anime-episodes/anime-season-art";
 import { EpisodeGridSkeleton } from "./detail/episode-grid-skeleton";
 import { MovieEntrySkeleton } from "./detail/movie-entry-skeleton";
 import { StreamingLinks } from "./detail/streaming-links";
@@ -333,49 +333,36 @@ function DetailContent({
   const [enrichedBg, setEnrichedBg] = useState<string | undefined>(undefined);
   const [seasonArt, setSeasonArt] = useState<SeasonArt | null>(null);
   const seasonEntryRef = useRef<string | null>(null);
-  const handleSeasonArt = useCallback(
-    (
-      sel: {
-        background?: string;
-        description?: string;
-        logo?: string;
-        name?: string;
-        entryId: string;
-      } | null,
-    ) => {
-      if (!sel) {
-        seasonEntryRef.current = null;
-        setSeasonArt(null);
-        return;
-      }
-      seasonEntryRef.current = sel.entryId;
-      const cachedLogo = peekAnimeArt(sel.entryId)?.logo;
-      startTransition(() => {
-        setSeasonArt({
-          background: sel.background,
-          description: sel.description,
-          logo: cachedLogo ?? sel.logo,
-        });
+  const handleSeasonArt = useCallback((sel: SeasonArtSelection | null) => {
+    if (!sel) {
+      seasonEntryRef.current = null;
+      setSeasonArt(null);
+      return;
+    }
+    seasonEntryRef.current = sel.entryId;
+    const cachedLogo = peekAnimeArt(sel.entryId)?.logo;
+    startTransition(() => {
+      setSeasonArt({
+        background: sel.background,
+        description: sel.description,
+        logo: cachedLogo ?? sel.logo,
       });
-      if (!cachedLogo && sel.name) {
-        const entryId = sel.entryId;
-        void resolveLogo(
-          settingsRef.current.tmdbKey,
-          { id: entryId, type: "series", name: sel.name },
-          { preferOwn: true },
-        )
-          .then((u) => {
-            if (u && seasonEntryRef.current === entryId) {
-              startTransition(() => setSeasonArt((p) => (p ? { ...p, logo: u } : p)));
-            }
-          })
-          .catch(() => {});
-      }
-    },
-    [],
-  );
-  // Season picker swaps franchise seasons in-place without re-running animeDetails, so the
-  // localized TMDB series overview must be passed down for the season hero description.
+    });
+    if (!cachedLogo && sel.name) {
+      const entryId = sel.entryId;
+      void resolveLogo(
+        settingsRef.current.tmdbKey,
+        { id: entryId, type: "series", name: sel.name },
+        { preferOwn: true },
+      )
+        .then((u) => {
+          if (u && seasonEntryRef.current === entryId) {
+            startTransition(() => setSeasonArt((p) => (p ? { ...p, logo: u } : p)));
+          }
+        })
+        .catch(() => {});
+    }
+  }, []);
   const localizedAnimeOverview = useMemo(() => {
     if (!detail?.overview) return undefined;
     const iso1 = settings.tmdbLanguage || settings.uiLanguage || "en";
@@ -2666,8 +2653,10 @@ function DetailContent({
 
   const hasHeroProviders = isAnime ? streamers.length > 0 : watchProviders.length > 0;
   const hasHeroAside = !!(heroAwardsInline || hasHeroProviders);
+  const stableSeasonSynopsis = !liveContext && !addonEpisodeList && isAnime && franchise.length > 1;
+  const hasSynopsis = !!overview || stableSeasonSynopsis;
   const heroGridColumns =
-    overview && hasHeroAside ? "xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]" : "";
+    hasSynopsis && hasHeroAside ? "xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]" : "";
 
   return (
     <main
@@ -3075,11 +3064,11 @@ function DetailContent({
       </section>
 
       <div {...contentDrag} className="flex flex-col gap-16 px-12 pb-24 pt-14">
-        {(overview || hasHeroAside) && (
+        {(hasSynopsis || hasHeroAside) && (
           <div
             className={`grid min-w-0 grid-cols-1 items-start gap-8 xl:gap-10 ${heroGridColumns}`}
           >
-            {overview && <Synopsis text={overview} />}
+            {hasSynopsis && <Synopsis text={overview} stableHeight={stableSeasonSynopsis} />}
             {hasHeroAside && (
               <div className="flex min-w-0 flex-col gap-6">
                 {isAnime && streamers.length > 0 && <StreamingLinks streamers={streamers} />}

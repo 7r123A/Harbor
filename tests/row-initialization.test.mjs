@@ -98,6 +98,10 @@ test("row initialization consumes observer width and passes the known page scrol
     assert.ok(container);
     await React.act(async () => {
       container.cb({ width: 1000, height: 240 });
+      const track = subscriptions.find(({ el }) => el.classList.contains("harbor-row-track"));
+      track.cb({ width: 1000, height: 240 });
+      track.el.dispatchEvent(new dom.window.Event("scroll"));
+      assert.equal(frames.size, 1, "initialization, resize, and scroll share one measurement");
       const pending = [...frames.values()];
       frames.clear();
       for (const frame of pending) frame(0);

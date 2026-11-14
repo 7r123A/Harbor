@@ -83,6 +83,8 @@ test("scroll memory saves the outgoing anchor before navigation parks the layer"
   const snapshots = new Map();
   let parked = false;
   let reads = 0;
+  let heightReads = 0;
+  let onResize;
   let cleanup;
   let position = 0;
   let nextId = 0;
@@ -100,6 +102,7 @@ test("scroll memory saves the outgoing anchor before navigation parks the layer"
       position = value;
     },
     get clientHeight() {
+      heightReads++;
       return parked ? 0 : 800;
     },
     scrollHeight: 6000,
@@ -131,6 +134,9 @@ test("scroll memory saves the outgoing anchor before navigation parks the layer"
       noteScrollActivity: () => {},
       performance: { now: () => 10 },
       ResizeObserver: class {
+        constructor(callback) {
+          onResize = callback;
+        }
         observe() {}
         disconnect() {}
       },
@@ -141,6 +147,7 @@ test("scroll memory saves the outgoing anchor before navigation parks the layer"
   );
   const ref = { current: scroller };
   useScrollMemory("discover", ref);
+  assert.equal(heightReads, 0, "a page with no saved scroll skips layout during setup");
   position = 700;
   listeners.get("scroll")();
   position = 1200;
@@ -158,5 +165,13 @@ test("scroll memory saves the outgoing anchor before navigation parks the layer"
   position = 0;
   useScrollMemory("discover", ref);
   assert.equal(position, 1200);
+  cleanup();
+
+  snapshots.set("discover", { fallback: 0, delta: 0 });
+  heightReads = 0;
+  useScrollMemory("discover", ref);
+  assert.equal(heightReads, 0, "a saved top position also skips layout during setup");
+  onResize();
+  assert.equal(position, 0);
   cleanup();
 });

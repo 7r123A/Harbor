@@ -368,11 +368,6 @@ export function Row({
     const next = (Math.ceil(raw * 64) + 1) / 64;
     batchWrite(() => setCellWidth(next));
   };
-  const measureRef = useRef(measure);
-  useLayoutEffect(() => {
-    measureRef.current = measure;
-  });
-
   const lastScrollPosRef = useRef(0);
   const readPos = (el: HTMLDivElement) => {
     const pos = rtl ? -el.scrollLeft : el.scrollLeft;
@@ -388,15 +383,35 @@ export function Row({
     const el = trackRef.current;
     if (!el) return;
     const pos = readPos(el);
-    const remaining = el.scrollWidth - el.clientWidth - pos;
+    const width = el.clientWidth;
+    const remaining = el.scrollWidth - width - pos;
     batchWrite(() => {
       setCanPrev(pos > 1);
       setCanNext(remaining > 1);
     });
-    if (el.clientWidth > 0 && remaining < 800 && (alwaysActive || nearRef.current)) {
+    if (width > 0 && remaining < 800 && (alwaysActive || nearRef.current)) {
       onEndRef.current?.();
     }
   };
+
+  const measureRef = useRef(() => {
+    measure();
+    measureScroll();
+  });
+  useLayoutEffect(() => {
+    measureRef.current = () => {
+      measure();
+      measureScroll();
+    };
+  });
+  const measureFrame = useRef<number | null>(null);
+  const scheduleMeasure = useCallback(() => {
+    if (measureFrame.current != null) return;
+    measureFrame.current = requestAnimationFrame(() => {
+      measureFrame.current = null;
+      measureRef.current();
+    });
+  }, []);
 
   const drag = useRef({
     active: false,
@@ -490,12 +505,25 @@ export function Row({
   const restoredRef = useRef(false);
   const userInteractedRef = useRef(false);
   useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      measureRef.current();
-      measureScroll();
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [childCount, trackEl, cellWidth, effMin, rtl, near, alwaysActive, hasEndCallback]);
+    scheduleMeasure();
+  }, [
+    childCount,
+    trackEl,
+    cellWidth,
+    effMin,
+    rtl,
+    near,
+    alwaysActive,
+    hasEndCallback,
+    scheduleMeasure,
+  ]);
+  useEffect(
+    () => () => {
+      if (measureFrame.current != null) cancelAnimationFrame(measureFrame.current);
+      measureFrame.current = null;
+    },
+    [],
+  );
   useLayoutEffect(() => {
     if (!trackEl || cellWidth == null) return;
     if (memoryKey && !restoredRef.current && childCount > 0) {
@@ -521,15 +549,6 @@ export function Row({
     const container = containerRef.current;
     const track = trackRef.current;
     if (!container || !track) return;
-    let roRaf: number | null = null;
-    const scheduleMeasure = () => {
-      if (roRaf != null) return;
-      roRaf = requestAnimationFrame(() => {
-        roRaf = null;
-        measureRef.current();
-        measureScroll();
-      });
-    };
     // One shared ResizeObserver rather than one per row. A view mounts dozens of rows at once, so
     // each private observer was another object created during the click that switched to it — and
     // the entry already carries the width, so the measurement needs no layout read either.
@@ -547,15 +566,9 @@ export function Row({
       scheduleMeasure();
     });
     let saveTimer: number | null = null;
-    let scrollRaf: number | null = null;
     const onScroll = () => {
       readPos(track);
-      if (scrollRaf == null) {
-        scrollRaf = requestAnimationFrame(() => {
-          scrollRaf = null;
-          measureScroll();
-        });
-      }
+      scheduleMeasure();
       if (!memoryKey) return;
       if (saveTimer != null) window.clearTimeout(saveTimer);
       saveTimer = window.setTimeout(() => {
@@ -620,8 +633,6 @@ export function Row({
     return () => {
       stopContainerResize();
       stopTrackResize();
-      if (roRaf != null) cancelAnimationFrame(roRaf);
-      if (scrollRaf != null) cancelAnimationFrame(scrollRaf);
       if (resetRaf != null) cancelAnimationFrame(resetRaf);
       track.removeEventListener("scroll", onScroll);
       track.removeEventListener("wheel", onWheel);
@@ -635,7 +646,7 @@ export function Row({
         rememberRowScroll(memoryKey, lastScrollPosRef.current);
       }
     };
-  }, [scrollKey, memoryKey, rememberRowScroll]);
+  }, [scrollKey, memoryKey, rememberRowScroll, scheduleMeasure]);
 
   const scroll = (dir: -1 | 1) => {
     const el = trackRef.current;
