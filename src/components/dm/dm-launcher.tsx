@@ -137,7 +137,7 @@ function usePlaybackActive(): boolean {
 type ToastState = { event: DmIncoming; key: number };
 
 /** A speech bubble with three live dots: reads as messaging even at rest. */
-function DmGlyph({ size = 21 }: { size?: number }) {
+export function DmGlyph({ size = 21 }: { size?: number }) {
   return (
     <svg
       width={size}
@@ -272,9 +272,6 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
   const unreadLabel = unread > 99 ? "99+" : String(unread);
 
   const bottomBase = "var(--harbor-music-dock, 0px) + var(--harbor-viewport-bottom, 0px)";
-  const launcherBottom = playing
-    ? `calc(5.25rem + var(--harbor-viewport-bottom, 0px))`
-    : `calc(1.25rem + ${bottomBase})`;
   const panelBottom = playing
     ? `calc(5.25rem + var(--harbor-viewport-bottom, 0px))`
     : `calc(1.25rem + ${bottomBase})`;
@@ -282,22 +279,7 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
   return (
     <>
       <style>{GLASS_CSS}</style>
-      {!open &&
-        createPortal(
-          <button
-            type="button"
-            onClick={() => setOpen(true)}
-            aria-label={unread > 0 ? t("Messages ({count} unread)", { count: unread }) : t("Messages")}
-            aria-haspopup="dialog"
-            className="harbor-dm-glass"
-            style={{ bottom: launcherBottom }}
-          >
-            <DmGlyph size={20} />
-            <span className="harbor-dm-label">{t("Messages")}</span>
-            {unread > 0 && <span className="harbor-dm-badge">{unreadLabel}</span>}
-          </button>,
-          document.body,
-        )}
+      
 
       {open &&
         createPortal(
