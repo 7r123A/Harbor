@@ -79,7 +79,13 @@ import { reconcileRemoteWatched } from "@/lib/stremio-watched-pull";
 import { isCorruptAnimeEntry } from "@/lib/anime-cw-repair";
 import { absorbCloudAnimeCw } from "@/lib/anime-cw-absorb";
 import { animeCwIdsVersion, subscribeAnimeCwIds } from "@/lib/anime-cw-ids";
-import { cwTitleKey, dedupeAnimeCw, warmCwAnimeIdentities } from "@/lib/cw-anime-identity";
+import {
+  cwTitleKey,
+  cwWarmIdentityKey,
+  dedupeAnimeCw,
+  warmCwAnimeIdentities,
+} from "@/lib/cw-anime-identity";
+import { cwCacheOwnerKey } from "@/lib/cw-derived-caches";
 import {
   cwAnimeVersion,
   cwAnimeWarmEnd,
@@ -257,7 +263,7 @@ export function Home({
   const [buildTick, setBuildTick] = useState(0);
   const { isConnected: traktConnected, session: traktSession } = useTrakt();
   const { isConnected: simklConnected } = useSimkl();
-  const { isConnected: anilistConnected } = useAnilist();
+  const { isConnected: anilistConnected, session: anilistSession } = useAnilist();
   const letterboxd = useLetterboxd();
   const rowsRef = useRef<HomeRow[]>([]);
   const loadingRef = useRef(new Map<string, NonNullable<HomeRow["fetcher"]>>());
@@ -843,12 +849,26 @@ export function Home({
   useEffect(() => {
     cwAnimeVersion(animeIdsVersion);
   }, [animeIdsVersion]);
+  // Equivalent card arrays may be recreated by provider updates and deduping.
+  // Warm only when a source identity/checkpoint or the account owner changes.
+  const cwWarmBatchKey = useMemo(
+    () =>
+      continueWatching
+        .map((item) => cwWarmIdentityKey(item))
+        .sort()
+        .join("||"),
+    [continueWatching],
+  );
+  const cwWarmOwner = cwCacheOwnerKey();
+  const cwWarmItemsRef = useRef(continueWatching);
+  cwWarmItemsRef.current = continueWatching;
   useEffect(() => {
+    if (!cwWarmBatchKey) return;
     cwAnimeWarmStart();
-    void warmCwAnimeIdentities(continueWatching, { tmdbKey: settings.tmdbKey })
+    void warmCwAnimeIdentities(cwWarmItemsRef.current, { tmdbKey: settings.tmdbKey })
       .catch(() => {})
       .finally(cwAnimeWarmEnd);
-  }, [continueWatching, settings.tmdbKey]);
+  }, [cwWarmBatchKey, cwWarmOwner, settings.tmdbKey]);
   const resurfaceLibrary = useMemo(() => {
     const disabledSources = new Set<string>();
     if (!settings.cwSources.simkl) disabledSources.add("simkl");
@@ -915,24 +935,40 @@ export function Home({
     settings.cwSources,
     hideSharedCw,
   ]);
+  const anilistCwIds = useMemo(
+    () =>
+      [
+        ...new Set(
+          continueWatching.filter((i) => /^(kitsu|mal|anilist):/.test(i._id)).map((i) => i._id),
+        ),
+      ].sort(),
+    [continueWatching],
+  );
+  const anilistCwIdsKey = anilistCwIds.join("|");
   useEffect(() => {
     if (!anilistConnected) {
       setAnilistWatchedMap((prev) => (prev.size ? new Map() : prev));
       return;
     }
     let cancelled = false;
-    const ids = continueWatching
-      .filter((i) => /^(kitsu|mal|anilist):/.test(i._id))
-      .map((i) => i._id);
-    loadAnilistWatchedMap(ids)
+    loadAnilistWatchedMap(anilistCwIds)
       .then((m) => {
-        if (!cancelled) setAnilistWatchedMap(m);
+        if (cancelled) return;
+        setAnilistWatchedMap((prev) => {
+          if (prev.size !== m.size) return m;
+          for (const [id, watched] of m) {
+            const old = prev.get(id);
+            if (!old || old.size !== watched.size) return m;
+            for (const episode of watched) if (!old.has(episode)) return m;
+          }
+          return prev;
+        });
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [anilistConnected, continueWatching]);
+  }, [anilistConnected, anilistCwIdsKey, anilistSession]);
 
   const cwProgressPool = useMemo(
     () => [...items, ...localCwItems, ...externalCw],
