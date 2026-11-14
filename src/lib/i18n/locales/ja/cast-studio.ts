@@ -134,5 +134,7 @@ const castStudio: Record<string, string> = {
   "Back to automatic": "自動に戻す",
   "These settings set themselves for the device you pick.":
     "これらの設定は選んだデバイスに合わせて自動で調整されます。",
+  "Shifted {offset}, {parts} part(s), timing not verified":
+    "{offset} ずらしました、{parts} 区間、精度は未確認",
 };
 export default castStudio;

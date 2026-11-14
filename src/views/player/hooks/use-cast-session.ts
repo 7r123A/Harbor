@@ -452,6 +452,10 @@ export function useCastSession(
       return;
     }
     const finalPos = lastCastPositionRef.current;
+    if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
+    seekTimerRef.current = null;
+    seekTargetRef.current = null;
+    seekWaitersRef.current.splice(0).forEach((done) => done());
     try {
       await owned(castStop);
     } catch (error) {
@@ -493,20 +497,30 @@ export function useCastSession(
       lastCastPositionRef.current = target;
       setCastPositionSec(target);
       if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
+      // The seek belongs to the cast it was made in: if that cast stops or another one starts
+      // before the timer fires, the seek is dropped instead of reaching the new cast.
+      const lease = leaseRef.current;
       await new Promise<void>((resolve) => {
         seekWaitersRef.current.push(resolve);
         seekTimerRef.current = setTimeout(() => {
           seekTimerRef.current = null;
           const waiters = seekWaitersRef.current.splice(0);
           const finalTarget = seekTargetRef.current ?? target;
-          void owned(() => castSeek(finalTarget))
+          if (!lease || leaseRef.current !== lease || !ownsCastSession(lease)) {
+            waiters.forEach((done) => done());
+            return;
+          }
+          void withCastSession(lease, () => castSeek(finalTarget))
             .then(() => {
+              if (leaseRef.current !== lease) return;
               castStartTargetRef.current = finalTarget;
               castSeekConfirmedRef.current = false;
               everPlayedRef.current = false;
               idleTicksRef.current = 0;
             })
-            .catch((error) => setCastError(String(error)))
+            .catch((error) => {
+              if (leaseRef.current === lease) setCastError(String(error));
+            })
             .finally(() => {
               if (seekTargetRef.current === finalTarget) seekTargetRef.current = null;
               waiters.forEach((done) => done());
@@ -514,8 +528,17 @@ export function useCastSession(
         }, 450);
       });
     },
-    [audio, owned],
+    [audio],
   );
+
+  /** Drops a seek still waiting for its timer and releases whoever awaits it. */
+  const cancelPendingSeek = useCallback(() => {
+    if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
+    seekTimerRef.current = null;
+    seekTargetRef.current = null;
+    seekWaitersRef.current.splice(0).forEach((done) => done());
+  }, []);
+  useEffect(() => cancelPendingSeek, [cancelPendingSeek]);
 
   /** Restarts the running cast with changed settings at the current position. */
   const reloadCast = useCallback(

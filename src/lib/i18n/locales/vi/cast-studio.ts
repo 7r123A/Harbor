@@ -133,5 +133,7 @@ const castStudio: Record<string, string> = {
   "Back to automatic": "Quay lại tự động",
   "These settings set themselves for the device you pick.":
     "Các cài đặt này tự điều chỉnh theo thiết bị bạn chọn.",
+  "Shifted {offset}, {parts} part(s), timing not verified":
+    "Đã dịch {offset}, {parts} phần, chưa kiểm tra độ chính xác",
 };
 export default castStudio;

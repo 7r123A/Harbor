@@ -141,7 +141,13 @@ export function usePlayerCast(params: {
   }, [menuOpen, caps]);
   const isRemoteManifest = /\.(m3u8|mpd)(\?|$)/i.test(src.url);
   useEffect(() => {
-    if (!menuOpen || isRemoteManifest || !src.url) return;
+    if (!menuOpen) return;
+    if (isRemoteManifest || !src.url) {
+      // An older request's cleanup keeps it from clearing these, and its result is for another source.
+      setPreview(null);
+      setPreviewBusy(false);
+      return;
+    }
     let cancelled = false;
     const timer = window.setTimeout(() => {
       const snap = snapRef.current;

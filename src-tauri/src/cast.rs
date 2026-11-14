@@ -640,10 +640,14 @@ pub async fn cast_load(
     let audio_type = is_audio_content_type(content_type.as_deref());
     // Files go through the converter, which only copies what the receiver can take as it is; an
     // adaptive playlist or an audio stream is handed over directly unless something must change.
+    // A copied stream plays its first audio track untouched, so another track or any audio
+    // processing needs the converter too.
     let convert = !audio_type
         && (transcode.unwrap_or(false)
             || wants_sub
             || options.force_conversion
+            || options.audio_filters_requested()
+            || audio_track_ordinal.unwrap_or(0) > 0
             || reload_has_external_audio(&external_audio)
             || needs_auto_remux(&kind_str, &url, content_type.as_deref()));
     eprintln!(
@@ -968,12 +972,19 @@ async fn restart_active(
     if !crate::transcode::ffmpeg_present() {
         return Err("ffmpeg not found. Install ffmpeg to convert this video for the TV.".into());
     }
+    // Loading the new stream sends Play; a seek or a settings change must not resume a pause.
+    let was_paused = receiver_paused().await;
     let (session, info) =
         start_converted(proxy, Arc::new(reload), position.max(0.0), fast_seek, current_control(), extra.uuid.clone()).await?;
     replace_active_session(session, |id| async move {
         proxy.stop_hls_session(&id).await;
     })
     .await?;
+    if was_paused {
+        if let Err(error) = pause_active().await {
+            eprintln!("[harbor::cast] could not pause again after the restart: {error}");
+        }
+    }
     Ok(info)
 }
 
@@ -1421,6 +1432,25 @@ pub async fn cast_play() -> Result<(), String> {
 #[tauri::command]
 pub async fn cast_pause() -> Result<(), String> {
     let _operation = TRANSPORT_OPS.lock().await;
+    pause_active().await
+}
+
+/// Whether the receiver reports itself paused. Chromecast is not asked here: that takes a
+/// connection of its own, so a restart on a Chromecast still resumes playback.
+async fn receiver_paused() -> bool {
+    let state = if let Some(cu) = snapshot_dlna() {
+        dlna::status(cu).await.ok().map(|s| s.player_state)
+    } else if let Some(ecp) = snapshot_roku() {
+        roku::status(&ecp).await.ok().map(|s| s.player_state)
+    } else if let Some((h, p)) = snapshot_airplay() {
+        airplay::status(h, p).await.ok().map(|(_, state)| state)
+    } else {
+        None
+    };
+    state.is_some_and(|s| normalize_player_state(&s) == "PAUSED")
+}
+
+async fn pause_active() -> Result<(), String> {
     if let Some((cu, id)) = snapshot_dlna_audio() {
         if !dlna::uri_has_audio_session(&dlna::current_uri(&cu).await?, &id) { return Err("The speaker source changed".into()); }
         dlna::pause(cu.clone()).await?;

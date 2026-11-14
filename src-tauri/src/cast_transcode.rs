@@ -86,7 +86,7 @@ impl CastOptions {
         }
     }
 
-    fn audio_filters_requested(&self) -> bool {
+    pub(crate) fn audio_filters_requested(&self) -> bool {
         self.volume_boost > 0 || self.night_mode || self.dialogue_boost || self.audio_delay_ms != 0
     }
 
@@ -113,6 +113,8 @@ pub struct VideoInfo {
     pub dolby_vision: Option<u32>,
     pub interlaced: bool,
     pub bitrate: u64,
+    /// Sample (pixel) aspect ratio when it is not square, e.g. 16:15 for a PAL DVD.
+    pub sar: Option<(u32, u32)>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -218,6 +220,8 @@ struct ProbeStream {
     #[serde(default)]
     r_frame_rate: Option<String>,
     #[serde(default)]
+    sample_aspect_ratio: Option<String>,
+    #[serde(default)]
     color_transfer: Option<String>,
     #[serde(default)]
     field_order: Option<String>,
@@ -245,6 +249,13 @@ fn parse_rate(rate: Option<&str>) -> Option<f64> {
     let (n, d) = rate?.split_once('/')?;
     let (n, d) = (n.parse::<f64>().ok()?, d.parse::<f64>().ok()?);
     (d > 0.0 && n > 0.0).then_some(n / d).filter(|v| *v > 1.0 && *v < 300.0)
+}
+
+/// "16:15" -> (16, 15); square ("1:1") and unknown ("0:1", "N/A") ratios give None.
+fn parse_sar(sar: Option<&str>) -> Option<(u32, u32)> {
+    let (n, d) = sar?.split_once(':')?;
+    let (n, d) = (n.trim().parse::<u32>().ok()?, d.trim().parse::<u32>().ok()?);
+    (n > 0 && d > 0 && n != d).then_some((n, d))
 }
 
 pub(crate) fn parse_probe(json: &str) -> Result<MediaProbe, String> {
@@ -281,6 +292,7 @@ pub(crate) fn parse_probe(json: &str) -> Result<MediaProbe, String> {
                     dolby_vision,
                     interlaced: matches!(field_order, "tt" | "bb" | "tb" | "bt"),
                     bitrate: s.bit_rate.and_then(|b| b.parse().ok()).unwrap_or(0),
+                    sar: parse_sar(s.sample_aspect_ratio.as_deref()),
                 });
             }
             "audio" => probe.audio.push(AudioInfo {
@@ -601,9 +613,15 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
             src_h = h;
         }
     }
+    // The output uses square pixels (setsar=1), so a non-square source is widened to its display
+    // shape first: a 720x576 PAL DVD at 16:15 is 768 wide, not 720.
+    let display_w = match video.and_then(|v| v.sar) {
+        Some((n, d)) if options.aspect == "default" => src_w as f64 * n as f64 / d as f64,
+        _ => src_w as f64,
+    };
     let (out_w, out_h) = if src_w > 0 && src_h > 0 {
         let h = src_h.min(max_height);
-        (even(src_w as f64 * h as f64 / src_h as f64), even(h as f64))
+        (even(display_w * h as f64 / src_h as f64), even(h as f64))
     } else {
         (1920, 1080)
     };
@@ -1119,6 +1137,24 @@ mod tests {
         assert!(!args.contains("-user_agent") && !args.contains("-reconnect"), "{args}");
         assert!(args.ends_with("-noaccurate_seek -ss 754.200 -i C:/Films/movie.mp4"), "{args}");
         assert_eq!(http_input_args("https://a/b.mkv", &HashMap::new(), true)[0], "-user_agent");
+    }
+
+    #[test]
+    fn anamorphic_sources_keep_their_display_shape() {
+        let probe = parse_probe(
+            r#"{"streams":[{"index":0,"codec_type":"video","codec_name":"mpeg2video","pix_fmt":"yuv420p","width":720,"height":576,"sample_aspect_ratio":"16:15","avg_frame_rate":"25/1"},
+               {"index":1,"codec_type":"audio","codec_name":"ac3","channels":2}],"format":{"duration":"100"}}"#,
+        )
+        .unwrap();
+        assert_eq!(probe.video.as_ref().and_then(|v| v.sar), Some((16, 15)));
+        let options = CastOptions::default();
+        let plan = build_plan(
+            &PlanInput { probe: Some(&probe), options: &options, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, external_audio: None, force_video_encode: false, force_audio_encode: false },
+            &FfmpegCaps::default(),
+        );
+        let args = plan.output.join(" ");
+        // 720x576 at 16:15 shows as 4:3, so square pixels need 768x576, not 720x576 (5:4).
+        assert!(args.contains("scale=768:576,setsar=1"), "{args}");
     }
 
     #[test]

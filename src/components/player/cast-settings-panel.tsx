@@ -258,8 +258,13 @@ export function CastSettingsPanel(props: CastSettingsPanelProps) {
   const audioOptions = useMemo<Array<[string, string]>>(
     () => [
       ["auto", t("Same as the player")],
+      // An added local file (a synced dub) can go to the TV too; added links cannot.
       ...props.audioTracks
-        .filter((track) => !track.external)
+        .filter(
+          (track) =>
+            !track.external ||
+            (!!track.externalFilename && !/^[a-z]+:\/\//i.test(track.externalFilename)),
+        )
         .map((track, i): [string, string] => [
           track.id,
           trackName(track, t("Track {number}", { number: i + 1 })),

@@ -130,5 +130,7 @@ const castStudio: Record<string, string> = {
   "Settings for {device}, with your changes": "{device} 的设置（含你的更改）",
   "Back to automatic": "恢复自动",
   "These settings set themselves for the device you pick.": "这些设置会根据你选择的设备自动调整。",
+  "Shifted {offset}, {parts} part(s), timing not verified":
+    "已平移 {offset}，{parts} 段，精度未验证",
 };
 export default castStudio;

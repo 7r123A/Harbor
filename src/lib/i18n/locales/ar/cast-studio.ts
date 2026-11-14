@@ -134,5 +134,7 @@ const castStudio: Record<string, string> = {
   "Back to automatic": "العودة إلى التلقائي",
   "These settings set themselves for the device you pick.":
     "تُضبط هذه الإعدادات تلقائيًا حسب الجهاز الذي تختاره.",
+  "Shifted {offset}, {parts} part(s), timing not verified":
+    "إزاحة {offset}، عدد الأجزاء {parts}، لم يُتحقق من الدقة",
 };
 export default castStudio;

@@ -506,11 +506,16 @@ function ExternalAudioStatus({ tracks }: { tracks: TrackInfo[] }) {
                 : tr("Matches most of this film (a different cut). Synced where it matches.")}
             </span>
             <span className="text-[11px] text-ink-subtle">
-              {tr("Shifted {offset}, {parts} part(s), accuracy within {ms} ms", {
-                offset,
-                parts: Math.max(1, r.segments),
-                ms: Math.max(1, Math.round(r.verifyMaxMs || r.verifyMedianMs || 0)),
-              })}
+              {r.verifyWindows > 0
+                ? tr("Shifted {offset}, {parts} part(s), accuracy within {ms} ms", {
+                    offset,
+                    parts: Math.max(1, r.segments),
+                    ms: Math.max(1, Math.round(r.verifyMaxMs || r.verifyMedianMs || 0)),
+                  })
+                : tr("Shifted {offset}, {parts} part(s), timing not verified", {
+                    offset,
+                    parts: Math.max(1, r.segments),
+                  })}
               {Math.abs(r.speed - 1) > 0.005 ? ` · ${tr("speed corrected")}` : ""}
             </span>
           </div>

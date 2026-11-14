@@ -135,5 +135,7 @@ const castStudio: Record<string, string> = {
   "Back to automatic": "Revenir au réglage automatique",
   "These settings set themselves for the device you pick.":
     "Ces réglages s’adaptent à l’appareil que vous choisissez.",
+  "Shifted {offset}, {parts} part(s), timing not verified":
+    "Décalé de {offset}, {parts} partie(s), précision non vérifiée",
 };
 export default castStudio;

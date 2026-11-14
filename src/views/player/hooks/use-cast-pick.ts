@@ -311,13 +311,27 @@ export function useCastPick(params: {
       // From here the device's own settings apply, and the panel shows them.
       rememberCastDevice(device);
       const media = resolveCastMedia(snap, castChoices, settings, device);
-      const burnSub = media.subtitle;
+      // A swapped stream is another file: the player's track numbers say nothing about its
+      // tracks, so its default audio plays and only subtitle files (not embedded tracks) burn in.
+      const swapped = resolved.kind === "swapped";
+      const audioTrackOrdinal = swapped ? undefined : media.audioTrackOrdinal;
+      const burnSub = swapped && media.subtitle?.kind === "embedded" ? null : media.subtitle;
+      // A copied stream plays its first audio track untouched, so another track or any audio
+      // processing needs the conversion.
+      const o = media.options;
+      const audioWork =
+        (audioTrackOrdinal ?? 0) > 0 ||
+        o.volumeBoost > 0 ||
+        o.nightMode ||
+        o.dialogueBoost ||
+        o.audioDelayMs !== 0;
       const forceTranscode =
         resolved.kind === "transcode" ||
         isLiveIptv ||
         burnSub != null ||
         media.externalAudio != null ||
-        media.options.forceConversion;
+        audioWork ||
+        o.forceConversion;
       // Remuxing a compatible file is not a re-encode; only a device the source does not suit
       // forces the safe profile.
       const profile =
@@ -341,8 +355,8 @@ export function useCastPick(params: {
           transcode: forceTranscode,
           profile,
           subtitle: burnSub,
-          subStyle: media.subStyle,
-          audioTrackOrdinal: media.audioTrackOrdinal,
+          subStyle: burnSub ? media.subStyle : null,
+          audioTrackOrdinal,
           externalAudio: media.externalAudio,
           options: media.options,
         },

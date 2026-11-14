@@ -152,10 +152,13 @@ fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
+    // Hex digits are read from the bytes: slicing the &str would panic when a multibyte
+    // character follows the '%' (as in "50%aé").
+    let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(v) = u8::from_str_radix(&input[i + 1..i + 3], 16) {
-                out.push(v);
+            if let (Some(hi), Some(lo)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                out.push(hi << 4 | lo);
                 i += 3;
                 continue;
             }
@@ -203,6 +206,8 @@ fn push_input(cmd: &mut Command, url: &str, headers: &HashMap<String, String>) {
             cmd.arg("-headers").arg(blob);
         }
         cmd.arg("-reconnect").arg("1").arg("-reconnect_streamed").arg("1").arg("-reconnect_delay_max").arg("4");
+        // A connection that stays open but sends nothing would otherwise block the read forever.
+        cmd.arg("-rw_timeout").arg("20000000");
     }
     cmd.arg("-i").arg(match local_path(url) {
         Some(path) => path.into_os_string(),
@@ -211,14 +216,42 @@ fn push_input(cmd: &mut Command, url: &str, headers: &HashMap<String, String>) {
 }
 
 /// Kills the child when dropped unless it already exited.
-struct Running(Child);
+struct Running(std::sync::Mutex<Child>);
+
+impl Running {
+    fn child(&self) -> std::sync::MutexGuard<'_, Child> {
+        self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Runs `work` (which reads the child's pipes) while a watchdog kills the child once the job
+    /// is cancelled. A stalled input gives neither output nor progress lines, so the readers
+    /// themselves never get to look at the flag; killing the child closes the pipes they wait on.
+    fn watch_cancel<T>(&self, cancel: &AtomicBool, work: impl FnOnce() -> T) -> T {
+        let done = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !done.load(Ordering::SeqCst) {
+                    if cancel.load(Ordering::SeqCst) {
+                        let _ = self.child().kill();
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                }
+            });
+            let out = work();
+            done.store(true, Ordering::SeqCst);
+            out
+        })
+    }
+}
 
 impl Drop for Running {
     fn drop(&mut self) {
-        if matches!(self.0.try_wait(), Ok(None)) {
-            let _ = self.0.kill();
+        let mut child = self.child();
+        if matches!(child.try_wait(), Ok(None)) {
+            let _ = child.kill();
         }
-        let _ = self.0.wait();
+        let _ = child.wait();
     }
 }
 
@@ -227,7 +260,7 @@ fn spawn(mut cmd: Command) -> Result<Running, String> {
     crate::proc_guard::configure_std_command(&mut cmd);
     let child = cmd.spawn().map_err(|e| format!("ffmpeg spawn: {e}"))?;
     crate::proc_guard::adopt_std(&child);
-    Ok(Running(child))
+    Ok(Running(std::sync::Mutex::new(child)))
 }
 
 #[derive(Deserialize)]
@@ -272,9 +305,10 @@ fn probe_file(path: &Path) -> Result<AudioFileInfo, String> {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let mut running = spawn(cmd)?;
+    let running = spawn(cmd)?;
     let mut text = String::new();
-    if let Some(mut out) = running.0.stdout.take() {
+    let stdout = running.child().stdout.take();
+    if let Some(mut out) = stdout {
         out.read_to_string(&mut text).map_err(|e| format!("ffprobe read: {e}"))?;
     }
     let parsed: ProbeOut = serde_json::from_str(&text).map_err(|_| "This file could not be read".to_string())?;
@@ -378,8 +412,8 @@ fn decode_features(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut running = spawn(cmd)?;
-    let stderr = running.0.stderr.take();
+    let running = spawn(cmd)?;
+    let stderr = running.child().stderr.take();
     let err_reader = std::thread::spawn(move || {
         let mut text = String::new();
         if let Some(mut pipe) = stderr {
@@ -387,31 +421,38 @@ fn decode_features(
         }
         text
     });
-    let mut out = running.0.stdout.take().ok_or("ffmpeg stdout missing")?;
+    let mut out = running.child().stdout.take().ok_or("ffmpeg stdout missing")?;
     let mut extractor = FeatureExtractor::new();
-    let mut buf = vec![0u8; 1 << 16];
-    let mut carry: Vec<u8> = Vec::with_capacity(1 << 16);
-    let mut samples: Vec<f32> = Vec::with_capacity(1 << 14);
-    let mut total = 0usize;
-    loop {
-        if cancel.load(Ordering::SeqCst) {
-            return Err("cancelled".into());
+    let total = running.watch_cancel(cancel, || -> Result<usize, String> {
+        let mut buf = vec![0u8; 1 << 16];
+        let mut carry: Vec<u8> = Vec::with_capacity(1 << 16);
+        let mut samples: Vec<f32> = Vec::with_capacity(1 << 14);
+        let mut total = 0usize;
+        loop {
+            if cancel.load(Ordering::SeqCst) {
+                return Err("cancelled".into());
+            }
+            let n = out.read(&mut buf).map_err(|e| format!("ffmpeg read: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            carry.extend_from_slice(&buf[..n]);
+            let whole = carry.len() / 4 * 4;
+            samples.clear();
+            samples.extend(carry[..whole].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])));
+            carry.drain(..whole);
+            extractor.push(&samples);
+            total += samples.len();
+            on_seconds(total as f64 / audio_align::PCM_RATE as f64);
         }
-        let n = out.read(&mut buf).map_err(|e| format!("ffmpeg read: {e}"))?;
-        if n == 0 {
-            break;
-        }
-        carry.extend_from_slice(&buf[..n]);
-        let whole = carry.len() / 4 * 4;
-        samples.clear();
-        samples.extend(carry[..whole].chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])));
-        carry.drain(..whole);
-        extractor.push(&samples);
-        total += samples.len();
-        on_seconds(total as f64 / audio_align::PCM_RATE as f64);
-    }
+        Ok(total)
+    });
     drop(out);
-    let status = running.0.wait().map_err(|e| format!("ffmpeg wait: {e}"))?;
+    if cancel.load(Ordering::SeqCst) {
+        return Err("cancelled".into());
+    }
+    let total = total?;
+    let status = running.child().wait().map_err(|e| format!("ffmpeg wait: {e}"))?;
     let stderr = err_reader.join().unwrap_or_default();
     if total < audio_align::PCM_RATE as usize * 2 {
         let detail = stderr.lines().last().unwrap_or("").trim();
@@ -566,8 +607,8 @@ fn render(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut running = spawn(cmd)?;
-    let stderr = running.0.stderr.take();
+    let running = spawn(cmd)?;
+    let stderr = running.child().stderr.take();
     let err_reader = std::thread::spawn(move || {
         let mut text = String::new();
         if let Some(mut pipe) = stderr {
@@ -575,22 +616,28 @@ fn render(
         }
         text
     });
-    if let Some(stdout) = running.0.stdout.take() {
-        for line in BufReader::new(stdout).lines() {
-            if cancel.load(Ordering::SeqCst) {
-                drop(running);
-                let _ = std::fs::remove_file(&partial);
-                return Err("cancelled".into());
-            }
-            let Ok(line) = line else { break };
-            if let Some(us) = line.strip_prefix("out_time_us=") {
-                if let Ok(us) = us.trim().parse::<f64>() {
-                    progress((us / 1e6 / graph.duration.max(1.0)).clamp(0.0, 1.0));
+    let stdout = running.child().stdout.take();
+    if let Some(stdout) = stdout {
+        running.watch_cancel(cancel, || {
+            for line in BufReader::new(stdout).lines() {
+                if cancel.load(Ordering::SeqCst) {
+                    return;
+                }
+                let Ok(line) = line else { break };
+                if let Some(us) = line.strip_prefix("out_time_us=") {
+                    if let Ok(us) = us.trim().parse::<f64>() {
+                        progress((us / 1e6 / graph.duration.max(1.0)).clamp(0.0, 1.0));
+                    }
                 }
             }
-        }
+        });
     }
-    let status = running.0.wait().map_err(|e| format!("ffmpeg wait: {e}"))?;
+    if cancel.load(Ordering::SeqCst) {
+        drop(running);
+        let _ = std::fs::remove_file(&partial);
+        return Err("cancelled".into());
+    }
+    let status = running.child().wait().map_err(|e| format!("ffmpeg wait: {e}"))?;
     let stderr = err_reader.join().unwrap_or_default();
     if !status.success() {
         let _ = std::fs::remove_file(&partial);
@@ -707,7 +754,9 @@ fn sync_with_progress(
         emit("done", 1.0);
         return Ok(result);
     }
-    let pieces = audio_align::pieces(&alignment, req.reference_duration_sec, ext_duration);
+    // Raw streams (.thd, some .dts) carry no container duration; the decoded length is exact.
+    let ext_length = if info.duration_sec > 0.0 { info.duration_sec } else { ext.duration_sec() };
+    let pieces = audio_align::pieces(&alignment, req.reference_duration_sec, ext_length);
     emit("render", 0.7);
     render(req, &pieces, stream.channels, &out, cancel, &|p| emit("render", 0.7 + p * 0.22))?;
     emit("verify", 0.92);
@@ -781,8 +830,8 @@ fn run_export(app: &AppHandle, req: &ExportRequest, cancel: &AtomicBool) -> Resu
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut running = spawn(cmd)?;
-    let stderr = running.0.stderr.take();
+    let running = spawn(cmd)?;
+    let stderr = running.child().stderr.take();
     let err_reader = std::thread::spawn(move || {
         let mut text = String::new();
         if let Some(mut pipe) = stderr {
@@ -791,22 +840,28 @@ fn run_export(app: &AppHandle, req: &ExportRequest, cancel: &AtomicBool) -> Resu
         text
     });
     let duration = req.duration_sec.unwrap_or(0.0);
-    if let Some(stdout) = running.0.stdout.take() {
-        for line in BufReader::new(stdout).lines() {
-            if cancel.load(Ordering::SeqCst) {
-                drop(running);
-                let _ = std::fs::remove_file(&partial);
-                return Err("cancelled".into());
-            }
-            let Ok(line) = line else { break };
-            if let (Some(us), true) = (line.strip_prefix("out_time_us="), duration > 0.0) {
-                if let Ok(us) = us.trim().parse::<f64>() {
-                    emit((us / 1e6 / duration).clamp(0.0, 0.99));
+    let stdout = running.child().stdout.take();
+    if let Some(stdout) = stdout {
+        running.watch_cancel(cancel, || {
+            for line in BufReader::new(stdout).lines() {
+                if cancel.load(Ordering::SeqCst) {
+                    return;
+                }
+                let Ok(line) = line else { break };
+                if let (Some(us), true) = (line.strip_prefix("out_time_us="), duration > 0.0) {
+                    if let Ok(us) = us.trim().parse::<f64>() {
+                        emit((us / 1e6 / duration).clamp(0.0, 0.99));
+                    }
                 }
             }
-        }
+        });
     }
-    let status = running.0.wait().map_err(|e| format!("ffmpeg wait: {e}"))?;
+    if cancel.load(Ordering::SeqCst) {
+        drop(running);
+        let _ = std::fs::remove_file(&partial);
+        return Err("cancelled".into());
+    }
+    let status = running.child().wait().map_err(|e| format!("ffmpeg wait: {e}"))?;
     let stderr = err_reader.join().unwrap_or_default();
     if !status.success() {
         let _ = std::fs::remove_file(&partial);
@@ -855,6 +910,14 @@ mod tests {
         assert_eq!(local_path("smb://nas/a.mkv"), None);
         assert_eq!(local_path("https://x/a.mkv"), None);
         assert_eq!(local_path("D:\\a.mka"), Some(PathBuf::from("D:\\a.mka")));
+    }
+
+    #[test]
+    fn percent_decoding_never_splits_a_character() {
+        assert_eq!(percent_decode("50%aé.mka"), "50%aé.mka");
+        assert_eq!(percent_decode("%D9%81%D9%8A%D9%84%D9%85.mka"), "فيلم.mka");
+        assert_eq!(percent_decode("100%"), "100%");
+        assert_eq!(percent_decode("a%2"), "a%2");
     }
 
     #[test]

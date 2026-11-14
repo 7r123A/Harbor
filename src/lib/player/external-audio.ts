@@ -279,8 +279,13 @@ export async function exportAudioTrack(track: TrackInfo, tracks: TrackInfo[]): P
     return;
   }
   const embedded = tracks.filter((t) => !t.external);
-  const external =
-    track.external && track.externalFilename && !/^[a-z]+:\/\//i.test(track.externalFilename);
+  // An added track is saved from its own file or link, never from the film: falling back to the
+  // film would write its first audio track under the added track's name.
+  if (track.external && !track.externalFilename) {
+    set({ kind: "error", message: "This source cannot be saved" });
+    return;
+  }
+  const external = track.external;
   const ordinal = track.external ? 0 : Math.max(0, embedded.indexOf(track));
   const lang = track.lang ? `.${track.lang}` : "";
   const base =

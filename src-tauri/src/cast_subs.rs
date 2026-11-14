@@ -178,21 +178,32 @@ fn guess_legacy_encoding(bytes: &[u8]) -> &'static encoding_rs::Encoding {
     encoding_rs::WINDOWS_1252
 }
 
-/// The `subtitles` filter for a file. The path passes two parsers: the filter graph (where the
-/// single quotes keep it in one piece) and the option list (where `\:` keeps a drive colon from
-/// starting the next option). Unquoted, `C:/…` reached FFmpeg as `filename=C` plus an
-/// `original_size` of `/…`, and every burn-in on Windows failed.
+/// The `subtitles` filter for a file. The path passes two parsers, so it is escaped twice: first
+/// as an option value (`\:` keeps a drive colon from starting the next option), then as part of
+/// the filter graph (where `,` `[` `]` `;` would end the filter). Unescaped, `C:/…` reached FFmpeg
+/// as `filename=C` plus an `original_size` of `/…`, and every burn-in on Windows failed.
 pub fn burn_filter(path: &str, force_style: &str) -> String {
     let escaped = escape_subtitles_path(Path::new(path));
-    format!("subtitles=filename='{}':force_style='{}'", escaped, force_style)
+    format!("subtitles=filename={}:force_style='{}'", escaped, force_style)
 }
 
 pub fn escape_subtitles_path(path: &Path) -> String {
-    path.to_string_lossy()
-        .replace('\\', "/")
-        .replace(':', "\\:")
-        // A quote cannot appear inside a quoted filter argument: close, escape, reopen.
-        .replace('\'', "'\\''")
+    let path = path.to_string_lossy().replace('\\', "/");
+    let mut option_value = String::with_capacity(path.len() + 8);
+    for c in path.chars() {
+        if matches!(c, '\\' | '\'' | ':') {
+            option_value.push('\\');
+        }
+        option_value.push(c);
+    }
+    let mut graph = String::with_capacity(option_value.len() + 8);
+    for c in option_value.chars() {
+        if matches!(c, '\\' | '\'' | '[' | ']' | ',' | ';') {
+            graph.push('\\');
+        }
+        graph.push(c);
+    }
+    graph
 }
 
 #[cfg(test)]
@@ -203,9 +214,11 @@ mod filter_tests {
     fn windows_paths_survive_both_ffmpeg_parsers() {
         assert_eq!(
             burn_filter(r"C:\Users\me\Temp\sub.srt", "Fontsize=27"),
-            r"subtitles=filename='C\:/Users/me/Temp/sub.srt':force_style='Fontsize=27'"
+            r"subtitles=filename=C\\:/Users/me/Temp/sub.srt:force_style='Fontsize=27'"
         );
-        assert_eq!(escape_subtitles_path(Path::new("/tmp/it's.srt")), r"/tmp/it'\''s.srt");
+        // Checked against FFmpeg: these names failed with single-level escaping.
+        assert_eq!(escape_subtitles_path(Path::new("/tmp/it's.srt")), r"/tmp/it\\\'s.srt");
+        assert_eq!(escape_subtitles_path(Path::new("/tmp/a, [b];c.srt")), r"/tmp/a\, \[b\]\;c.srt");
     }
 }
 

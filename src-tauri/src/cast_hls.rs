@@ -33,6 +33,8 @@ struct HlsSession {
     last_access: std::sync::Mutex<Instant>,
     process: Mutex<Option<Child>>,
     newest_requested: AtomicU32,
+    /// Segments below this number were deleted; the playlist stops listing them.
+    pruned_below: AtomicU32,
 }
 
 fn touch(session: &HlsSession) {
@@ -94,6 +96,7 @@ impl HlsState {
             last_access: std::sync::Mutex::new(Instant::now()),
             process: Mutex::new(Some(child)),
             newest_requested: AtomicU32::new(0),
+            pruned_below: AtomicU32::new(0),
         });
         self.sessions.write().await.insert(id.clone(), session);
         eprintln!("[cast-hls] session {} registered, seek={:.1}s", id, job.seek_sec);
@@ -240,6 +243,44 @@ fn start_at_beginning(playlist: &str) -> String {
     }
 }
 
+/// The playlist minus deleted segments. An EVENT playlist may never drop a segment, so once
+/// pruning starts it is served as a plain live playlist whose media sequence starts at the oldest
+/// segment still on disk; EXT-X-START (added after this) then points there instead of at a gap.
+fn retained_playlist(playlist: &str, oldest_kept: u32) -> String {
+    let mut out = String::with_capacity(playlist.len());
+    let mut block = String::new();
+    let mut in_segments = false;
+    for line in playlist.lines() {
+        if !in_segments {
+            if line.starts_with("#EXT-X-PLAYLIST-TYPE") || line.starts_with("#EXT-X-MEDIA-SEQUENCE") {
+                continue;
+            }
+            if line.starts_with("#EXTINF") {
+                in_segments = true;
+                out.push_str(&format!("#EXT-X-MEDIA-SEQUENCE:{oldest_kept}\n"));
+            } else {
+                out.push_str(line);
+                out.push('\n');
+                continue;
+            }
+        }
+        if line.starts_with("#EXT-X-ENDLIST") {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+        block.push_str(line);
+        block.push('\n');
+        if !line.starts_with('#') && !line.trim().is_empty() {
+            if segment_number(line.trim()).is_none_or(|n| n >= oldest_kept) {
+                out.push_str(&block);
+            }
+            block.clear();
+        }
+    }
+    out
+}
+
 async fn handle_variant(State(state): State<HlsState>, Path(id): Path<String>) -> Response {
     let session = match state.sessions.read().await.get(&id).cloned() {
         Some(s) => s,
@@ -251,7 +292,9 @@ async fn handle_variant(State(state): State<HlsState>, Path(id): Path<String>) -
     loop {
         if let Ok(content) = tokio::fs::read_to_string(&playlist_path).await {
             if content.contains("#EXTINF") {
-                return playlist_response(start_at_beginning(&content));
+                let pruned = session.pruned_below.load(Ordering::SeqCst);
+                let listed = if pruned > 0 { retained_playlist(&content, pruned) } else { content };
+                return playlist_response(start_at_beginning(&listed));
             }
         }
         if std::time::Instant::now() >= deadline {
@@ -283,6 +326,8 @@ async fn prune_behind(session: &HlsSession, requested: u32) {
     if newest <= SEGMENTS_KEPT_BEHIND || newest % 5 != 0 {
         return;
     }
+    // Announced before the files go, so no playlist served from now on lists a deleted segment.
+    session.pruned_below.fetch_max(newest - SEGMENTS_KEPT_BEHIND, Ordering::SeqCst);
     let Ok(mut entries) = tokio::fs::read_dir(&session.temp_dir).await else {
         return;
     };
@@ -312,6 +357,9 @@ async fn handle_segment(
     };
     touch(&session);
     if let Some(n) = segment_number(&filename) {
+        if n < session.pruned_below.load(Ordering::SeqCst) {
+            return (StatusCode::GONE, "segment pruned").into_response();
+        }
         prune_behind(&session, n).await;
     }
     let path = session.temp_dir.join(&filename);
@@ -469,6 +517,7 @@ mod tests {
             last_access: std::sync::Mutex::new(Instant::now()),
             process: tokio::sync::Mutex::new(None),
             newest_requested: AtomicU32::new(0),
+            pruned_below: AtomicU32::new(0),
         })
     }
 
@@ -501,7 +550,24 @@ mod tests {
         assert!(!temp_dir.join("seg00000.ts").exists());
         assert!(!temp_dir.join("seg00009.ts").exists());
         assert!(temp_dir.join("seg00010.ts").exists());
+        assert_eq!(s.pruned_below.load(Ordering::SeqCst), 10);
         let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn the_playlist_never_lists_a_pruned_segment() {
+        let mut p = String::from(
+            "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n",
+        );
+        for n in 0..14 {
+            p.push_str(&format!("#EXTINF:4.000000,\nseg{n:05}.ts\n"));
+        }
+        let out = start_at_beginning(&retained_playlist(&p, 10));
+        assert!(!out.contains("PLAYLIST-TYPE"), "an EVENT playlist cannot drop segments: {out}");
+        assert!(out.contains("#EXT-X-MEDIA-SEQUENCE:10\n#EXTINF:4.000000,\nseg00010.ts\n"), "{out}");
+        assert!(!out.contains("seg00009.ts"), "{out}");
+        assert!(out.contains("seg00013.ts") && out.contains("#EXT-X-START:TIME-OFFSET=0"), "{out}");
+        assert_eq!(out.matches("#EXTINF").count(), 4);
     }
 
     #[tokio::test]
