@@ -21,6 +21,7 @@ export function BackToTop({
     if (!el) return;
     let shown: boolean | undefined;
     let frame = 0;
+    let timer: number | undefined;
     let lastCheck = 0;
     // Reading scrollTop in the scroll event forces a synchronous style and layout
     // whenever a commit left the tree dirty, which is the common case while a row
@@ -33,13 +34,20 @@ export function BackToTop({
       shown = next;
       setShow(next);
     };
-    const onScroll = () => {
-      if (frame || performance.now() - lastCheck < 100) return;
+    const queueCheck = () => {
+      timer = undefined;
       frame = requestAnimationFrame(update);
+    };
+    const onScroll = () => {
+      if (frame || timer !== undefined) return;
+      const delay = 100 - (performance.now() - lastCheck);
+      if (delay > 0) timer = window.setTimeout(queueCheck, delay);
+      else queueCheck();
     };
     update();
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => {
+      if (timer !== undefined) window.clearTimeout(timer);
       cancelAnimationFrame(frame);
       el.removeEventListener("scroll", onScroll);
     };

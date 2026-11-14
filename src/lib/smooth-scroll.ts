@@ -4,17 +4,11 @@ const EASE_MS = 55;
 const MULTIPLIER = 1;
 const SETTLE_PX = 0.5;
 
-const overflowYCache = new WeakMap<Element, string>();
-
 function scrollableAncestorBefore(from: EventTarget | null, stop: HTMLElement): boolean {
-  let node = from instanceof HTMLElement ? from : null;
+  let node = from instanceof Element ? from : null;
   while (node && node !== stop) {
-    let oy = overflowYCache.get(node);
-    if (oy === undefined) {
-      oy = getComputedStyle(node).overflowY;
-      overflowYCache.set(node, oy);
-    }
-    if ((oy === "auto" || oy === "scroll") && node.scrollHeight > node.clientHeight + 1)
+    const overflow = getComputedStyle(node).overflowY;
+    if ((overflow === "auto" || overflow === "scroll") && node.scrollHeight > node.clientHeight + 1)
       return true;
     node = node.parentElement;
   }
@@ -27,24 +21,38 @@ export function useSmoothWheel(ref: RefObject<HTMLElement | null>, enabled: bool
     if (!el || !enabled) return;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
-    // Keep our own position and scroll range. Reading scrollTop or scrollHeight in
-    // a wheel or animation frame forces a synchronous layout of whatever the card
-    // mount queue just committed, which is the duplicate layout that made Discover
-    // miss frames while its rails revealed cards. The resize observer is the only
-    // place that measures, and it runs after layout.
-    let maxScroll = el.scrollHeight - el.clientHeight;
+    // Keep geometry reads out of the animation. Resize notifications keep the range
+    // current as catalog sections fill, and a new gesture reads the native position.
+    let maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
     let pos = el.scrollTop;
     let target = pos;
     let raf = 0;
     let lastFrame = 0;
 
     const measure = () => {
-      maxScroll = el.scrollHeight - el.clientHeight;
-      if (pos > maxScroll) pos = maxScroll;
+      maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
+      pos = Math.min(pos, maxScroll);
+      target = Math.min(target, maxScroll);
     };
     const ro = new ResizeObserver(measure);
     ro.observe(el);
-    if (el.firstElementChild) ro.observe(el.firstElementChild);
+    let children = new Set<Element>();
+    const observeChildren = () => {
+      const next = new Set(el.children);
+      for (const child of children) {
+        if (!next.has(child)) ro.unobserve(child);
+      }
+      for (const child of next) {
+        if (!children.has(child)) ro.observe(child);
+      }
+      children = next;
+    };
+    observeChildren();
+    const mo = new MutationObserver(() => {
+      observeChildren();
+      measure();
+    });
+    mo.observe(el, { childList: true });
 
     const step = (time: number) => {
       const diff = target - pos;
@@ -63,33 +71,26 @@ export function useSmoothWheel(ref: RefObject<HTMLElement | null>, enabled: bool
       raf = requestAnimationFrame(step);
     };
 
-    // An external scroll (scrollbar, keyboard, restored view position) is the only
-    // thing that can move the element between our writes, and it is idle by
-    // definition. Our own animated writes have raf set.
-    const onScroll = () => {
-      if (!raf) pos = el.scrollTop;
-    };
-
     const onWheel = (e: WheelEvent) => {
       if (e.defaultPrevented || !e.cancelable || reducedMotion.matches) return;
       if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
       if (e.deltaMode !== 0) return;
       if (!Number.isFinite(e.deltaY) || e.deltaY === 0) return;
       if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
-      if (maxScroll <= 0) return;
       if (scrollableAncestorBefore(e.target, el)) return;
-      // Reversing the wheel should reverse motion immediately, not drain old momentum.
+      if (!raf) {
+        measure();
+        pos = Math.max(0, Math.min(maxScroll, el.scrollTop));
+      }
+      if (maxScroll <= 0) return;
+      // Reverse immediately when the input changes direction.
       const continuing = raf && Math.sign(target - pos) === Math.sign(e.deltaY);
       const next = Math.max(
         0,
         Math.min(maxScroll, (continuing ? target : pos) + e.deltaY * MULTIPLIER),
       );
-      if (next === target && raf) {
-        e.preventDefault();
-        return;
-      }
+      if (!raf && next === pos) return;
       target = next;
-      if (target === pos && !raf) return;
       e.preventDefault();
       if (!raf) {
         lastFrame = performance.now();
@@ -103,19 +104,18 @@ export function useSmoothWheel(ref: RefObject<HTMLElement | null>, enabled: bool
     };
 
     el.addEventListener("wheel", onWheel, { passive: false });
-    el.addEventListener("scroll", onScroll, { passive: true });
     el.addEventListener("pointerdown", cancel, { passive: true, capture: true });
     el.addEventListener("touchstart", cancel, { passive: true });
     window.addEventListener("keydown", cancel, { capture: true });
     reducedMotion.addEventListener("change", cancel);
     return () => {
       el.removeEventListener("wheel", onWheel);
-      el.removeEventListener("scroll", onScroll);
       el.removeEventListener("pointerdown", cancel, true);
       el.removeEventListener("touchstart", cancel);
       window.removeEventListener("keydown", cancel, true);
       reducedMotion.removeEventListener("change", cancel);
       ro.disconnect();
+      mo.disconnect();
       cancel();
     };
   }, [ref, enabled]);

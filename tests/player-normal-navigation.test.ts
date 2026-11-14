@@ -47,6 +47,7 @@ function harness() {
     "./discover": { trackEvent: () => {}, profileFromMeta: () => ({}) },
     "./settings": { useSettings: () => ({ settings: {} }) },
     "./smooth-scroll": {},
+    "./scroll-activity": { noteScrollActivity: () => {} },
     "./together/provider": { useTogether: () => ({ snapshot: { state: "idle" } }) },
     "./fullscreen-state": { beginMarathonAdvance: () => calls.push("advance") },
     "./back-intercept": back,
@@ -197,6 +198,31 @@ test("card and row actions stay stable across navigation while view consumers up
     assert.equal(renders, before, "navigation must not wake every card and row");
     actions.rememberRowScroll("fixture-row", 456);
     assert.equal(actions.recallRowScroll("fixture-row"), 456);
+  } finally {
+    await h.dispose();
+  }
+});
+
+test("push, Back, and Forward save scroll before changing the active view", async () => {
+  const h = harness();
+  const { ViewProvider, useView } = h.load("src/lib/view.tsx");
+  let view: any;
+  const savedFrom: string[] = [];
+  function Probe() {
+    view = useView();
+    return null;
+  }
+  try {
+    await React.act(() => h.root.render(jsx.jsx(ViewProvider, { children: jsx.jsx(Probe, {}) })));
+    const unregister = view.registerScrollSave(() => savedFrom.push(view.topKind));
+    await React.act(() => view.openMeta({ id: "tt1", name: "Fixture", type: "movie" }));
+    await React.act(() => view.goBack());
+    await React.act(() => view.goForward());
+    assert.deepEqual(savedFrom, ["home", "meta", "home"]);
+    assert.equal(view.topKind, "meta");
+    unregister();
+    await React.act(() => view.goBack());
+    assert.equal(savedFrom.length, 3);
   } finally {
     await h.dispose();
   }

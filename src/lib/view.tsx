@@ -410,6 +410,7 @@ type ViewValue = {
   exitPlayer: () => void;
   rememberScroll: (key: string, snap: ScrollSnapshot) => void;
   recallScroll: (key: string) => ScrollSnapshot | null;
+  registerScrollSave: (save: () => void) => () => void;
   rememberRowScroll: (key: string, scrollLeft: number) => void;
   recallRowScroll: (key: string) => number | null;
   chromeHidden: boolean;
@@ -598,6 +599,17 @@ export function ViewProvider({ children }: { children: ReactNode }) {
   const [homeResetTick, setHomeResetTick] = useState(0);
   const scrollMem = useRef<Map<string, ScrollSnapshot>>(new Map());
   const rowScrollMem = useRef<Map<string, number>>(new Map());
+  const scrollSavers = useRef(new Set<() => void>());
+  const registerScrollSave = useCallback((save: () => void) => {
+    const savers = scrollSavers.current;
+    savers.add(save);
+    return () => {
+      savers.delete(save);
+    };
+  }, []);
+  const saveScrollBeforeNavigation = useCallback(() => {
+    for (const save of scrollSavers.current) save();
+  }, []);
   const rememberRowScroll = useCallback((k: string, scrollLeft: number) => {
     rowScrollMem.current.set(k, scrollLeft);
   }, []);
@@ -766,18 +778,20 @@ export function ViewProvider({ children }: { children: ReactNode }) {
     const cur = stackRef.current;
     const pages = previewPageStack(cur);
     if (pages.length <= 1) return;
+    saveScrollBeforeNavigation();
     const nextStack = navigateUnderPreview(cur, (frames) => frames.slice(0, -1));
     const nextForwardStack = pushFrame(forwardStackRef.current, pages[pages.length - 1]);
     stackRef.current = nextStack;
     forwardStackRef.current = nextForwardStack;
     setStack(nextStack);
     setForwardStack(nextForwardStack);
-  }, []);
+  }, [saveScrollBeforeNavigation]);
 
   const goForward = useCallback(() => {
     const curForward = forwardStackRef.current;
     const nextFrame = curForward[curForward.length - 1];
     if (!nextFrame) return;
+    saveScrollBeforeNavigation();
     const nextForwardStack = curForward.slice(0, -1);
     const nextStack = navigateUnderPreview(stackRef.current, (frames) =>
       pushFrame(frames, nextFrame),
@@ -786,7 +800,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
     forwardStackRef.current = nextForwardStack;
     setStack(nextStack);
     setForwardStack(nextForwardStack);
-  }, []);
+  }, [saveScrollBeforeNavigation]);
 
   const clearForwardStack = useCallback(() => {
     if (forwardStackRef.current.length === 0) return;
@@ -796,12 +810,13 @@ export function ViewProvider({ children }: { children: ReactNode }) {
 
   const setNavStack = useCallback(
     (updater: (s: Frame[]) => Frame[], preserveDock = true) => {
+      saveScrollBeforeNavigation();
       clearForwardStack();
       setStack((current) =>
         preserveDock ? navigateUnderPreview(current, updater) : updater(current),
       );
     },
-    [clearForwardStack],
+    [clearForwardStack, saveScrollBeforeNavigation],
   );
 
   const exitPlayback = useCallback(() => {
@@ -1628,6 +1643,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
       exitPlayer,
       rememberScroll,
       recallScroll,
+      registerScrollSave,
       rememberRowScroll,
       recallRowScroll,
       chromeHidden: chromeHidden || bigPictureActive,
@@ -1713,6 +1729,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
       exitPlayer,
       rememberScroll,
       recallScroll,
+      registerScrollSave,
       chromeHidden,
       bigPictureActive,
       setNavStack,
@@ -1795,7 +1812,7 @@ export function useScrollMemory(
   active: boolean = true,
   hideUntilRestored: boolean = false,
 ) {
-  const { rememberScroll, recallScroll } = useView();
+  const { rememberScroll, recallScroll, registerScrollSave } = useView();
   const { settings } = useSettings();
   useSmoothWheel(ref, active && settings.smoothScroll);
 
@@ -1820,7 +1837,6 @@ export function useScrollMemory(
     let settleId: number | null = null;
     let saveTimer: number | null = null;
     let revealId: number | null = null;
-    let pendingTop: number | null = null;
     let lastScrollAt = 0;
     let parked = el.clientHeight === 0;
     let everVisible = !parked;
@@ -1909,12 +1925,10 @@ export function useScrollMemory(
     };
 
     const saveNow = () => {
-      const visible = !el.closest("[data-layer-inactive]") && el.clientHeight > 0;
-      if (!visible && pendingTop === null) return;
-      const top = visible ? el.scrollTop : (pendingTop as number);
-      const anchor = visible && top > 0 ? pickAnchor(el) : null;
+      if (el.closest("[data-layer-inactive]") || el.clientHeight === 0) return;
+      const top = el.scrollTop;
+      const anchor = top > 0 ? pickAnchor(el) : null;
       rememberScroll(key, { anchor: anchor?.key, delta: anchor?.delta ?? 0, fallback: top });
-      pendingTop = null;
     };
 
     const cancelSave = () => {
@@ -1957,9 +1971,6 @@ export function useScrollMemory(
         return;
       }
       // Read the position now that the gesture is over, not on every scroll event.
-      if (!el.closest("[data-layer-inactive]") && el.clientHeight > 0) {
-        pendingTop = el.scrollTop;
-      }
       saveNow();
     };
 
@@ -1970,16 +1981,9 @@ export function useScrollMemory(
       saveTimer ??= window.setTimeout(saveAfterScroll, 200);
     };
 
-    // A view can be hidden by a click while it is still scrolling. Record the
-    // position on the pointer-down that precedes the switch, so the settle timer
-    // not having fired yet cannot lose it.
-    const onPointerDown = () => {
-      if (restoring || parked) return;
-      if (!el.closest("[data-layer-inactive]") && el.clientHeight > 0) {
-        pendingTop = el.scrollTop;
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown, true);
+    // Save while the outgoing layer still has layout, even when navigation happens
+    // before the scroll timer or comes from keyboard, controller, or app code.
+    const unregisterScrollSave = registerScrollSave(flushSave);
 
     armSettle();
     if (wantsHide) revealId = window.setTimeout(reveal, 220);
@@ -1995,13 +1999,13 @@ export function useScrollMemory(
       cancelSave();
       cancelSettle();
       cancelRetry();
-      document.removeEventListener("pointerdown", onPointerDown, true);
+      unregisterScrollSave();
       if (revealId !== null) clearTimeout(revealId);
       reveal();
       ro.disconnect();
       el.removeEventListener("scroll", onScroll);
     };
-  }, [active, key, ref, rememberScroll, recallScroll, hideUntilRestored]);
+  }, [active, key, ref, rememberScroll, recallScroll, registerScrollSave, hideUntilRestored]);
 }
 
 export { frameKey };

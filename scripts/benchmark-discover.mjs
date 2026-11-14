@@ -105,6 +105,7 @@ export function railFixture(source, active = true) {
         jsxs: (type, props) => ({ type, props }),
       },
       "@/components/feed-shelf": { FeedShelf: "FeedShelf" },
+      "@/components/lazy-mount": { LazyMount: "LazyMount" },
       "@/components/row": { ScrollRootContext: {} },
       "@/lib/i18n": { useT: () => (text) => text },
       "@/lib/view": {
