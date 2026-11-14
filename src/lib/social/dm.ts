@@ -36,6 +36,16 @@ export type DmSender = {
   avatarUrl?: string;
 };
 
+export type DmReaction = { emoji: string; count: number; mine: boolean };
+
+/** A reference to Harbor content. The client renders it; the server validated it. */
+export type DmShare = {
+  type: "profile" | "group" | "title" | "review" | "list";
+  id: string;
+  title?: string;
+  poster?: string;
+};
+
 export type DmMessage = {
   id: string;
   conversationId: string;
@@ -44,6 +54,8 @@ export type DmMessage = {
   edited?: boolean;
   deleted?: boolean;
   mine: boolean;
+  reactions: DmReaction[];
+  share?: DmShare;
   sender: DmSender | null;
 };
 
@@ -104,10 +116,14 @@ export async function listDmMessages(
   );
 }
 
-export async function sendDmMessage(conversationId: string, body: string): Promise<DmMessage> {
+export async function sendDmMessage(
+  conversationId: string,
+  body: string,
+  share?: DmShare,
+): Promise<DmMessage> {
   return socialPost<DmMessage>(
     `/social/dm/conversations/${encodeURIComponent(conversationId)}/messages`,
-    { body },
+    { body, share: share || undefined },
   );
 }
 
@@ -117,6 +133,20 @@ export async function editDmMessage(messageId: string, body: string): Promise<Dm
 
 export async function deleteDmMessage(messageId: string): Promise<{ ok: boolean }> {
   return socialDelete<{ ok: boolean }>(`/social/dm/messages/${encodeURIComponent(messageId)}`);
+}
+
+/** One emoji per call, toggled by the caller. Idempotent on the server. */
+export async function reactToDmMessage(messageId: string, emoji: string): Promise<DmMessage> {
+  return socialPost<DmMessage>(
+    `/social/dm/messages/${encodeURIComponent(messageId)}/reaction`,
+    { emoji },
+  );
+}
+
+export async function unreactToDmMessage(messageId: string, emoji: string): Promise<DmMessage> {
+  return socialDelete<DmMessage>(
+    `/social/dm/messages/${encodeURIComponent(messageId)}/reaction?${new URLSearchParams({ emoji }).toString()}`,
+  );
 }
 
 export async function markDmRead(conversationId: string): Promise<{ ok: boolean; unread: number }> {

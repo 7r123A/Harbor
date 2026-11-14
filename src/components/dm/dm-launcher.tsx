@@ -24,6 +24,80 @@ import { DmInbox } from "./dm-inbox";
 import { DmNewMessage } from "./dm-new-message";
 import { DmThread } from "./dm-thread";
 
+const GLASS_CSS = `
+.harbor-dm-glass {
+  position: fixed;
+  z-index: 200;
+  right: 16px;
+  height: 52px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: rgba(20, 18, 16, 0.62);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  opacity: 0.86;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  animation: harbor-dm-bob 3.6s ease-in-out infinite;
+  transition: opacity 0.22s, transform 0.22s, background 0.22s;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #f5f2ee;
+  cursor: pointer;
+}
+.harbor-dm-glass .harbor-dm-label {
+  max-width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: max-width 0.28s ease, opacity 0.2s ease;
+  font: 600 13px/1 system-ui, sans-serif;
+}
+.harbor-dm-glass:hover .harbor-dm-label,
+.harbor-dm-glass:focus-visible .harbor-dm-label {
+  max-width: 140px;
+  opacity: 1;
+}
+.harbor-dm-glass:hover,
+.harbor-dm-glass:focus-visible {
+  opacity: 1;
+  transform: translateY(-3px);
+  background: rgba(20, 18, 16, 0.92);
+  animation-play-state: paused;
+}
+.harbor-dm-glass:active { transform: translateY(-1px) scale(0.97); }
+.harbor-dm-glass:focus-visible { outline: 3px solid var(--amber, #f59e0b); outline-offset: 2px; }
+.harbor-dm-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #e94f37;
+  border: 2px solid #12100e;
+  color: #fff;
+  font: 800 11px/1 system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes harbor-dm-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+@media (hover: none) {
+  .harbor-dm-glass { opacity: 0.85; }
+  .harbor-dm-glass:hover { transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .harbor-dm-glass { animation: none !important; transition: none !important; }
+}
+`;
+
 const TOAST_MS = 6_500;
 
 /**
@@ -207,36 +281,21 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
 
   return (
     <>
+      <style>{GLASS_CSS}</style>
       {!open &&
         createPortal(
-          <div className="fixed end-4 z-[200]" style={{ bottom: launcherBottom }}>
-            <span
-              aria-hidden
-              className="harbor-dm-halo pointer-events-none absolute inset-0 rounded-full ring-2 ring-accent/45"
-            />
-            <button
-              type="button"
-              onClick={() => setOpen(true)}
-              aria-label={unread > 0 ? t("Messages ({count} unread)", { count: unread }) : t("Messages")}
-              aria-haspopup="dialog"
-              className={`group relative flex items-center justify-center overflow-hidden rounded-full bg-surface/95 text-accent shadow-[0_10px_28px_-8px_rgba(0,0,0,0.55)] ring-1 ring-edge-soft backdrop-blur-md transition-[width,background-color,box-shadow] duration-300 hover:bg-elevated hover:shadow-[0_14px_34px_-10px_rgba(0,0,0,0.65)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-                playing ? "h-11 w-11 hover:w-[7.5rem]" : "h-12 w-12 hover:w-[7.9rem]"
-              }`}
-            >
-              <DmGlyph size={playing ? 19 : 21} />
-              <span className="ms-0 max-w-0 overflow-hidden whitespace-nowrap text-[13px] font-semibold text-ink opacity-0 transition-all duration-300 group-hover:ms-2 group-hover:max-w-[5.6rem] group-hover:opacity-100">
-                {t("Messages")}
-              </span>
-            </button>
-            {unread > 0 && (
-              <span
-                key={unread}
-                className="animate-badge-pop pointer-events-none absolute -end-1 -top-1 flex h-[19px] min-w-[19px] items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold tabular-nums text-white ring-2 ring-canvas"
-              >
-                {unreadLabel}
-              </span>
-            )}
-          </div>,
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            aria-label={unread > 0 ? t("Messages ({count} unread)", { count: unread }) : t("Messages")}
+            aria-haspopup="dialog"
+            className="harbor-dm-glass"
+            style={{ bottom: launcherBottom }}
+          >
+            <DmGlyph size={20} />
+            <span className="harbor-dm-label">{t("Messages")}</span>
+            {unread > 0 && <span className="harbor-dm-badge">{unreadLabel}</span>}
+          </button>,
           document.body,
         )}
 

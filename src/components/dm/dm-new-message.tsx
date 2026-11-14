@@ -3,6 +3,7 @@ import { ArrowLeft, Loader2, Search, UserCheck, Users } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { fetchFriends, type Friend } from "@/lib/social/friends";
 import { searchDmUsers, type DmDirectoryUser, type DmPresence } from "@/lib/social/dm";
+import { socialGet } from "@/lib/social/client";
 import { DmAvatar } from "./dm-avatar";
 
 type Candidate = {
@@ -34,6 +35,45 @@ function fromDirectory(u: DmDirectoryUser): Candidate {
     avatarUrl: u.avatarUrl,
     verified: u.verified,
   };
+}
+
+/**
+ * Lower is better; -1 means no match. The DM picker must match inside a handle as well
+ * as at its start: typing `1s` has to surface `@1st`, which a prefix-only search misses.
+ * The same order is used whether the row came from the friend list or the directory.
+ */
+function matchRank(candidate: Candidate, query: string): number {
+  if (!query) return 0;
+  const handle = candidate.handle.toLowerCase();
+  const name = candidate.displayName.toLowerCase();
+  if (handle === query) return 0;
+  if (handle.startsWith(query)) return 1;
+  if (name.startsWith(query)) return 2;
+  if (name.split(/[\s._-]+/).some((token) => token.startsWith(query))) return 3;
+  if (handle.includes(query)) return 4;
+  if (name.includes(query)) return 5;
+  return -1;
+}
+
+function mergeCandidates(local: Candidate[], remote: DmDirectoryUser[], query: string): Candidate[] {
+  const merged: Candidate[] = [];
+  const seen = new Set<string>();
+  const add = (candidate: Candidate) => {
+    const key = candidate.handle.toLowerCase();
+    if (!key || seen.has(key)) return;
+    if (query && matchRank(candidate, query) < 0) return;
+    seen.add(key);
+    merged.push(candidate);
+  };
+  for (const friend of local) add(friend);
+  for (const user of remote) add(fromDirectory(user));
+  if (!query) return merged;
+  return merged.sort((a, b) => {
+    const rank = matchRank(a, query) - matchRank(b, query);
+    if (rank !== 0) return rank;
+    if (!!a.isFriend !== !!b.isFriend) return a.isFriend ? -1 : 1;
+    return a.displayName.localeCompare(b.displayName);
+  });
 }
 
 export function DmNewMessage({
@@ -95,27 +135,14 @@ export function DmNewMessage({
     };
   }, [query]);
 
-  const friendHandles = useMemo(
-    () => new Set(friends.map((f) => f.handle.toLowerCase())),
-    [friends],
-  );
-
   const rows = useMemo<Candidate[]>(() => {
-    const q = query.trim().toLowerCase();
-    if (q.length >= 2) {
-      return results.map((u) => {
-        const candidate = fromDirectory(u);
-        return friendHandles.has(candidate.handle.toLowerCase())
-          ? { ...candidate, isFriend: true }
-          : candidate;
-      });
-    }
-    const source = friends.map(fromFriend);
-    if (!q) return source;
-    return source.filter((f) =>
-      `${f.displayName} ${f.handle}`.toLowerCase().includes(q),
-    );
-  }, [friends, results, query, friendHandles]);
+    // Friends are always searched locally, at every length. The server directory is
+    // merged on top when it is reachable; it must never replace local matches, because
+    // an undeployed `/social/users` route (404) would otherwise make a friend vanish
+    // from the picker the moment the query reached two characters.
+    const q = query.trim().replace(/^@+/, "").toLowerCase();
+    return mergeCandidates(friends.map(fromFriend), results, q);
+  }, [friends, results, query]);
 
   const pick = async (candidate: Candidate) => {
     if (picking) return;
@@ -124,8 +151,15 @@ export function DmNewMessage({
     try {
       let id = candidate.id;
       if (!id) {
-        const found = await searchDmUsers(candidate.handle);
-        id = found.find((u) => u.handle.toLowerCase() === candidate.handle.toLowerCase())?.id;
+        id = (await searchDmUsers(candidate.handle)).find(
+          (u) => u.handle.toLowerCase() === candidate.handle.toLowerCase(),
+        )?.id;
+      }
+      if (!id) {
+        // The directory search is optional; the public profile row is not. Asking it
+        // directly keeps "message this person" working on a server without the search
+        // route.
+        id = (await socialGet<{ id: string }>(`/social/u/${encodeURIComponent(candidate.handle)}`)).id;
       }
       if (!id) throw new Error("This person could not be found.");
       await onPick(id);

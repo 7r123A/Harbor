@@ -26,6 +26,7 @@ export function DmAvatar({
           alt=""
           loading="lazy"
           className="h-full w-full rounded-full object-cover ring-1 ring-edge-soft"
+          style={{ clipPath: "circle(50%)" }}
         />
       ) : (
         <span className="grid h-full w-full place-items-center rounded-full bg-elevated font-semibold text-ink-muted ring-1 ring-edge-soft">

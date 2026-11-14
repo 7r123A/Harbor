@@ -27,9 +27,12 @@ import {
   listDmMessages,
   markDmRead,
   sendDmMessage,
+  reactToDmMessage,
   setDmMuted,
+  unreactToDmMessage,
   type DmError,
   type DmMessage,
+  type DmShare,
 } from "@/lib/social/dm";
 import { dmConversationById, refreshDm, useDmState } from "@/lib/social/dm-store";
 import { dmClock, dmDay } from "@/lib/social/dm-format";
@@ -60,6 +63,81 @@ function friendlyError(err: unknown): string {
   if (code === "too_long") return "That message is too long.";
   if (e.status === 401) return "Your session expired. Sign in again.";
   return e.message || "Something went wrong. Try again.";
+}
+
+const SHARE_ICON: Record<DmShare["type"], string> = {
+  profile: "@",
+  group: "#",
+  title: "■",
+  review: "★",
+  list: "≡",
+};
+
+const REACTION_CHOICES = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F389}"];
+
+/** The picker is a row of buttons, not a text field: the allowed set is the server's. */
+function ReactionPicker({ onPick }: { onPick: (emoji: string) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="React"
+        className="grid h-5 w-5 place-items-center rounded-full text-[11px] leading-none hover:bg-elevated hover:text-ink"
+      >
+        <span aria-hidden>+</span>
+      </button>
+      {open && (
+        <span
+          role="menu"
+          className="absolute bottom-6 z-10 flex items-center gap-0.5 rounded-full bg-elevated p-1 shadow-lg ring-1 ring-edge-soft"
+        >
+          {REACTION_CHOICES.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onPick(emoji);
+              }}
+              className="grid h-6 w-6 place-items-center rounded-full text-[13px] hover:bg-canvas/70"
+            >
+              <span aria-hidden>{emoji}</span>
+            </button>
+          ))}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Renders a validated Harbor reference. It is a link, never remote HTML. */
+function ShareCard({ share }: { share: DmShare }) {
+  const label =
+    share.title ||
+    (share.type === "profile"
+      ? `@${share.id}`
+      : share.type === "group"
+        ? `#${share.id}`
+        : share.id);
+  return (
+    <div className="mb-1 flex items-center gap-2 rounded-lg bg-current/10 p-1.5 text-start">
+      {share.poster ? (
+        <img src={share.poster} alt="" className="h-10 w-7 shrink-0 rounded object-cover" draggable={false} />
+      ) : (
+        <span className="grid h-10 w-7 shrink-0 place-items-center rounded bg-current/10 text-[11px] font-bold">
+          {SHARE_ICON[share.type]}
+        </span>
+      )}
+      <span className="min-w-0">
+        <span className="block truncate text-[12px] font-semibold">{label}</span>
+        <span className="block text-[10.5px] opacity-70">{share.type}</span>
+      </span>
+    </div>
+  );
 }
 
 export function DmThread({
@@ -248,6 +326,19 @@ export function DmThread({
     }
   };
 
+  // Reactions are optimistic-free on purpose: the server returns the authoritative
+  // list, so two devices cannot end up counting differently.
+  const toggleReaction = async (message: DmMessage, emoji: string) => {
+    const mine = message.reactions.some((r) => r.emoji === emoji && r.mine);
+    try {
+      const next = mine
+        ? await unreactToDmMessage(message.id, emoji)
+        : await reactToDmMessage(message.id, emoji);
+      setMessages((prev) => mergeMessages(prev, [next]));
+    } catch (err) {
+      setActionError(friendlyError(err));
+    }
+  };
   const remove = async (message: DmMessage) => {
     if (busyId) return;
     setBusyId(message.id);
@@ -493,7 +584,33 @@ export function DmThread({
                         ) : message.deleted ? (
                           <span className="italic opacity-70">{t("Message deleted")}</span>
                         ) : (
-                          <p className="whitespace-pre-wrap break-words">{message.body}</p>
+                          <>
+                            {message.share && (
+                              <ShareCard share={message.share} />
+                            )}
+                            {message.body && (
+                              <p className="whitespace-pre-wrap break-words">{message.body}</p>
+                            )}
+                          </>
+                        )}
+                        {message.reactions.length > 0 && (
+                          <div className={`mt-1 flex flex-wrap items-center gap-1 ${mine ? "justify-end" : ""}`}>
+                            {message.reactions.map((r) => (
+                              <button
+                                key={r.emoji}
+                                type="button"
+                                onClick={() => void toggleReaction(message, r.emoji)}
+                                aria-pressed={r.mine}
+                                aria-label={t("React with {emoji}", { emoji: r.emoji })}
+                                className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10.5px] tabular-nums transition-colors ${
+                                  r.mine ? "bg-ink/15 text-ink" : "bg-current/10 hover:bg-current/15"
+                                }`}
+                              >
+                                <span aria-hidden>{r.emoji}</span>
+                                {r.count > 1 ? r.count : ""}
+                              </button>
+                            ))}
+                          </div>
                         )}
                       </div>
                       <div className={`mt-0.5 flex items-center gap-1.5 text-[10px] text-ink-subtle ${mine ? "flex-row-reverse" : ""}`}>
@@ -526,6 +643,7 @@ export function DmThread({
                                 </button>
                               </>
                             )}
+                            <ReactionPicker onPick={(emoji) => void toggleReaction(message, emoji)} />
                           </span>
                         )}
                       </div>
