@@ -117,14 +117,17 @@ const PROOF_META = {
   ],
 };
 
-function loadIdentityHarness() {
+function loadIdentityHarness(
+  onNotify: () => void = () => {},
+  overrides: Record<string, unknown> = {},
+) {
   const mocks: Record<string, unknown> = {
     "@/lib/anime-cw-ids": {
       getAnimeCwId: () => null,
       getAnimeCanonicalId: () => null,
       getAnilistMalAlias: () => null,
       recordAnimeCwId: () => {},
-      notifyAnimeCwIds: () => {},
+      notifyAnimeCwIds: onNotify,
     },
     "@/lib/anime-identity-db": {
       animeDbReadEntry: async () => null,
@@ -141,6 +144,7 @@ function loadIdentityHarness() {
       tmdbImdbId: async () => "tt111",
     },
     "@/lib/publicmetadb/mappings": { getImdbForTmdb: async () => null },
+    ...overrides,
   };
   const source = readFileSync(new URL("../src/lib/cw-anime-identity.ts", import.meta.url), "utf8");
   const output = ts.transpileModule(source, {
@@ -200,6 +204,93 @@ test("a catalog proof resolves through the cached asynchronous TMDB to IMDb mapp
   // The item carries neither an IMDb id nor an alias; the proof can only exist
   // because the asynchronous mapping was recorded and reused.
   assert.equal(identity.provenCwAnimeIdentity(item), "kitsu:49444");
+});
+
+test("overlapping warming calls coalesce into one notification", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let notifications = 0;
+  const identity = loadIdentityHarness(() => {
+    notifications += 1;
+  });
+
+  await Promise.all([
+    identity.warmCwAnimeIdentities([catalogProofItem("tmdb:tv:904", { altIds: ["tt111"] })]),
+    identity.warmCwAnimeIdentities([catalogProofItem("tmdb:tv:905", { altIds: ["tt111"] })]),
+  ]);
+  assert.equal(notifications, 0);
+  t.mock.timers.tick(200);
+  assert.equal(notifications, 1);
+});
+
+test("rewarming an unchanged identity does not notify again", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let notifications = 0;
+  const identity = loadIdentityHarness(() => {
+    notifications += 1;
+  });
+  const item = catalogProofItem("tmdb:tv:907", { altIds: ["tt111"] });
+
+  await identity.warmCwAnimeIdentities([item]);
+  t.mock.timers.tick(200);
+  const afterFirst = notifications;
+  assert.equal(afterFirst, 1);
+
+  await identity.warmCwAnimeIdentities([item]);
+  t.mock.timers.tick(200);
+  assert.equal(notifications, afterFirst);
+});
+
+test("a native identity notifies once and not again after the cache expires", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  let notifications = 0;
+  const aliases = new Map<string, string>();
+  const identity = loadIdentityHarness(undefined, {
+    "@/lib/anime-cw-ids": {
+      getAnimeCwId: (id: string) => aliases.get(id) ?? null,
+      getAnimeCanonicalId: () => null,
+      getAnilistMalAlias: () => null,
+      recordAnimeCwId: (id: string, canonical: string) => {
+        aliases.set(id, canonical);
+      },
+      notifyAnimeCwIds: () => {
+        notifications += 1;
+      },
+    },
+    "@/lib/providers/anime-entry": { resolveAnimeEntry: async () => ({ kitsuId: 333 }) },
+  });
+  const item = {
+    _id: "mal:222",
+    type: "series",
+    name: "Native row",
+    state: { season: 1, episode: 1, video_id: "mal:222:1:1" },
+  };
+
+  await identity.warmCwAnimeIdentities([item]);
+  t.mock.timers.tick(200);
+  // First discovery changes the alias map once.
+  assert.equal(notifications, 1);
+  assert.equal(aliases.get("mal:222"), "kitsu:333");
+
+  // Let the warm cache expire, then resolve the same canonical identity again.
+  t.mock.timers.tick(24 * 60 * 60 * 1000);
+  await identity.warmCwAnimeIdentities([item]);
+  t.mock.timers.tick(200);
+  assert.equal(notifications, 1);
+});
+
+test("warm identity key includes proof metadata and nested members", () => {
+  const identity = loadIdentityHarness();
+  const base = catalogProofItem("tmdb:tv:906", { altIds: ["tt111"] });
+  const withAlt = { ...base, altIds: ["tt111", "tt222"] };
+  const withImdb = { ...base, state: { ...base.state, imdb_id: "tt333" } };
+  const withMember = {
+    ...base,
+    cwMembers: [{ _id: "tt444", type: "series", state: { video_id: "tt444:1:1" } }],
+  };
+
+  assert.notEqual(identity.cwWarmIdentityKey(base), identity.cwWarmIdentityKey(withAlt));
+  assert.notEqual(identity.cwWarmIdentityKey(base), identity.cwWarmIdentityKey(withImdb));
+  assert.notEqual(identity.cwWarmIdentityKey(base), identity.cwWarmIdentityKey(withMember));
 });
 
 test("an unwarmed catalog row has no proof", () => {

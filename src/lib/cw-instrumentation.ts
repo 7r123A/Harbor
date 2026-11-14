@@ -215,6 +215,23 @@ export function cwAdvanceComplete(passId: number | null): void {
   maybeQuiet();
 }
 
+/** Release superseded pass state without extra benchmark-only events. */
+export function cwAdvanceSuperseded(passId: number | null): void {
+  if (!captured || passId == null || passId !== currentPassId) return;
+  for (const [stage, stagePass] of pending) {
+    if (stagePass === passId) pending.delete(stage);
+  }
+  maybeQuiet();
+}
+
+/** A cancelled, failed or timed-out worker also releases diagnostic stages. */
+export function cwAdvanceTerminate(
+  passId: number | null,
+  _outcome: Exclude<CwOutcome, "success">,
+): void {
+  cwAdvanceSuperseded(passId);
+}
+
 /** The next pass starts almost immediately; only a real unmount/cancel settles as cancelled. */
 export function cwAdvanceCancel(passId: number | null): void {
   if (!captured || windowEnded || passId == null || passId !== currentPassId) return;

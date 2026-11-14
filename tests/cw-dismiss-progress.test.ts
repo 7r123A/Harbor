@@ -387,7 +387,19 @@ function advanceHarness(
   extra: LibraryItem[],
 ) {
   const state = [
-    { privacyOwner: null, profileId: null, simklSession: null, simklEnabled: false },
+    {
+      privacyOwner: null,
+      profileId: null,
+      stremioSourceId: null,
+      stremioAuthKey: null,
+      traktIdentity: "|",
+      nuvioSlot: 1,
+      accountProvider: undefined,
+      tmdbKey: "",
+      sources: "00000",
+      simklSession: null,
+      simklEnabled: false,
+    },
     advanced,
     extra,
     new Set<string>(),
@@ -395,10 +407,16 @@ function advanceHarness(
   ];
   let slot = 0;
   const mocks: Record<string, unknown> = {
-    "@/lib/profiles": { useProfiles: () => ({ activeProfile: null, profiles: [] }) },
+    "@/lib/profiles": {
+      useProfiles: () => ({ activeProfile: null, profiles: [] }),
+      stremioSourceProfileId: () => null,
+    },
+    "@/lib/auth": { readActiveStremioAuthKey: () => null },
+    "@/lib/active-profile-id": { getNuvioActiveSlot: () => 1 },
     react: {
       useState: () => [state[slot++], () => {}],
       useRef: (current: unknown) => ({ current }),
+      useMemo: (fn: () => unknown) => fn(),
       useEffect: () => {},
       useSyncExternalStore: () => null,
     },
@@ -410,11 +428,13 @@ function advanceHarness(
     "@/lib/cw-anime-identity": {
       dedupeAnimeCw: dedupeWithSameIdentity,
       cwAnimeIdentityKey: (...args: any[]) => animeIdentityHelpers().cwAnimeIdentityKey(...args),
+      cwWarmIdentityKey: (item: any) => JSON.stringify(item),
     },
     "@/lib/cw-dedupe": { dedupeCwItems },
     "@/lib/cw-next-display": { cwNextDisplayCoords },
     "@/lib/stremio": {
       isAnimeCwItem: (item: LibraryItem) => /^(kitsu|mal|anilist|anidb):/.test(item._id),
+      isCwMember: () => true,
       resolvedEpisodeCoords: (item: LibraryItem) => realEpisodeCoords(item),
     },
   };

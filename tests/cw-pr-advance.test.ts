@@ -114,6 +114,7 @@ function harness() {
         ];
       },
       useRef: (current: any) => refs[refSlot++] ?? (refs[refSlot - 1] = { current }),
+      useMemo: (fn: any) => fn(),
       useSyncExternalStore: (_subscribe: any, get: any) => get(),
       useEffect: (fn: any, deps: any[]) => {
         const slot = effectSlot++,
@@ -137,7 +138,10 @@ function harness() {
     "@/lib/profiles": {
       useProfiles: () => ({ activeProfile: profile, profiles: [] }),
       anyProfileSharesStremioWith: () => true,
+      stremioSourceProfileId: (active: any) => active?.id ?? null,
     },
+    "@/lib/auth": { readActiveStremioAuthKey: () => null },
+    "@/lib/active-profile-id": { getNuvioActiveSlot: () => 1 },
     "@/lib/simkl/session": { getSession: () => session, subscribeSession: () => () => {} },
     "@/lib/simkl/list-status": {
       loadSimklProgress: async () => {
@@ -170,10 +174,14 @@ function harness() {
     },
     "@/lib/cw-anime-identity": {
       cwAnimeIdentityKey: () => null,
+      cwWarmIdentityKey: (item: any) => JSON.stringify(item),
       dedupeAnimeCw: (items: any[]) => items,
       warmCwAnimeIdentities: async () => {},
     },
-    "@/lib/anime-tracker-entry": { resolveTrackerAnimeEntry: async () => null },
+    "@/lib/anime-tracker-entry": {
+      resolveTrackerAnimeEntry: async () => null,
+      resolveTrackerAnimeEntryStrict: async () => null,
+    },
     "@/lib/providers/anime-franchise-root": { isSplitFranchiseKitsu: () => false },
     "@/lib/providers/kitsu": { parseKitsuId: () => null },
     "@/lib/providers/jikan": { franchiseDedupKey: (name: string) => name.toLowerCase() },

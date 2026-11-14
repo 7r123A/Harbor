@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { fetchEpisodeList, nextUnwatchedAfter } from "@/lib/series-episodes";
 import type { Meta } from "@/lib/cinemeta";
 import type { PlayEpisode } from "@/lib/view";
@@ -30,7 +30,7 @@ import {
 import { lastPlayedEpisode, readResumeEntry } from "@/lib/resume";
 import { getViewedSeason } from "@/lib/season-view-pref";
 import { getAnimeCwId } from "@/lib/anime-cw-ids";
-import { resolveTrackerAnimeEntry } from "@/lib/anime-tracker-entry";
+import { resolveTrackerAnimeEntryStrict } from "@/lib/anime-tracker-entry";
 import {
   preferredMixedSeason,
   providerAliasCoords,
@@ -41,17 +41,25 @@ import { parseKitsuId } from "@/lib/providers/kitsu";
 import { franchiseDedupKey } from "@/lib/providers/jikan";
 import { useSettings } from "@/lib/settings";
 import { isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
-import { anyProfileSharesStremioWith, useProfiles } from "@/lib/profiles";
+import { anyProfileSharesStremioWith, stremioSourceProfileId, useProfiles } from "@/lib/profiles";
+import { readActiveStremioAuthKey } from "@/lib/auth";
+import { getNuvioActiveSlot } from "@/lib/active-profile-id";
 import { listLocalCw, localCwSourceEnabled } from "@/lib/local-cw";
 import { localToLibraryItem } from "@/lib/continue-watching";
-import { cwAnimeIdentityKey, dedupeAnimeCw, warmCwAnimeIdentities } from "@/lib/cw-anime-identity";
+import {
+  cwAnimeIdentityKey,
+  cwWarmIdentityKey,
+  dedupeAnimeCw,
+  warmCwAnimeIdentities,
+} from "@/lib/cw-anime-identity";
 import { dedupeCwItems } from "@/lib/cw-dedupe";
 import {
-  cwAdvanceCancel,
   cwAdvanceCandidates,
   cwAdvanceComplete,
   cwAdvanceOutcome,
   cwAdvanceStart,
+  cwAdvanceSuperseded,
+  cwAdvanceTerminate,
   cwAnimeWarmEnd,
   cwAnimeWarmStart,
   cwResurfaceComplete,
@@ -65,6 +73,64 @@ import { seasonIndex } from "@/lib/season-index";
 
 const FINISHED_RATIO = 0.9;
 const ANIME_ID = /^(kitsu|mal|anilist|anidb):/;
+// The trace's 10 s window is diagnostic only. The worker needs its own deadline
+// so one hanging request cannot hold the single-flight slot forever.
+const WORKER_TIMEOUT_MS = 30_000;
+
+type AdvanceOwner = {
+  enabled: boolean;
+  privacyOwner: string | null;
+  profileId: string | null;
+  stremioSourceId: string | null;
+  stremioAuthKey: string | null;
+  traktIdentity: string;
+  simklSession: unknown;
+  simklEnabled: boolean;
+  accountProvider: string;
+  nuvioSlot: number;
+  tmdbKey: string;
+  sources: string;
+};
+
+type AdvanceContext = {
+  passId: number | null;
+  signal: AbortSignal;
+  isCurrent: () => boolean;
+  isSuperseded: () => boolean;
+  complete: () => void;
+  supersede: () => void;
+  markCommit: () => void;
+};
+
+type AdvanceRun = (ctx: AdvanceContext) => Promise<void>;
+
+type ActiveAdvance = {
+  owner: AdvanceOwner;
+  passId: number | null;
+  controller: AbortController;
+  timer: ReturnType<typeof setTimeout> | null;
+  closed: boolean;
+  superseded: boolean;
+};
+
+type PendingAdvance = { run: AdvanceRun; owner: AdvanceOwner };
+
+function sameOwner(a: AdvanceOwner, b: AdvanceOwner): boolean {
+  return (
+    a.enabled === b.enabled &&
+    a.privacyOwner === b.privacyOwner &&
+    a.profileId === b.profileId &&
+    a.stremioSourceId === b.stremioSourceId &&
+    a.stremioAuthKey === b.stremioAuthKey &&
+    a.traktIdentity === b.traktIdentity &&
+    a.simklSession === b.simklSession &&
+    a.simklEnabled === b.simklEnabled &&
+    a.accountProvider === b.accountProvider &&
+    a.nuvioSlot === b.nuvioSlot &&
+    a.tmdbKey === b.tmdbKey &&
+    a.sources === b.sources
+  );
+}
 
 const EMPTY_TRAKT_WATCHED: Set<string> = new Set();
 const EMPTY_SIMKL_WATCHED: Map<string, Set<string>> = new Map();
@@ -104,6 +170,8 @@ async function animeEntryFollowUp(
   watched: (season: number, episode: number) => boolean,
   skip: ((season: number, episode: number) => boolean) | undefined,
   listCache: Map<string, PlayEpisode[]>,
+  signal: AbortSignal,
+  isCurrent: () => boolean,
 ): Promise<PlayEpisode | null> {
   const stream = animeStreamAnchor(item);
   // The played entry recorded at playback time (recordAnimePlayId) is the
@@ -118,13 +186,19 @@ async function animeEntryFollowUp(
     try {
       fetched = await fetchEpisodeList({ id, type: "series", name: item.name } as Meta, {
         tmdbKey,
+        signal,
+        requireComplete: true,
       });
-    } catch {
-      // A transient failure must stay retryable: caching the empty result would
-      // disable the sequel fallback for this entry for the whole session.
-      return [];
+      // An unabortable provider can resolve after an owner switch; never let
+      // that result populate the shared episode-list cache.
+      if (!isCurrent() || signal.aborted) return [];
+    } catch (error) {
+      if ((error as { name?: string })?.name === "AbortError") return [];
+      // An unavailable sequel list must not be read as "this show has no more
+      // episodes": that is what removes a card. Let the caller skip the card.
+      throw error;
     }
-    listCache.set(cacheKey, fetched);
+    if (fetched.length > 0) listCache.set(cacheKey, fetched);
     return fetched;
   };
   let list = animeId ? await entryList(animeId) : [];
@@ -140,10 +214,18 @@ async function animeEntryFollowUp(
   const entryMissesSeason =
     list.length === 0 || (coveredSeasons.size > 0 && !coveredSeasons.has(from.season));
   if (entryMissesSeason) {
-    const resolved = await resolveTrackerAnimeEntry(item._id, {
+    const resolved = await resolveTrackerAnimeEntryStrict(item._id, {
       season: from.season,
       episode: from.episode,
-    }).catch(() => null);
+    })
+      .then((value) => {
+        return value;
+      })
+      .catch((error: unknown) => {
+        if ((error as { name?: string })?.name === "AbortError") return null;
+        throw error;
+      });
+    if (!isCurrent() || signal.aborted) return null;
     if (resolved && resolved.id !== animeId) {
       const nextList = await entryList(resolved.id);
       if (nextList.length > 0) {
@@ -303,9 +385,114 @@ function watchedPredicate(
   };
 }
 
+function sameState(a?: LibraryItem["state"], b?: LibraryItem["state"]): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.timeOffset === b.timeOffset &&
+    a.duration === b.duration &&
+    a.season === b.season &&
+    a.episode === b.episode &&
+    a.timeWatched === b.timeWatched &&
+    a.flaggedWatched === b.flaggedWatched &&
+    a.timesWatched === b.timesWatched &&
+    a.watched === b.watched &&
+    a.video_id === b.video_id &&
+    a.lastWatched === b.lastWatched
+  );
+}
+
+function sameStringList(a?: readonly string[], b?: readonly string[]): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function sameProviderPlaybackIds(
+  a?: Partial<Record<"trakt" | "simkl" | "publicmetadb", string>>,
+  b?: Partial<Record<"trakt" | "simkl" | "publicmetadb", string>>,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.trakt === b.trakt && a.simkl === b.simkl && a.publicmetadb === b.publicmetadb;
+}
+
+/** One level only: source records kept for CW dedupe and provider dismissal. */
+function sameCwMember(a: LibraryItem, b: LibraryItem): boolean {
+  if (a === b) return true;
+  return (
+    a._id === b._id &&
+    a.type === b.type &&
+    a.name === b.name &&
+    a.external === b.external &&
+    // `local` decides dismissal scope when no external provider is present.
+    a.local === b.local &&
+    a.manualWatched === b.manualWatched &&
+    a.isAnime === b.isAnime &&
+    a.upNext === b.upNext &&
+    a.waitingForAir === b.waitingForAir &&
+    a.nextAirDate === b.nextAirDate &&
+    a.removed === b.removed &&
+    a.temp === b.temp &&
+    a._ctime === b._ctime &&
+    a._mtime === b._mtime &&
+    sameState(a.state, b.state) &&
+    sameStringList(a.altIds, b.altIds) &&
+    sameProviderPlaybackIds(a.providerPlaybackIds, b.providerPlaybackIds) &&
+    (a as Record<string, unknown>).keptForTimer === (b as Record<string, unknown>).keptForTimer
+  );
+}
+
+function sameMembers(a?: LibraryItem[], b?: LibraryItem[]): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (!sameCwMember(a[i], b[i])) return false;
+  return true;
+}
+
+/**
+ * Semantic equality for a CW card. Reference equality made every pass look
+ * changed, which published state and re-armed advancement for no reason.
+ * Every field that changes what CW renders or does must be compared here.
+ */
+function sameCwItem(a: LibraryItem, b: LibraryItem): boolean {
+  if (a === b) return true;
+  if (
+    a._id !== b._id ||
+    a.type !== b.type ||
+    a.name !== b.name ||
+    a.poster !== b.poster ||
+    a.background !== b.background ||
+    a.removed !== b.removed ||
+    a.temp !== b.temp ||
+    a._ctime !== b._ctime ||
+    a._mtime !== b._mtime ||
+    a.external !== b.external ||
+    a.isAnime !== b.isAnime ||
+    a.upNext !== b.upNext ||
+    a.waitingForAir !== b.waitingForAir ||
+    a.nextAirDate !== b.nextAirDate ||
+    a.local !== b.local ||
+    a.manualWatched !== b.manualWatched ||
+    !sameProviderPlaybackIds(a.providerPlaybackIds, b.providerPlaybackIds) ||
+    !sameState(a.state, b.state) ||
+    !sameStringList(a.altIds, b.altIds) ||
+    !sameMembers(a.cwMembers, b.cwMembers)
+  )
+    return false;
+  // Timer-only flags live outside the typed item and still affect the row.
+  return (
+    (a as Record<string, unknown>).keptForTimer === (b as Record<string, unknown>).keptForTimer
+  );
+}
+
 function sameMap(a: Map<string, LibraryItem>, b: Map<string, LibraryItem>): boolean {
   if (a.size !== b.size) return false;
-  for (const [k, v] of a) if (b.get(k) !== v) return false;
+  for (const [k, v] of a) {
+    const other = b.get(k);
+    if (!other || !sameCwItem(v, other)) return false;
+  }
   return true;
 }
 
@@ -317,11 +504,7 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
 
 function sameList(a: LibraryItem[], b: LibraryItem[]): boolean {
   if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i]._id !== b[i]._id) return false;
-    if (a[i].state?.season !== b[i].state?.season) return false;
-    if (a[i].state?.episode !== b[i].state?.episode) return false;
-  }
+  for (let i = 0; i < a.length; i++) if (!sameCwItem(a[i], b[i])) return false;
   return true;
 }
 
@@ -341,7 +524,7 @@ export function useCwAdvance(
   animeCwEnd: "hide" | "timer" = "hide",
   progressPool: LibraryItem[] = EMPTY_LIBRARY,
 ): LibraryItem[] {
-  useCwDismissVersion();
+  const dismissVersion = useCwDismissVersion();
   const { settings } = useSettings();
   const hideCaughtUp = settings.cwHideCaughtUp;
   const { activeProfile, profiles } = useProfiles();
@@ -352,9 +535,29 @@ export function useCwAdvance(
   const simklSession = useSyncExternalStore(subscribeSession, getSimklSession, getSimklSession);
   const simklEnabled = settings.cwSources.simkl;
   const profileId = activeProfile?.id ?? null;
+  const stremioSourceId = stremioSourceProfileId(activeProfile, profiles);
+  const stremioAuthKey = readActiveStremioAuthKey();
+  const nuvioSlot = getNuvioActiveSlot();
+  const traktIdentity = `${settings.traktUsername ?? ""}|${settings.traktAccessToken ?? ""}`;
+  const sourceKey = [
+    settings.cwSources.library,
+    settings.cwSources.trakt,
+    settings.cwSources.simkl,
+    settings.cwSources.local,
+    settings.cwSources.publicmetadb,
+  ]
+    .map((value) => (value ? "1" : "0"))
+    .join("");
   const [resolvedOwner, setResolvedOwner] = useState({
     privacyOwner,
     profileId,
+    stremioSourceId,
+    stremioAuthKey,
+    traktIdentity,
+    nuvioSlot,
+    accountProvider: settings.accountProvider,
+    tmdbKey,
+    sources: sourceKey,
     simklSession,
     simklEnabled,
   });
@@ -362,8 +565,7 @@ export function useCwAdvance(
   const [extra, setExtra] = useState<LibraryItem[]>([]);
   const [removed, setRemoved] = useState<Set<string>>(new Set());
   const listCacheRef = useRef<Map<string, PlayEpisode[]>>(new Map());
-  const passIdRef = useRef<number | null>(null);
-  const stateCommitPassRef = useRef<number | null>(null);
+  const stateCommitPassRef = useRef<ActiveAdvance | null>(null);
   const advancedRef = useRef(advanced);
   const extraRef = useRef(extra);
   const removedRef = useRef(removed);
@@ -378,24 +580,166 @@ export function useCwAdvance(
   }, [removed]);
   const [airTick, setAirTick] = useState(0);
   const airTimerRef = useRef<number | null>(null);
+  const owner: AdvanceOwner = {
+    enabled,
+    privacyOwner,
+    profileId,
+    stremioSourceId,
+    stremioAuthKey,
+    traktIdentity,
+    simklSession,
+    simklEnabled,
+    accountProvider: settings.accountProvider,
+    nuvioSlot,
+    tmdbKey,
+    sources: sourceKey,
+  };
+  const ownerRef = useRef(owner);
+  ownerRef.current = owner;
+  const cacheOwnerRef = useRef<AdvanceOwner | null>(null);
+  const activeAdvanceRef = useRef<ActiveAdvance | null>(null);
+  const pendingAdvanceRef = useRef<PendingAdvance | null>(null);
+
+  function finishAdvance(
+    active: ActiveAdvance,
+    outcome: "complete" | "cancel" | "failure" | "timeout" | "superseded",
+  ): void {
+    if (active.closed) return;
+    active.closed = true;
+    if (active.timer != null) {
+      clearTimeout(active.timer);
+      active.timer = null;
+    }
+    if (outcome === "complete") cwAdvanceComplete(active.passId);
+    else {
+      if (stateCommitPassRef.current === active) stateCommitPassRef.current = null;
+      if (outcome === "superseded") cwAdvanceSuperseded(active.passId);
+      else cwAdvanceTerminate(active.passId, outcome === "cancel" ? "cancelled" : outcome);
+    }
+    if (activeAdvanceRef.current !== active) return;
+    activeAdvanceRef.current = null;
+    const pending = pendingAdvanceRef.current;
+    pendingAdvanceRef.current = null;
+    if (pending && sameOwner(pending.owner, ownerRef.current))
+      startAdvance(pending.run, pending.owner);
+  }
+
+  function startAdvance(run: AdvanceRun, runOwner: AdvanceOwner): void {
+    if (cacheOwnerRef.current && !sameOwner(cacheOwnerRef.current, runOwner)) {
+      listCacheRef.current.clear();
+      const emptyMap = new Map<string, LibraryItem>();
+      const emptyExtra: LibraryItem[] = [];
+      const emptyRemoved = new Set<string>();
+      // Reset the comparison refs in the same turn as the state. React may not
+      // have committed the reset before this pass finishes, and comparing
+      // against the previous owner's results would then suppress publication.
+      advancedRef.current = emptyMap;
+      extraRef.current = emptyExtra;
+      removedRef.current = emptyRemoved;
+      setAdvanced(emptyMap);
+      setExtra(emptyExtra);
+      setRemoved(emptyRemoved);
+    }
+    cacheOwnerRef.current = runOwner;
+    const controller = new AbortController();
+    const passId = cwAdvanceStart();
+    const active: ActiveAdvance = {
+      owner: runOwner,
+      passId,
+      controller,
+      timer: null,
+      closed: false,
+      superseded: false,
+    };
+    active.timer = setTimeout(() => {
+      if (active.closed) return;
+      controller.abort();
+      finishAdvance(active, "timeout");
+    }, WORKER_TIMEOUT_MS);
+    // Node's timer object would otherwise keep tests and tooling alive.
+    (active.timer as unknown as { unref?: () => void }).unref?.();
+    activeAdvanceRef.current = active;
+    void run({
+      passId,
+      signal: controller.signal,
+      isCurrent: () =>
+        activeAdvanceRef.current === active &&
+        !active.closed &&
+        !controller.signal.aborted &&
+        sameOwner(active.owner, ownerRef.current),
+      isSuperseded: () => active.superseded,
+      complete: () => finishAdvance(active, "complete"),
+      supersede: () => finishAdvance(active, "superseded"),
+      markCommit: () => {
+        stateCommitPassRef.current = active;
+      },
+    }).catch(() => {
+      if (!active.closed) finishAdvance(active, "failure");
+    });
+  }
+
+  function requestAdvance(run: AdvanceRun, runOwner: AdvanceOwner): void {
+    const active = activeAdvanceRef.current;
+    if (active && !active.closed) {
+      if (sameOwner(active.owner, runOwner)) {
+        active.superseded = true;
+        pendingAdvanceRef.current = { run, owner: runOwner };
+        return;
+      }
+      active.controller.abort();
+      finishAdvance(active, "cancel");
+    }
+    pendingAdvanceRef.current = null;
+    startAdvance(run, runOwner);
+  }
+
+  function cancelAdvance(): void {
+    pendingAdvanceRef.current = null;
+    const active = activeAdvanceRef.current;
+    if (active) {
+      active.controller.abort();
+      finishAdvance(active, "cancel");
+    }
+    if (airTimerRef.current !== null) {
+      window.clearTimeout(airTimerRef.current);
+      airTimerRef.current = null;
+    }
+  }
+
   const [remoteProgress, setRemoteProgress] = useState<{
     profileId: string | null;
     session: typeof simklSession;
     data: SimklProgress;
   } | null>(null);
-  useEffect(() => {
-    if (!enabled) return;
-    cwAnimeWarmStart();
-    void warmCwAnimeIdentities(
+  const warmItems = useMemo(
+    () =>
       [...items.map((item) => advanced.get(item._id) ?? item), ...extra].filter(
         (item) => isCwMember(item) && !removed.has(item._id) && !isCwDismissed(item),
       ),
-    )
+    [items, advanced, extra, removed, dismissVersion],
+  );
+  // Warm only when a checkpoint actually changes; a new array identity from Home
+  // must not restart the identity pass.
+  const warmKey = useMemo(
+    () => warmItems.map((item) => cwWarmIdentityKey(item)).join("||"),
+    [warmItems],
+  );
+  const warmItemsRef = useRef(warmItems);
+  useEffect(() => {
+    warmItemsRef.current = warmItems;
+  }, [warmItems]);
+  useEffect(() => {
+    if (!enabled) return;
+    cwAnimeWarmStart();
+    // Lookup configuration and owner scope are part of the warm trigger: a
+    // metadata key that arrives late must be able to resolve identities the
+    // earlier attempt could not, even when the card checkpoints are unchanged.
+    void warmCwAnimeIdentities(warmItemsRef.current, { tmdbKey })
       .catch(() => {})
       .finally(cwAnimeWarmEnd);
-  }, [items, advanced, extra, removed, enabled]);
+  }, [warmKey, enabled, tmdbKey, privacyOwner, profileId, stremioSourceId]);
   useEffect(() => {
-    const passId = stateCommitPassRef.current;
+    const active = stateCommitPassRef.current;
     stateCommitPassRef.current = null;
     cwStateCommit(
       {
@@ -403,9 +747,9 @@ export function useCwAdvance(
         extra: extra.length,
         removed: removed.size,
       },
-      passId ?? passIdRef.current,
+      active?.passId ?? null,
     );
-    if (passId != null) cwAdvanceComplete(passId);
+    if (active && activeAdvanceRef.current === active) finishAdvance(active, "complete");
   }, [advanced, extra, removed]);
   const simkl =
     !privacyOwner &&
@@ -467,16 +811,15 @@ export function useCwAdvance(
 
   useEffect(() => {
     if (!enabled) {
+      cancelAdvance();
       setAdvanced((prev) => (prev.size === 0 ? prev : new Map()));
       setExtra((prev) => (prev.length === 0 ? prev : []));
       setRemoved((prev) => (prev.size === 0 ? prev : new Set()));
       return;
     }
-    let cancelled = false;
-    let passId: number | null = null;
-    void (async () => {
-      passId = cwAdvanceStart();
-      passIdRef.current = passId;
+    const run: AdvanceRun = async (ctx) => {
+      const passId = ctx.passId;
+      const signal = ctx.signal;
       // Cards not in the row can still hold the same show's real progress
       // (classically an anime-scheme copy hidden from Home).
       cwStaleStart(passId);
@@ -563,16 +906,30 @@ export function useCwAdvance(
             poster: i.poster,
             background: i.background,
           };
-          const res = await fetchEpisodeList(meta, { tmdbKey })
-            .then((eps) => ({ ok: true, eps }))
-            .catch(() => ({ ok: false, eps: [] as PlayEpisode[] }));
-          if (cancelled) return;
+          const res = await fetchEpisodeList(meta, { tmdbKey, signal, requireComplete: true })
+            .then((eps) => ({ ok: true, eps, aborted: false }))
+            .catch((error: unknown) => ({
+              ok: false,
+              eps: [] as PlayEpisode[],
+              aborted: (error as { name?: string })?.name === "AbortError",
+            }));
+          if (!ctx.isCurrent()) return;
           fetchOk = res.ok;
-          if (!res.ok) cwAdvanceOutcome(i._id, "failure", passId);
+          if (!res.ok) cwAdvanceOutcome(i._id, res.aborted ? "cancelled" : "failure", passId);
+          if (res.aborted) return;
           if (res.ok) {
             list = res.eps;
-            listCacheRef.current.set(i._id, list);
+            // A provider that cannot answer is coerced to [] by the episode
+            // sources. Never cache that as a real, empty episode list.
+            if (list.length > 0) listCacheRef.current.set(i._id, list);
           }
+        }
+        // An empty list is not proof the show has no episodes. Advancing or
+        // removing on it would drop a card because a provider was unreachable;
+        // leave the card in place and let a later pass retry.
+        if (list?.length === 0) {
+          cwAdvanceOutcome(i._id, "failure", passId);
+          continue;
         }
         if (!list) continue;
         // Bulletproof phantom guard: an entry can never show an episode past the last one
@@ -675,14 +1032,25 @@ export function useCwAdvance(
                     effectiveSimklStatus,
                     !!privacyOwner,
                   );
-                  followUp = await animeEntryFollowUp(
-                    i,
-                    effCur,
-                    tmdbKey,
-                    checkWatched,
-                    undefined,
-                    listCacheRef.current,
-                  );
+                  try {
+                    followUp = await animeEntryFollowUp(
+                      i,
+                      effCur,
+                      tmdbKey,
+                      checkWatched,
+                      undefined,
+                      listCacheRef.current,
+                      signal,
+                      ctx.isCurrent,
+                    );
+                  } catch {
+                    // The sequel list could not be read. That is not proof the
+                    // series is over, so keep the card and let a later pass retry.
+                    if (!ctx.isCurrent()) return;
+                    cwAdvanceOutcome(i._id, "failure", passId);
+                    continue;
+                  }
+                  if (!ctx.isCurrent()) return;
                 }
                 if (followUp) {
                   nextEp = followUp;
@@ -857,17 +1225,27 @@ export function useCwAdvance(
         // finished episode and only shows the countdown for the recorded air date.
         let unplacedFollowUp: PlayEpisode | null = null;
         if ((!nextEp || unplacedCur) && tryAnimeEntry && !privacyOwner) {
-          const followUp = await animeEntryFollowUp(
-            i,
-            effCur,
-            tmdbKey,
-            checkWatched,
-            nextSkip,
-            listCacheRef.current,
-          );
-          if (followUp) {
-            nextEp = followUp;
-            if (unplacedCur) unplacedFollowUp = followUp;
+          try {
+            const followUp = await animeEntryFollowUp(
+              i,
+              effCur,
+              tmdbKey,
+              checkWatched,
+              nextSkip,
+              listCacheRef.current,
+              signal,
+              ctx.isCurrent,
+            );
+            if (!ctx.isCurrent()) return;
+            if (followUp) {
+              nextEp = followUp;
+              if (unplacedCur) unplacedFollowUp = followUp;
+            }
+          } catch {
+            if (!ctx.isCurrent()) return;
+            // An unavailable sequel list is not a finished series. Keep the card.
+            cwAdvanceOutcome(i._id, "failure", passId);
+            continue;
           }
         }
         // A future season with no air date is a placeholder, not the next
@@ -1027,7 +1405,7 @@ export function useCwAdvance(
         });
       const [resurfaced, stale] = await Promise.all([resurfacePromise, stalePromise]);
       for (const id of stale) remove.add(id);
-      if (cancelled) return;
+      if (!ctx.isCurrent()) return;
       const extraItems: LibraryItem[] = [];
       for (const [id, ep] of resurfaced) {
         if (next.has(id)) continue;
@@ -1048,7 +1426,7 @@ export function useCwAdvance(
           nextAirDate: ep.airDate,
         });
       }
-      if (!cancelled && animeCwEnd === "timer") {
+      if (ctx.isCurrent() && !ctx.isSuperseded() && animeCwEnd === "timer") {
         let soonest = Infinity;
         for (const it of [...next.values(), ...extraItems]) {
           const air = (it as Record<string, unknown>).nextAirDate;
@@ -1063,30 +1441,59 @@ export function useCwAdvance(
           airTimerRef.current = window.setTimeout(() => setAirTick((n) => n + 1), delay);
         }
       }
-      if (!cancelled) {
-        setResolvedOwner({ privacyOwner, profileId, simklSession, simklEnabled });
-        const changed =
-          !sameMap(advancedRef.current, next) ||
-          !sameList(extraRef.current, extraItems) ||
-          !sameSet(removedRef.current, remove);
-        setAdvanced((prev) => (sameMap(prev, next) ? prev : next));
-        setExtra((prev) => (sameList(prev, extraItems) ? prev : extraItems));
-        setRemoved((prev) => (sameSet(prev, remove) ? prev : remove));
-        if (changed) {
-          stateCommitPassRef.current = passId;
+      if (ctx.isCurrent()) {
+        // Newer inputs are already queued. Finish this pass and release the
+        // slot, but never publish results computed from the older snapshot.
+        if (ctx.isSuperseded()) {
+          ctx.supersede();
+          return;
+        }
+        const nextOwner = {
+          privacyOwner,
+          profileId,
+          stremioSourceId,
+          stremioAuthKey,
+          traktIdentity,
+          nuvioSlot,
+          accountProvider: settings.accountProvider,
+          tmdbKey,
+          sources: sourceKey,
+          simklSession,
+          simklEnabled,
+        };
+        // A new owner object is a React state change on every pass, even when
+        // nothing about the owner moved.
+        const ownerChanged =
+          resolvedOwner.privacyOwner !== nextOwner.privacyOwner ||
+          resolvedOwner.profileId !== nextOwner.profileId ||
+          resolvedOwner.stremioSourceId !== nextOwner.stremioSourceId ||
+          resolvedOwner.stremioAuthKey !== nextOwner.stremioAuthKey ||
+          resolvedOwner.traktIdentity !== nextOwner.traktIdentity ||
+          resolvedOwner.nuvioSlot !== nextOwner.nuvioSlot ||
+          resolvedOwner.accountProvider !== nextOwner.accountProvider ||
+          resolvedOwner.tmdbKey !== nextOwner.tmdbKey ||
+          resolvedOwner.sources !== nextOwner.sources ||
+          resolvedOwner.simklSession !== nextOwner.simklSession ||
+          resolvedOwner.simklEnabled !== nextOwner.simklEnabled;
+        if (ownerChanged) setResolvedOwner(nextOwner);
+        const advancedChanged = !sameMap(advancedRef.current, next);
+        const extraChanged = !sameList(extraRef.current, extraItems);
+        const removedChanged = !sameSet(removedRef.current, remove);
+        // Skip the dispatch itself when the result is equivalent: returning
+        // `prev` prevents a write but still schedules the update.
+        if (advancedChanged) setAdvanced(next);
+        if (extraChanged) setExtra(extraItems);
+        if (removedChanged) setRemoved(remove);
+        if (advancedChanged || extraChanged || removedChanged) {
+          ctx.markCommit();
         } else {
-          cwAdvanceComplete(passId);
+          // Nothing to publish: complete without a state commit. Completion
+          // must never depend on a React write that will not happen.
+          ctx.complete();
         }
       }
-    })();
-    return () => {
-      cancelled = true;
-      cwAdvanceCancel(passId);
-      if (airTimerRef.current !== null) {
-        window.clearTimeout(airTimerRef.current);
-        airTimerRef.current = null;
-      }
     };
+    requestAdvance(run, owner);
   }, [
     items,
     tmdbKey,
@@ -1106,16 +1513,32 @@ export function useCwAdvance(
     airTick,
     privacyOwner,
     profileId,
+    stremioSourceId,
+    stremioAuthKey,
+    traktIdentity,
+    nuvioSlot,
     simklSession,
     simklEnabled,
     simkl,
     settings.cwSources,
+    settings.accountProvider,
   ]);
+
+  useEffect(() => {
+    return () => cancelAdvance();
+  }, []);
 
   if (
     !enabled ||
     resolvedOwner.privacyOwner !== privacyOwner ||
     resolvedOwner.profileId !== profileId ||
+    resolvedOwner.stremioSourceId !== stremioSourceId ||
+    resolvedOwner.stremioAuthKey !== stremioAuthKey ||
+    resolvedOwner.traktIdentity !== traktIdentity ||
+    resolvedOwner.nuvioSlot !== nuvioSlot ||
+    resolvedOwner.accountProvider !== settings.accountProvider ||
+    resolvedOwner.tmdbKey !== tmdbKey ||
+    resolvedOwner.sources !== sourceKey ||
     resolvedOwner.simklSession !== simklSession ||
     resolvedOwner.simklEnabled !== simklEnabled
   )

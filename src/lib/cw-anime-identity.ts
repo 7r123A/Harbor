@@ -58,6 +58,47 @@ type CwIdentityItem = {
   cwMembers?: CwIdentityItem[];
 };
 
+/** Identity inputs that can change the proof without changing the checkpoint. */
+export type CwWarmIdentityItem = {
+  _id?: string;
+  id?: string;
+  type?: string;
+  isAnime?: boolean;
+  videoId?: string | null;
+  season?: number;
+  episode?: number;
+  imdb_id?: string | null;
+  altIds?: string[];
+  state?: {
+    video_id?: string | null;
+    season?: number;
+    episode?: number;
+    imdb_id?: string | null;
+  };
+  cwMembers?: CwWarmIdentityItem[];
+};
+
+export function cwWarmIdentityKey(item: CwWarmIdentityItem, depth = 0): string {
+  const state = item.state;
+  // shortcut: nested CW groups stop at four levels; current dedupe output is shallower.
+  const members =
+    depth < 4
+      ? (item.cwMembers ?? []).map((member) => cwWarmIdentityKey(member, depth + 1)).join(",")
+      : "";
+  return [
+    item._id ?? "",
+    item.id ?? "",
+    item.type ?? "",
+    item.isAnime ? "1" : "0",
+    item.videoId ?? state?.video_id ?? "",
+    item.season ?? state?.season ?? "",
+    item.episode ?? state?.episode ?? "",
+    item.imdb_id ?? state?.imdb_id ?? "",
+    [...(item.altIds ?? [])].sort().join(","),
+    members,
+  ].join("|");
+}
+
 const resolvedCatalogImdb = new Map<string, string>();
 
 function proofKey(id: string, videoId: string | null | undefined, coords: CwAnimeCoords): string {
@@ -101,6 +142,22 @@ export function getCachedCatalogImdb(id: string): string | null {
 const catalogProofs = new Map<string, { identity: string | null; expiresAt: number }>();
 const warmInflight = new Map<string, Promise<void>>();
 const warmCache = new Map<string, { identity: string | null; expiresAt: number }>();
+const WARM_NOTIFY_QUIET_MS = 50;
+const WARM_NOTIFY_MAX_MS = 200;
+let warmNotifyTimer: ReturnType<typeof setTimeout> | null = null;
+let warmNotifyDeadline = 0;
+
+/** Coalesce identity notifications into a short window without waiting for the whole batch. */
+function scheduleWarmNotify(): void {
+  const now = Date.now();
+  if (warmNotifyTimer == null) warmNotifyDeadline = now + WARM_NOTIFY_MAX_MS;
+  else clearTimeout(warmNotifyTimer);
+  const delay = Math.max(0, Math.min(WARM_NOTIFY_QUIET_MS, warmNotifyDeadline - now));
+  warmNotifyTimer = setTimeout(() => {
+    warmNotifyTimer = null;
+    notifyAnimeCwIds();
+  }, delay);
+}
 const nativeInflight = new Map<string, Promise<string | null>>();
 const nativeCache = new Map<string, { identity: string | null; expiresAt: number }>();
 let activeJobs = 0;
@@ -205,7 +262,7 @@ async function resolveNative(id: string): Promise<string | null> {
         expiresAt: Date.now() + (identity ? POSITIVE_TTL : NEGATIVE_TTL),
       });
       if (identity) {
-        recordAnimeCwId(id, identity);
+        recordAnimeCwId(id, identity, false);
       }
       return identity;
     })
@@ -322,6 +379,9 @@ async function warmOne(item: CwIdentityItem, tmdbKey = ""): Promise<void> {
   if (existing) return existing;
 
   const task = (async () => {
+    // The effective CW identity of a native row comes from the alias maps, not
+    // from the warm cache, so that is what a notification has to be based on.
+    const beforeNative = isNative ? (getAnimeCwId(id) ?? getAnimeCanonicalId(id)) : null;
     try {
       if (!isNative) {
         const stored = await animeDbReadProvider<{
@@ -352,11 +412,16 @@ async function warmOne(item: CwIdentityItem, tmdbKey = ""): Promise<void> {
             expiresAt: stored.expiresAt,
           });
           if (stored.value.identity) {
-            boundedSet(catalogProofs, proofKey(id, videoId, coords), {
+            const key = proofKey(id, videoId, coords);
+            const known = catalogProofs.get(key);
+            const effective = known && known.expiresAt > Date.now() ? known.identity : null;
+            boundedSet(catalogProofs, key, {
               identity: stored.value.identity,
               expiresAt: stored.expiresAt,
             });
-            notifyAnimeCwIds();
+            // Restoring an identity the row already had does not change what CW
+            // renders, so it must not invalidate the row.
+            if (effective !== stored.value.identity) scheduleWarmNotify();
           }
           return;
         }
@@ -366,8 +431,17 @@ async function warmOne(item: CwIdentityItem, tmdbKey = ""): Promise<void> {
         : limited(() => resolveCatalog(id, item, coords)));
       const expiresAt = Date.now() + (identity ? POSITIVE_TTL : NEGATIVE_TTL);
       boundedSet(warmCache, snapshotKey, { identity, expiresAt });
+      let identityChanged = true;
       if (identity && !isNative) {
-        boundedSet(catalogProofs, proofKey(id, videoId, coords), { identity, expiresAt });
+        const key = proofKey(id, videoId, coords);
+        const known = catalogProofs.get(key);
+        identityChanged =
+          (known && known.expiresAt > Date.now() ? known.identity : null) !== identity;
+        boundedSet(catalogProofs, key, { identity, expiresAt });
+      } else if (identity && isNative) {
+        identityChanged = (getAnimeCwId(id) ?? getAnimeCanonicalId(id)) !== beforeNative;
+      }
+      if (identity && !isNative) {
         await animeDbWriteProvider({
           key: snapshotKey,
           value: {
@@ -384,7 +458,7 @@ async function warmOne(item: CwIdentityItem, tmdbKey = ""): Promise<void> {
           fetchedAt: Date.now(),
         });
       }
-      if (identity) notifyAnimeCwIds();
+      if (identity && identityChanged) scheduleWarmNotify();
     } catch {
       boundedSet(warmCache, snapshotKey, { identity: null, expiresAt: Date.now() + NEGATIVE_TTL });
     } finally {
@@ -447,7 +521,7 @@ async function warmMovie(item: CwIdentityItem, tmdbKey: string): Promise<void> {
         identity,
         expiresAt: Date.now() + (identity ? POSITIVE_TTL : NEGATIVE_TTL),
       });
-      if (identity) notifyAnimeCwIds();
+      if (identity) scheduleWarmNotify();
     })
     .catch(() => {
       boundedSet(warmCache, key, { identity: null, expiresAt: Date.now() + NEGATIVE_TTL });
