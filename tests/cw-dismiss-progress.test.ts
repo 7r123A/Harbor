@@ -442,6 +442,7 @@ function advanceHarness(
     "@/lib/stremio": {
       isAnimeCwItem: (item: LibraryItem) => /^(kitsu|mal|anilist|anidb):/.test(item._id),
       isCwMember: () => true,
+      isCwDisplayReady: () => true,
       resolvedEpisodeCoords: (item: LibraryItem) => realEpisodeCoords(item),
     },
   };
