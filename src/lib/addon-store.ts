@@ -150,22 +150,15 @@ async function pushToStremio(
   if (!authKey) return true;
   try {
     const current = await userAddons(authKey);
-    const id = addon.manifest.id;
     const replaced = new Set(replacedUrls.filter((u) => u !== addon.transportUrl));
-    // Only remove entries that are actually being replaced (same id, same transport
-    // URL, or an explicitly replaced transport URL), so an update keeps the addon's
-    // place in the collection rather than pushing a fresh copy to the end.
+    // Match by transport URL only: two installs of one manifest id (Torrentio with
+    // two debrid configs, say) are separate addons here and in Stremio. Removing
+    // every same-id entry would wipe the user's other instance off their account.
     const insertIndex = current.findIndex(
-      (a) =>
-        a.manifest.id === id ||
-        a.transportUrl === addon.transportUrl ||
-        replaced.has(a.transportUrl),
+      (a) => a.transportUrl === addon.transportUrl || replaced.has(a.transportUrl),
     );
     const filtered = current.filter(
-      (a) =>
-        a.manifest.id !== id &&
-        a.transportUrl !== addon.transportUrl &&
-        !replaced.has(a.transportUrl),
+      (a) => a.transportUrl !== addon.transportUrl && !replaced.has(a.transportUrl),
     );
     let next: Addon[];
     if (mode === "uninstall") {
@@ -478,9 +471,16 @@ export async function installAddon(id: string, transportUrl: string): Promise<Ad
   const manifest = await fetchManifestAt(transportUrl);
   const canonicalId = manifest.id || id;
   const before = loadInstalled();
-  // Deduplicate by ID (handles URL changes during updates) and by URL (re-installs)
-  const next = before.filter((a) => a.id !== canonicalId && a.transportUrl !== transportUrl);
-  const replaced = before.filter((a) => a.id === canonicalId || a.transportUrl === transportUrl);
+  // Deduplicate by URL (re-installs) and, for a lone install, by ID (URL changed during
+  // an update). With two instances already installed there is no way to tell which one
+  // a new configuration is meant to replace, so it is added as another instance.
+  const replaceSameId = before.filter((a) => a.id === canonicalId).length <= 1;
+  const next = before.filter(
+    (a) => a.transportUrl !== transportUrl && (!replaceSameId || a.id !== canonicalId),
+  );
+  const replaced = before.filter(
+    (a) => a.transportUrl === transportUrl || (replaceSameId && a.id === canonicalId),
+  );
   const replacedUrls = replaced.map((a) => a.transportUrl);
   if (replaced.length > 0) {
     preserveOrderOnReplace(replacedUrls, transportUrl);
@@ -502,23 +502,29 @@ export async function installAddon(id: string, transportUrl: string): Promise<Ad
 
 export async function installFromUrl(
   rawUrl: string,
-  options: { replaceId?: string } = {},
+  options: { replaceUrl?: string; newInstance?: boolean } = {},
 ): Promise<InstallResult> {
   const parsed = parseAddonUrl(rawUrl);
   if (parsed.kind === "error") throw new Error(parsed.message);
   const manifest = await fetchManifestAt(parsed.url);
   const id = manifest.id;
   const before = loadInstalled();
-  const replaceId = options.replaceId && options.replaceId !== id ? options.replaceId : null;
-  const replacedById = before.some((a) => a.id === id);
-  const replacedByOld = replaceId != null && before.some((a) => a.id === replaceId);
-  // Deduplicate by ID (updates), URL (re-installs), or explicit replaceId
+  const replaceUrl = options.replaceUrl !== parsed.url ? options.replaceUrl : undefined;
+  // One manifest id can be installed more than once (Torrentio with two debrid
+  // configs), so an install only replaces an entry when the caller says which one,
+  // or when the exact same URL is being re-installed. A configure page hands back a
+  // fresh URL for its existing instance, hence replaceUrl.
+  const sameUrl = (a: InstalledAddon) => a.transportUrl === parsed.url;
+  const sameReplaceUrl = (a: InstalledAddon) => replaceUrl != null && a.transportUrl === replaceUrl;
+  const sameIdCount = before.filter((a) => a.id === id).length;
+  // Without a replace context (a deep link, say) the id fallback is safe only when a
+  // single instance exists; two copies give no way to tell which one was meant.
+  const replaceSameId = options.newInstance !== true && replaceUrl == null && sameIdCount <= 1;
   const next = before.filter(
-    (a) => a.id !== id && a.transportUrl !== parsed.url && (!replaceId || a.id !== replaceId),
+    (a) => !sameUrl(a) && !sameReplaceUrl(a) && (!replaceSameId || a.id !== id),
   );
   const replaced = before.filter(
-    (a) =>
-      a.id === id || a.transportUrl === parsed.url || (replaceId != null && a.id === replaceId),
+    (a) => sameUrl(a) || sameReplaceUrl(a) || (replaceSameId && a.id === id),
   );
   const replacedUrls = replaced.map((a) => a.transportUrl);
   if (replaced.length > 0) {
@@ -537,7 +543,7 @@ export async function installFromUrl(
   } else {
     synced = await pushToStremio(addon, "install", replacedUrls);
   }
-  return { addon, syncedToStremio: synced, replaced: replacedById || replacedByOld };
+  return { addon, syncedToStremio: synced, replaced: replaced.length > 0 };
 }
 
 export async function uninstallAddon(id: string, transportUrl?: string): Promise<void> {
