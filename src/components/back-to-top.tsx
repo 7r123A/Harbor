@@ -20,15 +20,29 @@ export function BackToTop({
     const el = scrollRef.current;
     if (!el) return;
     let shown: boolean | undefined;
-    const onScroll = () => {
+    let frame = 0;
+    let lastCheck = 0;
+    // Reading scrollTop in the scroll event forces a synchronous style and layout
+    // whenever a commit left the tree dirty, which is the common case while a row
+    // is revealing cards. Check at most ten times a second, between frames.
+    const update = () => {
+      frame = 0;
+      lastCheck = performance.now();
       const next = el.scrollTop > threshold;
       if (shown === next) return;
       shown = next;
       setShow(next);
     };
-    onScroll();
+    const onScroll = () => {
+      if (frame || performance.now() - lastCheck < 100) return;
+      frame = requestAnimationFrame(update);
+    };
+    update();
     el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
+    return () => {
+      cancelAnimationFrame(frame);
+      el.removeEventListener("scroll", onScroll);
+    };
   }, [scrollRef, threshold]);
 
   return (

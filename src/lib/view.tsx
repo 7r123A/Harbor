@@ -1909,9 +1909,9 @@ export function useScrollMemory(
     };
 
     const saveNow = () => {
-      if (pendingTop === null) return;
       const visible = !el.closest("[data-layer-inactive]") && el.clientHeight > 0;
-      const top = visible ? el.scrollTop : pendingTop;
+      if (!visible && pendingTop === null) return;
+      const top = visible ? el.scrollTop : (pendingTop as number);
       const anchor = visible && top > 0 ? pickAnchor(el) : null;
       rememberScroll(key, { anchor: anchor?.key, delta: anchor?.delta ?? 0, fallback: top });
       pendingTop = null;
@@ -1956,17 +1956,30 @@ export function useScrollMemory(
         saveTimer = window.setTimeout(saveAfterScroll, remaining);
         return;
       }
+      // Read the position now that the gesture is over, not on every scroll event.
+      if (!el.closest("[data-layer-inactive]") && el.clientHeight > 0) {
+        pendingTop = el.scrollTop;
+      }
       saveNow();
     };
 
     const onScroll = () => {
       noteScrollActivity();
       if (restoring || parked) return;
-      // Keep the offset for navigation during a gesture without replacing a timer on every frame.
-      pendingTop = el.scrollTop;
       lastScrollAt = performance.now();
       saveTimer ??= window.setTimeout(saveAfterScroll, 200);
     };
+
+    // A view can be hidden by a click while it is still scrolling. Record the
+    // position on the pointer-down that precedes the switch, so the settle timer
+    // not having fired yet cannot lose it.
+    const onPointerDown = () => {
+      if (restoring || parked) return;
+      if (!el.closest("[data-layer-inactive]") && el.clientHeight > 0) {
+        pendingTop = el.scrollTop;
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
 
     armSettle();
     if (wantsHide) revealId = window.setTimeout(reveal, 220);
@@ -1982,6 +1995,7 @@ export function useScrollMemory(
       cancelSave();
       cancelSettle();
       cancelRetry();
+      document.removeEventListener("pointerdown", onPointerDown, true);
       if (revealId !== null) clearTimeout(revealId);
       reveal();
       ro.disconnect();

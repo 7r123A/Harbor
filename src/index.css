@@ -4523,8 +4523,12 @@ html[data-scrolling] .harbor-shimmer::after {
   /* Paint containment must leave room for the outset arrows and card hovers. */
   overflow-clip-margin: 64px;
 }
+/* Keep `auto` when a row becomes near. Switching it to `visible` pulls the row's
+   style, layout and paint into the frame that is already mounting its cards; on
+   Discover's smooth-wheel session that showed as 14% missed frames, against 0.3%
+   with `auto`. */
 .harbor-row-shell[data-row-near] {
-  content-visibility: visible;
+  content-visibility: auto;
 }
 .harbor-preview-img {
   background-color: var(--color-raised);

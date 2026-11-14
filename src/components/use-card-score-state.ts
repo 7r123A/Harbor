@@ -13,6 +13,7 @@ import { isCardAnimeId } from "@/lib/card-anime";
 import { observe, observeSettled } from "@/lib/visibility";
 import { useProfiledEffect } from "@/components/profiled";
 import { createRequestScheduler } from "@/lib/request-scheduler";
+import { runAfterScroll } from "@/lib/scroll-activity";
 
 // A row can reveal a dozen cards in one frame. The Harbor title endpoint is
 // useful but not urgent, so keep its bursts serialized instead of firing one
@@ -76,9 +77,10 @@ export function useCardScoreState<T extends HTMLElement>({
       setHarborRating(undefined);
       if (!ratingTt?.startsWith("tt")) return;
       if (isAnime ? !settings.showMalBadge : !settings.showImdbBadge) return;
-      // Cinemeta and TMDB already carry the rating on many cards. The Harbor
-      // request is only a fallback for cards that do not.
-      if (!isAnime && meta.imdbRating != null && String(meta.imdbRating).trim()) return;
+      // A Cinemeta card (`tt` id) displays its own inline rating, so the Harbor
+      // request adds nothing. A TMDB/addon card can carry an imdbRating it cannot
+      // display; skipping the fallback there left the IMDb badge empty.
+      if (!isAnime && hasInlineImdb) return;
       const element = cardRef.current;
       if (!element) return;
       let cancelled = false;
@@ -87,7 +89,9 @@ export function useCardScoreState<T extends HTMLElement>({
           .schedule(ratingTt, () => harborImdbTitle(ratingTt))
           .then((rating) => {
             if (!cancelled && rating != null) {
-              startTransition(() => setHarborRating(rating.toFixed(1)));
+              runAfterScroll(() => {
+                if (!cancelled) startTransition(() => setHarborRating(rating.toFixed(1)));
+              });
             }
           })
           .catch(() => {});
