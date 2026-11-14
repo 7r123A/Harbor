@@ -28,7 +28,13 @@ function fixture() {
   const connected = { simkl: true, trakt: true, publicmetadb: false };
   const sessions = { simkl: {}, trakt: {}, publicmetadb: {} };
   const detectionBatches: LibraryItem[][] = [];
-  const nuvio = { signedIn: false, active: false, fetches: 0 };
+  const nuvio = {
+    signedIn: false,
+    active: false,
+    fetches: 0,
+    accountId: "account-a",
+    fetch: async (): Promise<LibraryItem[]> => [],
+  };
   const mocks: Record<string, unknown> = {
     react: {},
     "@/lib/simkl/playback": { fetchSimklPlaybackItems: () => providers.simkl() },
@@ -65,13 +71,14 @@ function fixture() {
     "@/lib/nuvio/nuvio-playback": {
       fetchNuvioPlaybackItems: async () => {
         nuvio.fetches++;
-        return [];
+        return nuvio.fetch();
       },
       readCachedNuvioPlaybackItems: () => [],
       writeCachedNuvioPlaybackItems: () => {},
     },
     "@/lib/nuvio/nuvio-client": {
       isNuvioSignedIn: () => nuvio.signedIn,
+      getNuvioAccountId: () => (nuvio.signedIn ? nuvio.accountId : null),
     },
     "@/lib/nuvio/nuvio-sync": {
       isNuvioProviderActive: () => nuvio.active,
@@ -298,6 +305,221 @@ test("a non-forced duplicate refresh shares the active request without discardin
   await load;
   assert.equal(calls, 1);
   assert.equal(h.api.listExternalCw()[0]._id, "new");
+});
+
+test("forced refreshes during one request share a single follow-up", async () => {
+  const h = fixture();
+  let calls = 0;
+  let release: (() => void) | undefined;
+  h.providers.simkl = () => {
+    calls++;
+    if (calls === 1) {
+      return new Promise<LibraryItem[]>((resolve) => {
+        release = () => resolve([item("simkl", "first")]);
+      });
+    }
+    return Promise.resolve([item("simkl", "second")]);
+  };
+  const load = h.api.refreshExternalCw();
+  const a = h.api.refreshExternalCw(true, "data");
+  const b = h.api.refreshExternalCw(true, "data");
+  const c = h.api.refreshExternalCw(true, "data");
+  assert.equal(a, b);
+  assert.equal(b, c);
+  release?.();
+  await load;
+  await a;
+  assert.equal(calls, 2);
+  // The coalesced follow-up must not swallow a later forced refresh.
+  await h.api.refreshExternalCw(true);
+  assert.equal(calls, 3);
+});
+
+test("a forced owner refresh during the same owner's request does not fetch again", async () => {
+  const h = fixture();
+  let calls = 0;
+  let release: (() => void) | undefined;
+  h.providers.simkl = () => {
+    calls++;
+    if (calls === 1)
+      return new Promise<LibraryItem[]>((resolve) => {
+        release = () => resolve([item("simkl", "only")]);
+      });
+    return Promise.resolve([item("simkl", "second")]);
+  };
+  const load = h.api.refreshExternalCw();
+  assert.equal(h.api.refreshExternalCw(true, "owner"), load);
+  release?.();
+  await load;
+  await settle();
+  assert.equal(calls, 1);
+  assert.deepEqual(
+    h.api.listExternalCw().map((i) => i._id),
+    ["only"],
+  );
+});
+
+test("a forced data refresh fetches again while the same owner's request runs", async () => {
+  const h = fixture();
+  let calls = 0;
+  let releaseOld: ((items: LibraryItem[]) => void) | undefined;
+  h.providers.simkl = () => {
+    calls++;
+    if (calls === 1)
+      return new Promise<LibraryItem[]>((resolve) => {
+        releaseOld = resolve;
+      });
+    return Promise.resolve([item("simkl", "after-progress-change")]);
+  };
+  const load = h.api.refreshExternalCw();
+  const forced = h.api.refreshExternalCw(true);
+  assert.notEqual(forced, load);
+  releaseOld?.([item("simkl", "before-progress-change")]);
+  await load;
+  await forced;
+  assert.equal(calls, 2);
+  assert.deepEqual(
+    h.api.listExternalCw().map((i) => i._id),
+    ["after-progress-change"],
+  );
+});
+
+test("an in-flight response from the previous account cannot restore its cards", async () => {
+  const h = fixture();
+  let calls = 0;
+  let releaseOld: ((items: LibraryItem[]) => void) | undefined;
+  let releaseNew: ((items: LibraryItem[]) => void) | undefined;
+  h.providers.simkl = () => {
+    calls++;
+    return new Promise<LibraryItem[]>((resolve) => {
+      if (calls === 1) releaseOld = resolve;
+      else releaseNew = resolve;
+    });
+  };
+  const load = h.api.refreshExternalCw();
+  h.sessions.simkl = {};
+  h.listeners.simkl();
+  assert.deepEqual(h.api.listExternalCw(), []);
+  releaseOld?.([item("simkl", "old-account")]);
+  await load;
+  // The follow-up has started but not finished: the old response must be dropped.
+  assert.deepEqual(h.api.listExternalCw(), []);
+  releaseNew?.([item("simkl", "new-account")]);
+  await settle();
+  await settle();
+  assert.deepEqual(
+    h.api.listExternalCw().map((i) => i._id),
+    ["new-account"],
+  );
+  assert.equal(calls, 2);
+});
+
+test("a failed fetch for the new account does not resurrect the previous account's cards", async () => {
+  const h = fixture();
+  let calls = 0;
+  let releaseOld: ((items: LibraryItem[]) => void) | undefined;
+  h.providers.simkl = () => {
+    calls++;
+    if (calls === 1)
+      return new Promise<LibraryItem[]>((resolve) => {
+        releaseOld = resolve;
+      });
+    return Promise.reject(new Error("new account offline"));
+  };
+  const load = h.api.refreshExternalCw();
+  h.sessions.simkl = {};
+  h.listeners.simkl();
+  releaseOld?.([item("simkl", "old-account")]);
+  await load;
+  await settle();
+  await settle();
+  assert.deepEqual(h.api.listExternalCw(), []);
+  assert.equal(calls, 2);
+});
+
+test("switching Nuvio accounts on the same slot discards an in-flight response", async () => {
+  const h = fixture();
+  h.connected.simkl = false;
+  h.connected.trakt = false;
+  h.nuvio.signedIn = true;
+  h.nuvio.active = true;
+  const pending: Array<(items: LibraryItem[]) => void> = [];
+  h.nuvio.fetch = () =>
+    new Promise<LibraryItem[]>((resolve) => {
+      pending.push(resolve);
+    });
+
+  h.api.setExternalCwSources({ simkl: false, trakt: false, publicmetadb: false, nuvio: true });
+  assert.equal(h.nuvio.fetches, 1);
+  // Establish account A as the last observed session while its fetch is running.
+  h.listeners["harbor:nuvio-state-changed"]();
+  assert.equal(h.nuvio.fetches, 1);
+
+  h.nuvio.accountId = "account-b";
+  h.listeners["harbor:nuvio-state-changed"]();
+  assert.deepEqual(h.api.listExternalCw(), []);
+  pending[0]([{ ...item("simkl", "old-account"), external: "nuvio" }]);
+  await settle();
+  await settle();
+
+  assert.equal(h.nuvio.fetches, 2, "account B must receive its own fetch");
+  assert.deepEqual(h.api.listExternalCw(), [], "account A must never become visible");
+  assert.deepEqual(h.api.getCachedNuvioItemsForSlot(1), [], "late A data must not pollute slot cache");
+
+  pending[1]([{ ...item("simkl", "new-account"), external: "nuvio" }]);
+  await settle();
+  await settle();
+  assert.deepEqual(h.api.listExternalCw().map((entry) => entry._id), ["new-account"]);
+});
+
+test("switching Nuvio accounts clears visible cards even when the replacement is offline", async () => {
+  const h = fixture();
+  h.connected.simkl = false;
+  h.connected.trakt = false;
+  h.nuvio.signedIn = true;
+  h.nuvio.active = true;
+  h.nuvio.fetch = async () => [{ ...item("simkl", "account-a-card"), external: "nuvio" }];
+  h.api.setExternalCwSources({ simkl: false, trakt: false, publicmetadb: false, nuvio: true });
+  await settle();
+  await settle();
+  h.listeners["harbor:nuvio-state-changed"]();
+  await settle();
+  await settle();
+  assert.deepEqual(h.api.listExternalCw().map((entry) => entry._id), ["account-a-card"]);
+
+  h.nuvio.accountId = "account-b";
+  h.nuvio.fetch = async () => {
+    throw new Error("account B is offline");
+  };
+  h.listeners["harbor:nuvio-state-changed"]();
+  assert.deepEqual(h.api.listExternalCw(), [], "old account cards must disappear synchronously");
+  await settle();
+  await settle();
+  assert.deepEqual(h.api.listExternalCw(), [], "failed replacement must not restore old cards");
+});
+
+test("a profile-change event does not restore previous Nuvio account's slot cache", async () => {
+  const h = fixture();
+  h.connected.simkl = false;
+  h.connected.trakt = false;
+  h.nuvio.signedIn = true;
+  h.nuvio.active = true;
+  h.nuvio.fetch = async () => [{ ...item("simkl", "account-a-card"), external: "nuvio" }];
+  h.api.setExternalCwSources({ simkl: false, trakt: false, publicmetadb: false, nuvio: true });
+  await settle();
+  await settle();
+  assert.deepEqual(h.api.getCachedNuvioItemsForSlot(1).map((entry) => entry._id), ["account-a-card"]);
+
+  h.nuvio.accountId = "account-b";
+  h.nuvio.fetch = async () => {
+    throw new Error("account B is offline");
+  };
+  h.listeners["harbor:active-profile-changed"]();
+  assert.deepEqual(h.api.getCachedNuvioItemsForSlot(1), []);
+  assert.deepEqual(h.api.listExternalCw(), []);
+  await settle();
+  await settle();
+  assert.deepEqual(h.api.listExternalCw(), []);
 });
 
 test("a successful empty response removes old cards, unlike a failed response", async () => {

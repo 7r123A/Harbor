@@ -8,7 +8,7 @@ import {
   readCachedNuvioPlaybackItems,
   writeCachedNuvioPlaybackItems,
 } from "@/lib/nuvio/nuvio-playback";
-import { isNuvioSignedIn } from "@/lib/nuvio/nuvio-client";
+import { getNuvioAccountId, isNuvioSignedIn } from "@/lib/nuvio/nuvio-client";
 import {
   isNuvioProviderActive,
   resolveNuvioProfileIndex,
@@ -195,6 +195,8 @@ if (typeof performance !== "undefined") {
 
 let fetchedAt = 0;
 let inflight: Promise<void> | null = null;
+let followUp: Promise<void> | null = null;
+let inflightOwner: unknown[] | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryAttempt = 0;
 let refreshGen = 0;
@@ -315,10 +317,15 @@ export function setExternalCwSources(mask: {
   }
 
   if (!externalCwConnected()) setItems(EMPTY);
-  void refreshExternalCw(true);
+  // Only the source set changed; the in-flight request already covers this owner.
+  void refreshExternalCw(true, "owner");
 }
 
-async function runRefresh(gen: number, force = false): Promise<boolean> {
+async function runRefresh(
+  gen: number,
+  force = false,
+  ownerAtStart: unknown[] = refreshOwner(),
+): Promise<boolean> {
   const enabled: Array<{
     source: "simkl" | "trakt" | "publicmetadb" | "nuvio";
     fetch: () => Promise<LibraryItem[]>;
@@ -335,7 +342,9 @@ async function runRefresh(gen: number, force = false): Promise<boolean> {
       fetch: async () => {
         const slot = resolveNuvioProfileIndex();
         const fresh = await fetchNuvioPlaybackItems(slot, force);
-        slotCwMemoryCache.set(slot, fresh);
+        // An older account's response must not repopulate the slot cache after
+        // an account switch, even when both accounts use the same slot.
+        if (sameRefreshOwner(ownerAtStart, refreshOwner())) slotCwMemoryCache.set(slot, fresh);
         return fresh;
       },
     });
@@ -379,6 +388,10 @@ async function runRefresh(gen: number, force = false): Promise<boolean> {
 
   // If a newer generation has already finished and applied, ignore this superseded run
   if (gen < lastAppliedGen) return true;
+  // The account, profile or enabled sources changed while this request ran: the
+  // change already cleared those cards and queued a follow-up, so publishing now
+  // would put the previous owner's data back on screen.
+  if (!sameRefreshOwner(ownerAtStart, refreshOwner())) return true;
   lastAppliedGen = gen;
 
   fetchedAt = complete ? Date.now() : 0;
@@ -406,6 +419,32 @@ function cancelRetry(): void {
   retryAttempt = 0;
 }
 
+// Account/profile identity a refresh was started for. Session objects change
+// identity on an account switch; a response captured under one identity must
+// never be applied to another, even for the interval before the follow-up runs.
+// "data" (the default for forced calls) means fresh data was requested and must
+// be fetched even when the same owner is already being fetched; "owner" is a
+// revalidation triggered by an owner event, which the in-flight request covers.
+type RefreshCause = "owner" | "data";
+
+function refreshOwner(): unknown[] {
+  return [
+    getSimklSession(),
+    getTraktSession(),
+    getPmdbSession(),
+    isNuvioSignedIn() && isNuvioProviderActive() ? resolveNuvioProfileIndex() : null,
+    isNuvioSignedIn() && isNuvioProviderActive() ? getNuvioAccountId() : null,
+    sourceMask.trakt,
+    sourceMask.simkl,
+    sourceMask.publicmetadb,
+    sourceMask.nuvio,
+  ];
+}
+
+function sameRefreshOwner(a: unknown[], b: unknown[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
 function scheduleRetry(force = false): void {
   if (retryTimer !== null) return;
   if (retryAttempt >= RETRY_DELAYS_MS.length) return;
@@ -419,17 +458,20 @@ function scheduleRetry(force = false): void {
 }
 
 function startRefresh(gen: number, force = false): Promise<void> {
-  inflight = runRefresh(gen, force)
+  const owner = refreshOwner();
+  inflightOwner = owner;
+  inflight = runRefresh(gen, force, owner)
     .then((ok) => {
       if (gen === refreshGen && !ok) scheduleRetry(force);
     })
     .finally(() => {
       inflight = null;
+      inflightOwner = null;
     });
   return inflight;
 }
 
-export function refreshExternalCw(force = false): Promise<void> {
+export function refreshExternalCw(force = false, cause: RefreshCause = "data"): Promise<void> {
   if (!externalCwConnected()) {
     refreshGen += 1;
     cancelRetry();
@@ -439,8 +481,18 @@ export function refreshExternalCw(force = false): Promise<void> {
   }
   if (inflight) {
     if (!force) return inflight;
-    // Don't kill the active in-flight request: let it deliver, then run another if needed
-    return inflight.then(() => refreshExternalCw(true));
+    // A forced owner refresh for the owner already being fetched would refetch
+    // what is arriving: the response is valid for it either way.
+    if (cause === "owner" && inflightOwner && sameRefreshOwner(inflightOwner, refreshOwner()))
+      return inflight;
+    // Don't kill the active in-flight request: let it deliver, then run one more.
+    // Several forced callers (session, profile and provider events) land during
+    // the same request; each must not queue its own refetch.
+    followUp ??= inflight.then(() => {
+      followUp = null;
+      return refreshExternalCw(true, cause);
+    });
+    return followUp;
   }
   if (!force && fetchedAt > 0 && Date.now() - fetchedAt < STALE_MS) return Promise.resolve();
   cancelRetry();
@@ -490,6 +542,7 @@ let lastSimkl = getSimklSession();
 let lastTrakt = getTraktSession();
 let lastPmdb = getPmdbSession();
 let lastNuvio = isNuvioSignedIn() && isNuvioProviderActive();
+let lastNuvioAccount = lastNuvio ? getNuvioAccountId() : null;
 
 function onSessionChange(): void {
   slotCwMemoryCache.clear();
@@ -498,7 +551,14 @@ function onSessionChange(): void {
   const trakt = getTraktSession();
   const pmdb = getPmdbSession();
   const nuvio = isNuvioSignedIn() && isNuvioProviderActive();
-  if (simkl === lastSimkl && trakt === lastTrakt && pmdb === lastPmdb && nuvio === lastNuvio)
+  const nuvioAccount = nuvio ? getNuvioAccountId() : null;
+  if (
+    simkl === lastSimkl &&
+    trakt === lastTrakt &&
+    pmdb === lastPmdb &&
+    nuvio === lastNuvio &&
+    nuvioAccount === lastNuvioAccount
+  )
     return;
   setItems(
     items.filter(
@@ -506,20 +566,23 @@ function onSessionChange(): void {
         (i.external !== "simkl" || simkl === lastSimkl) &&
         (i.external !== "trakt" || trakt === lastTrakt) &&
         (i.external !== "publicmetadb" || pmdb === lastPmdb) &&
-        (i.external !== "nuvio" || nuvio === lastNuvio),
+        (i.external !== "nuvio" || (nuvio === lastNuvio && nuvioAccount === lastNuvioAccount)),
     ),
   );
   lastSimkl = simkl;
   lastTrakt = trakt;
   lastPmdb = pmdb;
   lastNuvio = nuvio;
+  lastNuvioAccount = nuvioAccount;
   fetchedAt = 0;
   if (!externalCwConnected()) {
     cancelRetry();
     setItems(EMPTY);
     return;
   }
-  void refreshExternalCw(true);
+  // Every identity that can change this data changed; a request already running
+  // for the same owner covers it.
+  void refreshExternalCw(true, "owner");
 }
 
 function onProfileChange(): void {
@@ -528,6 +591,9 @@ function onProfileChange(): void {
   lastTrakt = getTraktSession();
   lastPmdb = getPmdbSession();
   lastNuvio = isNuvioSignedIn() && isNuvioProviderActive();
+  const nuvioAccount = lastNuvio ? getNuvioAccountId() : null;
+  if (nuvioAccount !== lastNuvioAccount) clearNuvioCwMemoryCache();
+  lastNuvioAccount = nuvioAccount;
   fetchedAt = 0;
 
   if (isNuvioSignedIn() && sourceMask.nuvio && isNuvioProviderActive()) {
@@ -548,7 +614,9 @@ function onProfileChange(): void {
     setItems(items.filter((i) => i.external !== "nuvio"));
   }
 
-  void refreshExternalCw(true);
+  // Profile/source changes are all in the owner snapshot; skip a duplicate
+  // fetch when the same owner is already being fetched.
+  void refreshExternalCw(true, "owner");
 }
 
 if (typeof window !== "undefined") {
@@ -560,7 +628,7 @@ if (typeof window !== "undefined") {
   window.addEventListener("harbor:nuvio-state-changed", () => {
     clearNuvioCwMemoryCache();
     onSessionChange();
-    void refreshExternalCw(true);
+    void refreshExternalCw(true, "owner");
   });
   window.addEventListener("harbor:account-provider-changed", () => {
     clearNuvioCwMemoryCache();
@@ -574,7 +642,9 @@ if (typeof window !== "undefined") {
   window.addEventListener("harbor:account-provider-changed", onProfileChange);
   window.addEventListener("harbor:playback-session-ended", () => {
     if (!isNuvioProviderActive()) return;
-    void refreshExternalCw(true);
+    // Progress changed upstream under the same account: fetch again even if a
+    // request is already running.
+    void refreshExternalCw(true, "data");
   });
   window.addEventListener("harbor:nuvio-progress-pushed", (e) => {
     if (isNuvioSignedIn() && sourceMask.nuvio && isNuvioProviderActive()) {

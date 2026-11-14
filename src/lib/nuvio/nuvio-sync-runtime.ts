@@ -12,7 +12,9 @@ const coordinator = createNuvioSyncCoordinator({
       force,
       skipPlaybackRebuild: willRefreshExternalCw(force),
     }),
-  refresh: (force) => refreshExternalCw(force),
+  // Forced syncs ask for fresh playback data, so they keep their own fetch even
+  // when a request for the same owner is already running.
+  refresh: (force) => refreshExternalCw(force, "data"),
 });
 
 export function requestNuvioSync(force = false): Promise<void> {
