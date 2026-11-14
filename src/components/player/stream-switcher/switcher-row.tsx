@@ -5,6 +5,7 @@ import { CopyLinkButton, resolveStreamLink } from "@/components/player/copy-link
 import { FlagStack } from "@/components/flag";
 import { FormatBadge, RuleBadges, streamBadges } from "@/components/format-badge";
 import type { ScoredStream } from "@/lib/streams/types";
+import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
 
 export function streamKey(s: ScoredStream): string {
@@ -67,7 +68,9 @@ export function SwitcherRow({
   match?: "same" | "close" | null;
 }) {
   const t = useT();
+  const { settings } = useSettings();
   const [expanded, setExpanded] = useState(false);
+  const [userToggled, setUserToggled] = useState(false);
   const [overflows, setOverflows] = useState(false);
   const descRef = useRef<HTMLParagraphElement>(null);
 
@@ -91,8 +94,12 @@ export function SwitcherRow({
     if (expanded) return;
     const el = descRef.current;
     if (!el) return;
-    setOverflows(el.scrollHeight > el.clientHeight + 1);
-  }, [description, expanded]);
+    const truncated = el.scrollHeight > el.clientHeight + 1;
+    setOverflows(truncated);
+    // Same setting the Stremio picker and Big Picture honor, applied after the
+    // clamped first measure so "Show less" still knows there is more to hide.
+    if (truncated && settings.fullStreamDescription && !userToggled) setExpanded(true);
+  }, [description, expanded, settings.fullStreamDescription, userToggled]);
 
   return (
     <li>
@@ -137,6 +144,7 @@ export function SwitcherRow({
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
+                setUserToggled(true);
                 setExpanded((v) => !v);
               }}
               className="mt-0.5 inline-flex w-fit items-center gap-1 text-[11.5px] font-semibold text-ink-subtle transition-colors hover:text-ink"
