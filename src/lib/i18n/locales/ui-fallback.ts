@@ -1,6 +1,8 @@
 // Newly introduced UI copy remains usable until each locale provides an override.
 const uiFallback: Record<string, string> = {
   "Episode information is unavailable": "Episode information is unavailable",
+  "Episode pages": "Episode pages",
+  "Go to page": "Go to page",
   "This PDF is shown as page images. Text search, translation, and narration are not available.":
     "This PDF is shown as page images. Text search, translation, and narration are not available.",
   "Pick one library folder. Each subfolder is one eBook. Put its files inside as TXT, Markdown, HTML, EPUB, or PDF and optionally add a cover image.":
