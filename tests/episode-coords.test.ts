@@ -18,6 +18,47 @@ test("season-zero Specials keep their valid coordinates", () => {
   assert.deepEqual(resolvedEpisodeCoords(card), { season: 0, episode: 5 });
 });
 
+test("a removed watched-sync 0:0 placeholder uses its own S6 E7 video checkpoint", () => {
+  const card = {
+    ...item("tt2359704", {
+      season: 0,
+      episode: 0,
+      video_id: "tt2359704:6:7",
+      flaggedWatched: 1,
+      timeOffset: 1_496_078,
+      duration: 1_504_171,
+    }),
+    removed: true,
+    temp: true,
+  };
+  assert.deepEqual(resolvedEpisodeCoords(card), { season: 6, episode: 7 });
+});
+
+test("a real 0:0 Special is preserved, even when its video id disagrees", () => {
+  const card = item("tt2359704", {
+    season: 0,
+    episode: 0,
+    video_id: "tt2359704:6:7",
+  });
+  assert.deepEqual(resolvedEpisodeCoords(card), { season: 0, episode: 0 });
+  assert.deepEqual(
+    resolvedEpisodeCoords({ ...card, removed: true, temp: true, state: { ...card.state!, video_id: "tt2359704:0:0" } }),
+    { season: 0, episode: 0 },
+  );
+});
+
+test("a zero placeholder cannot trust another content id or a malformed video id", () => {
+  const card = { ...item("tt2359704", { season: 0, episode: 0 }), removed: true, temp: true };
+  assert.deepEqual(
+    resolvedEpisodeCoords({ ...card, state: { ...card.state!, video_id: "tt38268282:6:7" } }),
+    { season: 0, episode: 0 },
+  );
+  assert.deepEqual(
+    resolvedEpisodeCoords({ ...card, state: { ...card.state!, video_id: "tt2359704:not-an-episode" } }),
+    { season: 0, episode: 0 },
+  );
+});
+
 test("a native anime stream resolves to season one", () => {
   const card = item("tt0434665", { video_id: "kitsu:49444:11" });
   assert.deepEqual(resolvedEpisodeCoords(card), { season: 1, episode: 11 });

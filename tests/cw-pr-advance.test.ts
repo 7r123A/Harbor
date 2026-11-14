@@ -684,6 +684,46 @@ test("a Nuvio account change on the same slot invalidates cached CW work", async
   assert.ok(h.episodeReads > before, "same-slot account switch reused the previous cache");
 });
 
+test("a finished temporary JoJo source advances to E8 without showing its already-watched E7", async () => {
+  const h = harness();
+  const id = "tt2359704";
+  h.setRemote(progress([7], id));
+  h.setEpisodes([
+    { season: 6, episode: 7, airDate: "2020-01-01" },
+    { season: 6, episode: 8, airDate: "2020-01-08" },
+  ]);
+  const stale = {
+    ...item(7, iso(-3600000), id),
+    name: "Steel Ball Run: JoJo's Bizarre Adventure",
+    removed: true,
+    temp: true,
+    state: {
+      ...item(7, iso(-3600000), id).state,
+      season: 0,
+      episode: 0,
+      video_id: `${id}:6:7`,
+      timeOffset: 1_496_078,
+      duration: 1_504_171,
+      flaggedWatched: 1,
+    },
+  };
+  let release: () => void = () => {};
+  h.setGate(new Promise<void>((resolve) => (release = resolve)));
+  try {
+    assert.deepEqual(h.render([stale], "", true, []), [], "stale E7 flashed before the worker");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(h.readIds.includes(id), "the hidden source was not sent to episode advancement");
+  } finally {
+    release();
+  }
+  const out = await h.flush();
+  assert.equal(out.length, 1, "a valid next episode was lost");
+  assert.equal(out[0]._id, id);
+  assert.equal(out[0].state.season, 6);
+  assert.equal(out[0].state.episode, 8);
+  assert.equal(out[0].upNext, true);
+});
+
 test("Phase 4C restores a verified up-next card before the live provider request finishes", async () => {
   const storage = new Map<string, string>();
   const initial = harness(storage);

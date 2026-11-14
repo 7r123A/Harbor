@@ -15,6 +15,7 @@ import { manualWatchedState } from "@/lib/manual-watched";
 import {
   isAnimeCwItem,
   isCwMember,
+  isCwDisplayReady,
   libraryMetaType,
   resolvedEpisodeCoords,
   type LibraryItem,
@@ -1754,14 +1755,16 @@ export function useCwAdvance(
     resolvedOwner.simklEnabled !== simklEnabled
   )
     return dedupeCwItems(
-      items.filter((i) => !isCwDismissed(i)),
+      items.filter((i) => isCwDisplayReady(i) && !isCwDismissed(i)),
       Infinity,
     );
   // Dismissal targets the displayed up-next episode, which may differ from the
   // library entry. Filter stored display results immediately, without refetching.
   const base = items
     .map((i) => displayAdvanced.get(i._id) ?? i)
-    .filter((i) => !displayRemoved.has(i._id) && !isCwDismissed(i));
+    // Keep completed temp source checkpoints in the worker inputs; only hide
+    // their already-watched card until a verified next/timer state is ready.
+    .filter((i) => isCwDisplayReady(i) && !displayRemoved.has(i._id) && !isCwDismissed(i));
   if (displayExtra.length === 0) return dedupeCwItems(dedupeAnimeCw(base), Infinity);
   const keyOf = (i: LibraryItem) => `${i.type}|${franchiseDedupKey(i.name ?? "")}`;
   const animeIdentity = (i: LibraryItem) =>
