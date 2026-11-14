@@ -23,7 +23,7 @@ import {
   type ErrorInfo,
   type ReactNode,
 } from "react";
-import { lazyView as lazy } from "@/lib/lazy-view";
+import { lazyView as lazy, preloadableView } from "@/lib/lazy-view";
 import { startIdleAway } from "@/lib/social/idle-away";
 import { requestAppBack } from "@/lib/app-back";
 import { FloatingBack } from "@/chrome/floating-back";
@@ -273,13 +273,23 @@ const importVod = () => import("@/views/playlist-vod");
 const importDownloads = () => import("@/views/downloads");
 const importOnboarding = () => import("@/components/onboarding");
 
-const AnimeView = lazy(() => importAnime().then((m) => ({ default: m.AnimeView })));
+const AnimeView = preloadableView<
+  Parameters<Awaited<ReturnType<typeof importAnime>>["AnimeView"]>[0]
+>(() => importAnime().then((m) => m.AnimeView));
 const CalendarView = lazy(() => importCalendar().then((m) => ({ default: m.CalendarView })));
 const WrappedView = lazy(() => importWrapped().then((m) => ({ default: m.WrappedView })));
-const DetailView = lazy(() => importDetail().then((m) => ({ default: m.DetailView })));
+const DetailView = preloadableView<
+  Parameters<Awaited<ReturnType<typeof importDetail>>["DetailView"]>[0]
+>(() => importDetail().then((m) => m.DetailView));
 const AddonsView = lazy(() => importAddons().then((m) => ({ default: m.AddonsView })));
-const Discover = memo(lazy(() => importDiscover().then((m) => ({ default: m.Discover }))));
-const Catalogs = memo(lazy(() => importCatalogs().then((m) => ({ default: m.Catalogs }))));
+const PreloadedDiscover = preloadableView<
+  Parameters<Awaited<ReturnType<typeof importDiscover>>["Discover"]>[0]
+>(() => importDiscover().then((m) => m.Discover));
+const Discover = memo(PreloadedDiscover);
+const PreloadedCatalogs = preloadableView<
+  Parameters<Awaited<ReturnType<typeof importCatalogs>>["Catalogs"]>[0]
+>(() => importCatalogs().then((m) => m.Catalogs));
+const Catalogs = memo(PreloadedCatalogs);
 const PluginsView = lazy(() => importPlugins().then((m) => ({ default: m.Plugins })));
 const AwardView = lazy(() => importAward().then((m) => ({ default: m.AwardView })));
 const AnimeAwardView = lazy(() => importAnimeAward().then((m) => ({ default: m.AnimeAwardView })));
@@ -316,7 +326,10 @@ const CommunityCollectionsView = lazy(() =>
 );
 const PlayPicker = lazy(() => importPlayPicker().then((m) => ({ default: m.PlayPicker })));
 const PlayerView = lazy(() => importPlayer().then((m) => ({ default: m.PlayerView })));
-const Movies = memo(lazy(() => importMovies().then((m) => ({ default: m.Movies }))));
+const PreloadedMovies = preloadableView<
+  Parameters<Awaited<ReturnType<typeof importMovies>>["Movies"]>[0]
+>(() => importMovies().then((m) => m.Movies));
+const Movies = memo(PreloadedMovies);
 const Kids = lazy(() => importKids().then((m) => ({ default: m.Kids })));
 const KidsDetailView = lazy(() =>
   import("@/views/kids-detail").then((m) => ({ default: m.KidsDetailView })),
@@ -324,7 +337,9 @@ const KidsDetailView = lazy(() =>
 const QueueView = lazy(() => importQueue().then((m) => ({ default: m.QueueView })));
 const ServiceView = lazy(() => importService().then((m) => ({ default: m.ServiceView })));
 const Settings = lazy(() => importSettings().then((m) => ({ default: m.Settings })));
-const Shows = lazy(() => importShows().then((m) => ({ default: m.Shows })));
+const Shows = preloadableView<Parameters<Awaited<ReturnType<typeof importShows>>["Shows"]>[0]>(() =>
+  importShows().then((m) => m.Shows),
+);
 const LibraryView = lazy(() => importLibrary().then((m) => ({ default: m.LibraryView })));
 const MusicView = lazy(() => importMusic().then((m) => ({ default: m.MusicView })));
 const GamesView = lazy(() => importGames().then((m) => ({ default: m.GamesView })));
@@ -362,26 +377,26 @@ function useViewPreloader(tmdbKey: string) {
       handle = idle ? win.requestIdleCallback!(cb, { timeout: 2500 }) : window.setTimeout(cb, 1200);
     };
     const preloaders: Array<() => Promise<unknown>> = [
-      importDetail,
+      DetailView.preload,
+      PreloadedDiscover.preload,
+      PreloadedMovies.preload,
+      Shows.preload,
+      AnimeView.preload,
+      PreloadedCatalogs.preload,
       importPlayPicker,
       importPlayer,
       importSettings,
-      importDiscover,
       importAddons,
       importPerson,
       importPeople,
       importFilter,
       importCalendar,
-      importMovies,
-      importShows,
       importLive,
-      importAnime,
       importQueue,
       importAward,
       importAnimeAward,
       importService,
       importOnboarding,
-      importCatalogs,
       importPlugins,
       importLibrary,
       importCommunityCollections,

@@ -2634,6 +2634,32 @@ test("rail visibility and delayed artwork never render the parent episode page o
   }
 });
 
+test("season selection defers geometry and only reveals the latest selection", async () => {
+  const f = await scrollFixture({ reducedMotion: true });
+  try {
+    const measured = [];
+    f.rail.getBoundingClientRect = () => ({ left: 0, right: 500 });
+    for (const n of [2, 3]) {
+      f.card(n).getBoundingClientRect = () => {
+        measured.push(n);
+        return { left: 540, right: 680 };
+      };
+    }
+    await React.act(async () => f.card(2).click());
+    assert.equal(f.card(2).getAttribute("aria-pressed"), "true");
+    await f.tick();
+    assert.deepEqual(measured, []);
+    await React.act(async () => f.card(3).click());
+    await f.tick();
+    assert.deepEqual(measured, []);
+    await f.settle();
+    assert.deepEqual(measured, [3]);
+    assert.equal(f.scrollCalls.at(-1)?.behavior, "auto");
+  } finally {
+    await f.close();
+  }
+});
+
 test("scroll events share a frame and cached geometry refreshes for resizing and RTL", async () => {
   const f = await scrollFixture();
   try {

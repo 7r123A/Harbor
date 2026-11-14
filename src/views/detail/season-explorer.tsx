@@ -456,12 +456,11 @@ export function SeasonExplorer({
     };
   }, [cardMembership, setVisibleSeasons]);
 
-  useEffect(() => {
-    const rail = railRef.current;
-    if (!rail) return;
-    const revealSelected = (animate: boolean) => {
-      const button = rail.querySelector<HTMLButtonElement>('[aria-pressed="true"]');
-      if (!button) return;
+  const revealSelected = useCallback(
+    (animate: boolean) => {
+      const rail = railRef.current;
+      const button = rail?.querySelector<HTMLButtonElement>('[aria-pressed="true"]');
+      if (!rail || !button) return;
       const bounds = rail.getBoundingClientRect();
       const card = button.getBoundingClientRect();
       const left =
@@ -471,8 +470,25 @@ export function SeasonExplorer({
             ? card.right - bounds.right + 4
             : 0;
       if (left) rail.scrollBy({ left, behavior: animate && !reducedMotion ? "smooth" : "auto" });
+    },
+    [reducedMotion],
+  );
+
+  useEffect(() => {
+    // Let the episode grid's new layout paint before measuring the selected card.
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => revealSelected(true));
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
     };
-    revealSelected(true);
+  }, [activeKey, cardMembership, revealSelected]);
+
+  useEffect(() => {
+    const rail = railRef.current;
+    if (!rail) return;
     refreshGeometry();
     let frame = 0;
     let resized = false;
@@ -499,7 +515,7 @@ export function SeasonExplorer({
       cancelAnimationFrame(edgeFrame.current);
       edgeFrame.current = 0;
     };
-  }, [activeKey, cardMembership, reducedMotion, refreshGeometry]);
+  }, [cardMembership, refreshGeometry, revealSelected]);
 
   useEffect(
     () => () => {
