@@ -299,3 +299,58 @@ test("an unwarmed catalog row has no proof", () => {
 
   assert.equal(identity.provenCwAnimeIdentity(item), null);
 });
+
+for (const localIsNewer of [true, false]) {
+  test(`verified anime merge keeps ${localIsNewer ? "newer local rewatch" : "newer Simkl completion"} regardless of input order`, () => {
+    recordAnimeCwId("mal:2001", "kitsu:1801");
+    const older = "2026-11-13T10:00:00Z";
+    const newer = "2026-11-14T10:00:00Z";
+    const local = {
+      _id: "kitsu:1801",
+      type: "series",
+      local: true,
+      state: {
+        season: 1,
+        episode: 5,
+        timeOffset: 94574,
+        duration: 1462802,
+        lastWatched: localIsNewer ? newer : older,
+      },
+    };
+    const remote = {
+      _id: "mal:2001",
+      type: "series",
+      external: "simkl",
+      _mtime: "2026-11-15T10:00:00Z",
+      state: {
+        season: 1,
+        episode: 14,
+        timeOffset: 0,
+        duration: 0,
+        flaggedWatched: 1,
+        lastWatched: localIsNewer ? older : newer,
+      },
+    };
+    for (const rows of [
+      [remote, local],
+      [local, remote],
+    ]) {
+      const [winner] = dedupeAnimeCw(rows);
+      assert.equal(winner._id, localIsNewer ? local._id : remote._id);
+      assert.equal(winner.state.episode, localIsNewer ? 5 : 14);
+      assert.equal(winner.state.timeOffset, localIsNewer ? 94574 : 0);
+      assert.equal(winner.cwMembers?.length, 2);
+      assert.ok(winner.cwMembers?.includes(local));
+      assert.ok(winner.cwMembers?.includes(remote));
+    }
+  });
+}
+
+test("anime ranking preserves input order when playback timestamps are missing, invalid, or equal", () => {
+  recordAnimeCwId("mal:2001", "kitsu:1801");
+  for (const timestamp of [undefined, "invalid", "1970-01-01T00:00:00Z", "2026-11-14T10:00:00Z"]) {
+    const first = { _id: "mal:2001", state: { lastWatched: timestamp } };
+    const second = { _id: "kitsu:1801", state: { lastWatched: "2026-11-14T10:00:00Z" } };
+    assert.equal(dedupeAnimeCw([first, second])[0]._id, first._id);
+  }
+});

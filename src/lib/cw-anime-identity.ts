@@ -587,6 +587,24 @@ function rootOf(parents: Map<string, string>, id: string): string {
   return current;
 }
 
+function newerAnimePlayback(incoming: CwIdentityItem, existing: CwIdentityItem): boolean {
+  const timestamp = (item: CwIdentityItem) => {
+    const value = item.lastWatched ?? item.state?.lastWatched;
+    return typeof value === "number" ? value : Date.parse(value ?? "");
+  };
+  const incomingAt = timestamp(incoming);
+  const existingAt = timestamp(existing);
+  // Row ordering also includes library maintenance and resume-import times.
+  // Only explicit playback timestamps may override that order for an alias.
+  return (
+    Number.isFinite(incomingAt) &&
+    incomingAt > 0 &&
+    Number.isFinite(existingAt) &&
+    existingAt > 0 &&
+    incomingAt > existingAt
+  );
+}
+
 function mergeCwMembers<T extends CwIdentityItem>(existing: T, item: T): T {
   const members = [...(existing.cwMembers ?? [existing]), ...(item.cwMembers ?? [item])];
   const unique = [...new Map(members.map((member) => [memberKey(member), member])).values()];
@@ -700,7 +718,11 @@ export function dedupeAnimeCw<T extends CwIdentityItem>(items: T[]): T[] {
       output.push(item);
       continue;
     }
-    output[index] = mergeCwMembers(output[index], item);
+    const existing = output[index];
+    output[index] =
+      animeIdentity && newerAnimePlayback(item, existing)
+        ? mergeCwMembers(item, existing)
+        : mergeCwMembers(existing, item);
   }
 
   // A manual-watched or local row can carry the playback id while the real
