@@ -405,10 +405,10 @@ function imageFixture(disk, invoke, now, failStorage = false) {
   return {
     ...f,
     reads,
-    render(url) {
+    render(url, options = {}) {
       index = 0;
       effects.length = 0;
-      const result = f.useProxiedImageSrc(url, { forceProxy: true, persistent: true });
+      const result = f.useProxiedImageSrc(url, { forceProxy: true, persistent: true, ...options });
       effects.forEach((effect) => effect());
       return result;
     },
@@ -433,6 +433,25 @@ test("public poster requests opt into the native persistent cache and clearing r
   await first.clearThumbCache();
   assert.equal(disk.size, 0);
   assert.equal(calls.at(-1).name, "clear_thumb_cache");
+});
+
+test("sized posters use the same width for cache lookup and native fetch", async () => {
+  const calls = [];
+  const f = imageFixture(
+    new Map(),
+    async (name, args) => {
+      calls.push([name, args]);
+      if (name === "cached_thumb_path") return null;
+      return { ok: true, body: "", contentType: "image/jpeg", assetPath: "fixture.jpg" };
+    },
+    () => 1000,
+  );
+  f.render("https://artworks.thetvdb.com/poster.jpg", { thumbWidthPx: 342 });
+  await tick();
+  assert.equal(calls[0][1].width, 342);
+  assert.equal(calls[1][1].args.thumbWidthPx, 342);
+  assert.equal(calls[1][1].args.returnImageAsset, true);
+  assert.deepEqual(f.reads, []);
 });
 
 test("a newly cached poster uses the asset path and skips unrelated legacy blob reads", async () => {

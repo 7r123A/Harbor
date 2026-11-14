@@ -280,7 +280,13 @@ const cacheKeyFor = (url: string, thumbWidthPx?: number): string =>
 
 export function useProxiedImageSrc(
   url: string | undefined,
-  opts?: { forceProxy?: boolean; persistent?: boolean; enabled?: boolean; originalSize?: boolean },
+  opts?: {
+    forceProxy?: boolean;
+    persistent?: boolean;
+    enabled?: boolean;
+    originalSize?: boolean;
+    thumbWidthPx?: number;
+  },
 ): string | undefined {
   const need =
     isTauri &&
@@ -293,9 +299,8 @@ export function useProxiedImageSrc(
   const thumbWidthPx =
     opts?.originalSize || settings.posterQuality === "max"
       ? undefined
-      : settings.posterQuality === "high"
-        ? 600
-        : 400;
+      : (opts?.thumbWidthPx ?? (settings.posterQuality === "high" ? 600 : 400));
+  const migrateLegacy = !opts?.originalSize && opts?.thumbWidthPx === undefined;
   const imageKey = cacheKeyFor(url ?? "", thumbWidthPx);
   const [blob, setBlob] = useState<{ key: string; src: string } | undefined>(() => {
     const cached = url && need ? blobCache.get(imageKey) : undefined;
@@ -330,7 +335,7 @@ export function useProxiedImageSrc(
     let alive = true;
     const generation = cacheGeneration;
     let release: (() => void) | undefined;
-    void proxyImage(url, thumbWidthPx, persistent, !opts?.originalSize).then((created) => {
+    void proxyImage(url, thumbWidthPx, persistent, migrateLegacy).then((created) => {
       if (!alive || generation !== cacheGeneration) return;
       if (typeof created === "string") {
         setBlob({ key: imageKey, src: created });
@@ -345,7 +350,7 @@ export function useProxiedImageSrc(
       alive = false;
       release?.();
     };
-  }, [url, imageKey, need, thumbWidthPx, persistent, opts?.enabled, opts?.originalSize]);
+  }, [url, imageKey, need, thumbWidthPx, persistent, opts?.enabled, migrateLegacy]);
   if (opts?.enabled === false) return undefined;
   if (!need) return url;
   // Loading -> undefined (caller shows its placeholder/shimmer). Failed -> the

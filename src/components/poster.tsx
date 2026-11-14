@@ -27,7 +27,12 @@ import { firstPosterTransform, posterTransformEnabled } from "@/lib/metadata-sou
 import { externalToKitsu, kitsuToImdb, kitsuToTvdb } from "@/lib/providers/anime-mapping";
 import { simklAnimeArtworkIds } from "@/lib/simkl/anime-artwork-ids";
 import { tmdbLocalizedPoster } from "@/lib/providers/tmdb/tmdb-images";
-import { sizeImageUrl, qualityMultiplier } from "@/lib/img-size";
+import {
+  nativePosterThumbnailWidth,
+  posterThumbnailWidth,
+  qualityMultiplier,
+  sizeImageUrl,
+} from "@/lib/img-size";
 import { shouldLocalizePosters } from "@/lib/providers/tmdb/tmdb-image-lang";
 import { useProxiedImageSrc } from "@/lib/remote-image-proxy";
 import { observeResize, observeWithin } from "@/lib/visibility";
@@ -388,10 +393,10 @@ function PosterBody({
       measuredPxRef.current = t;
       const prev = targetPxRef.current;
       if (t <= prev) return;
-      // Expansion animates the width every frame. Only render when it actually selects
-      // different image bytes, rather than once per pixel within the same CDN size rung.
+      // During expansion, only update when the requested CDN URL or native thumbnail changes.
       if (
         prev > 0 &&
+        posterThumbnailWidth(prev) === posterThumbnailWidth(t) &&
         rawCandidatesRef.current.every((url) => sizeImageUrl(url, prev) === sizeImageUrl(url, t))
       )
         return;
@@ -465,6 +470,9 @@ function PosterBody({
   while (cursor < candidates.length && failedRef.current.has(candidates[cursor])) cursor++;
   const current: string | undefined = candidates[cursor];
   const exhausted = cursor >= candidates.length;
+  const posterWidth = qMult > 0 && targetPx > 0 ? posterThumbnailWidth(targetPx) : 0;
+  const thumbWidthPx = nativePosterThumbnailWidth(current, posterWidth);
+  const displayedThumbWidth = nativePosterThumbnailWidth(displayed, posterWidth);
   // Remote plain-HTTP images (e.g. a Suwayomi server on a VPS) are mixed-content
   // blocked by the WebView; resolve them to a same-origin blob URL.
   const currentSrc = useProxiedImageSrc(current, {
@@ -473,7 +481,8 @@ function PosterBody({
       (!preferDirect || nativeRetryUrl === current || !current?.startsWith("https://")),
     persistent: true,
     enabled: imageEnabled && (qMult === 0 || targetPx > 0),
-    originalSize: true,
+    thumbWidthPx,
+    originalSize: thumbWidthPx === undefined,
   });
   const displayedSrc = useProxiedImageSrc(displayed, {
     forceProxy:
@@ -481,7 +490,8 @@ function PosterBody({
       (!preferDirect || nativeRetryUrl === displayed || !displayed?.startsWith("https://")),
     persistent: true,
     enabled: imageEnabled && displayed !== current,
-    originalSize: true,
+    thumbWidthPx: displayedThumbWidth,
+    originalSize: displayedThumbWidth === undefined,
   });
   const stateCauseRef = useRef<{
     targetPx: number;

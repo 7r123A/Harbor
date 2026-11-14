@@ -417,11 +417,7 @@ function useViewPreloader(tmdbKey: string) {
 }
 
 const KEEP_ALIVE_MS = 1500;
-// How long a top-level view stays mounted after you leave it. A view keeps its whole tree, its
-// observers and its effects while hidden (`display:none` skips painting, not JavaScript), so a
-// minute of exploring left home, discover, catalogs and movies resident at once — ~34k DOM nodes,
-// with every frame and GC pass paying for all of them. Long enough that an immediate back feels
-// instant, short enough that hopping tabs stops accumulating.
+// Allow a short return from a child page before unmounting its parent view.
 const IDLE_EVICT_MS = 10 * 1000;
 const PRESSURE_EVICT_MS = 1500;
 const UI_SCALE_MIN = 0.8;
@@ -475,7 +471,7 @@ function AfterFirstPaint({ children, delayMs = 0 }: { children: ReactNode; delay
   return ready ? <>{children}</> : null;
 }
 
-function useIdleEvict(active: boolean, pin = false): boolean {
+function useIdleEvict(active: boolean, pin = false, keepInactive = true): boolean {
   const [alive, setAlive] = useState(active);
   const [pressure, setPressure] = useState(false);
   useEffect(() => subscribeMemoryPressure(setPressure), []);
@@ -485,10 +481,14 @@ function useIdleEvict(active: boolean, pin = false): boolean {
       return;
     }
     if (!alive) return;
+    if (!keepInactive) {
+      setAlive(false);
+      return;
+    }
     const t = setTimeout(() => setAlive(false), pressure ? PRESSURE_EVICT_MS : IDLE_EVICT_MS);
     return () => clearTimeout(t);
-  }, [active, alive, pressure, pin]);
-  return alive || active || pin;
+  }, [active, alive, pressure, pin, keepInactive]);
+  return active || pin || (keepInactive && alive);
 }
 
 export function App({ onReady }: { onReady?: () => void }) {
@@ -1661,13 +1661,14 @@ function Shell({ onReady }: { onReady?: () => void }) {
   }, [musicEnabled, activeProfileForMusic]);
 
   const overlayPinned = useOverlayPinned();
-  const homeAlive = useIdleEvict(homeTop);
+  // Sidebar switches replace the root. Keep a catalog warm only while Back can reach it.
+  const homeAlive = useIdleEvict(homeTop, false, stackKinds.includes("home"));
   const settingsAlive = useIdleEvict(settingsTop, overlayPinned);
-  const animeAlive = useIdleEvict(animeTop);
-  const discoverAlive = useIdleEvict(discoverTop);
+  const animeAlive = useIdleEvict(animeTop, false, stackKinds.includes("anime"));
+  const discoverAlive = useIdleEvict(discoverTop, false, stackKinds.includes("discover"));
   const musicAlive = useIdleEvict(musicTop);
   const gamesAlive = useIdleEvict(gamesTop, stackKinds.includes("games"));
-  const catalogsAlive = useIdleEvict(catalogsTop);
+  const catalogsAlive = useIdleEvict(catalogsTop, false, stackKinds.includes("catalogs"));
   const pluginsAlive = useIdleEvict(pluginsTop);
   const addonsAlive = useIdleEvict(addonsTop);
   const calendarAlive = useIdleEvict(
@@ -1711,9 +1712,9 @@ function Shell({ onReady }: { onReady?: () => void }) {
   const animeAwardAlive = useKeepAlive(animeAwardTop, animeAwardTop && !!animeAwardSource);
   const curatedListAlive = useKeepAlive(curatedListTop, curatedListTop && !!curatedListId);
   const pickerAlive = useKeepAlive(pickerTop, !!picker);
-  const moviesAlive = useIdleEvict(moviesTop);
+  const moviesAlive = useIdleEvict(moviesTop, false, stackKinds.includes("movies"));
   const kidsAlive = useIdleEvict(kidsTop);
-  const showsAlive = useIdleEvict(showsTop);
+  const showsAlive = useIdleEvict(showsTop, false, stackKinds.includes("shows"));
   const libraryAlive = useIdleEvict(libraryTop);
   const collectionsHubAlive = useIdleEvict(collectionsHubTop);
   const sportsAlive = useIdleEvict(sportsTop);

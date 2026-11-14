@@ -6,6 +6,7 @@ import { JSDOM } from "jsdom";
 import * as React from "react";
 import * as jsx from "react/jsx-runtime";
 import { createRoot } from "react-dom/client";
+import * as imgSize from "../src/lib/img-size.ts";
 
 test("already loaded poster stays revealed without scheduling a redundant crossfade", async () => {
   const dom = new JSDOM("<div id='app'></div>", { url: "http://localhost/" });
@@ -26,7 +27,7 @@ test("already loaded poster stays revealed without scheduling a redundant crossf
     "./row": { ScrollRootContext: React.createContext(null) },
     "react/jsx-runtime": jsx,
     "@/lib/settings": { useSettings: () => ({ settings }) },
-    "@/lib/img-size": { qualityMultiplier: () => 0 },
+    "@/lib/img-size": imgSize,
     "@/lib/visibility": { observeWithin: () => () => {}, observeResize: () => () => {} },
     "@/lib/render-cause": { noteProbe: (label) => probes.push(label), recordRenderCause: () => {} },
     "@/lib/remote-image-proxy": { useProxiedImageSrc: (url) => url },
