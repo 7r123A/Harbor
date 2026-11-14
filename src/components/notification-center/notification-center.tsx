@@ -10,6 +10,7 @@ import { requestOpenGroup } from "@/lib/social/open-group";
 import { openDiagnosticsConsent } from "@/lib/social/diagnostics-open";
 import { useNotificationCenter } from "@/lib/social/use-notification-center";
 import { requestOpenDm } from "@/lib/social/dm-store";
+import { openPartyInvites } from "@/lib/social/party-invite-store";
 import { useT } from "@/lib/i18n";
 import { FeedRow, NotificationDetail, RequestRow } from "./notification-rows";
 import { useOptionalGameAccess } from "@/views/games/game-access";
@@ -65,6 +66,11 @@ export function NotificationCenter({ trigger = true }: { trigger?: boolean } = {
       setOpen(false);
       const requestId = typeof notif.data?.requestId === "string" ? notif.data.requestId : undefined;
       if (requestId) openDiagnosticsConsent(requestId);
+      return;
+    }
+    if (notif.kind === "watch_party_invite") {
+      setOpen(false);
+      openPartyInvites();
       return;
     }
     if (notif.kind === "direct_message") {
