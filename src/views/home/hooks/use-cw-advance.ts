@@ -56,6 +56,7 @@ import {
 } from "@/lib/cw-anime-identity";
 import { dedupeCwItems } from "@/lib/cw-dedupe";
 import {
+  cwDisplayInputFingerprint,
   cwDisplayOwnerKey,
   restoreCwDisplaySnapshot,
   saveCwDisplaySnapshot,
@@ -615,15 +616,35 @@ export function useCwAdvance(
     animeCwEnd,
   ]);
   const [liveDisplayScope, setLiveDisplayScope] = useState<string | null>(null);
+  const [verifiedInputs, setVerifiedInputs] = useState<{
+    scope: string;
+    fingerprints: Map<string, string>;
+  }>({ scope: "", fingerprints: new Map() });
   const restoredDisplay = useMemo(
     () => restoreCwDisplaySnapshot(displayScope, items, { library: library ?? items }),
     [displayScope, items, library],
   );
-  // A restored disk view is only a fallback for an initially empty hook.
-  // Never hide already-published in-memory results (or seeded test state).
+  // A successful live pass for one card must not discard another card's
+  // verified display while its provider source or episode list is still loading.
+  // Live results always win. A source-level proof stops applying once the live
+  // worker has definitively evaluated that same checkpoint.
   const hasLiveDisplay =
     liveDisplayScope === displayScope || advanced.size > 0 || removed.size > 0 || extra.length > 0;
-  const displayAdvanced = hasLiveDisplay ? advanced : restoredDisplay.advanced;
+  const displayAdvanced = useMemo(() => {
+    if (!hasLiveDisplay) return restoredDisplay.advanced;
+    if (restoredDisplay.advanced.size === 0) return advanced;
+    const current = new Map(advanced);
+    const verified = verifiedInputs.scope === displayScope ? verifiedInputs.fingerprints : null;
+    for (const item of items) {
+      // Do not revive a completed temporary source ahead of the stale-copy
+      // reconciliation (the Phase 4C JoJo duplicate regression).
+      if (item.removed && item.temp) continue;
+      if (current.has(item._id) || !restoredDisplay.advanced.has(item._id)) continue;
+      if (verified?.get(item._id) === cwDisplayInputFingerprint(item)) continue;
+      current.set(item._id, restoredDisplay.advanced.get(item._id)!);
+    }
+    return current;
+  }, [hasLiveDisplay, advanced, restoredDisplay.advanced, verifiedInputs, items, displayScope]);
   const displayRemoved = hasLiveDisplay ? removed : restoredDisplay.removed;
   const displayExtra = hasLiveDisplay ? extra : restoredDisplay.extra;
   const listCacheRef = useRef<Map<string, PlayEpisode[]>>(new Map());
@@ -1475,6 +1496,15 @@ export function useCwAdvance(
           );
           next.set(i._id, {
             ...base,
+            // Provider numbering is a display-only proof, separate from the
+            // raw episode and stream IDs used for playback and dismissals.
+            cwVerifiedProviderMapping:
+              Number.isInteger(nextEp.imdbSeason) &&
+              (nextEp.imdbSeason ?? 0) >= 1 &&
+              Number.isInteger(nextEp.imdbEpisode) &&
+              (nextEp.imdbEpisode ?? 0) >= 1
+                ? { imdbSeason: nextEp.imdbSeason!, imdbEpisode: nextEp.imdbEpisode! }
+                : undefined,
             state: {
               ...i.state!,
               season: display.season,
@@ -1676,12 +1706,32 @@ export function useCwAdvance(
           resolvedOwner.simklSession !== nextOwner.simklSession ||
           resolvedOwner.simklEnabled !== nextOwner.simklEnabled;
         if (ownerChanged) setResolvedOwner(nextOwner);
-        // Restore only independently verified checkpoint decisions. Source
-        // records, provider ownership and dismissals remain live-only.
+        // A metadata error cannot invalidate a previously verified checkpoint.
+        // Fully processed inputs, including legitimate no-next results, retire
+        // their provisional display, but unrelated partial hydration does not.
+        const unresolvedIds = new Set(
+          candidates.filter((item) => !decisions.has(item._id)).map((item) => item._id),
+        );
         saveCwDisplaySnapshot(displayScope, items, next, remove, {
           library: lib,
           extra: extraItems,
+          unresolvedIds,
         });
+        if (restoredDisplay.advanced.size > 0 || verifiedInputs.fingerprints.size > 0) {
+          const fingerprints = new Map(
+            items
+              .filter((item) => !unresolvedIds.has(item._id))
+              .map((item) => [item._id, cwDisplayInputFingerprint(item)] as const),
+          );
+          setVerifiedInputs((previous) => {
+            if (
+              previous.scope === displayScope &&
+              previous.fingerprints.size === fingerprints.size &&
+              [...fingerprints].every(([id, fingerprint]) => previous.fingerprints.get(id) === fingerprint)
+            ) return previous;
+            return { scope: displayScope, fingerprints };
+          });
+        }
         // An empty startup pass is not evidence that the provider/library
         // snapshot is ready. Keep the validated display available when data
         // arrives later during hydration.
@@ -1755,7 +1805,14 @@ export function useCwAdvance(
     resolvedOwner.simklEnabled !== simklEnabled
   )
     return dedupeCwItems(
-      items.filter((i) => isCwDisplayReady(i) && !isCwDismissed(i)),
+      // Do not reuse the previous account's in-memory advancement during owner
+      // hydration. An exact checkpoint proof restored under the *new* owner
+      // scope is safe to display until its live pass finishes.
+      items
+        .map((i) =>
+          i.removed && i.temp ? i : (restoredDisplay.advanced.get(i._id) ?? i),
+        )
+        .filter((i) => isCwDisplayReady(i) && !isCwDismissed(i)),
       Infinity,
     );
   // Dismissal targets the displayed up-next episode, which may differ from the

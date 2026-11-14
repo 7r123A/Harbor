@@ -16,6 +16,7 @@ type DisplayState = {
   upNext: boolean;
   waitingForAir: boolean;
   nextAirDate: string | null;
+  providerMapping?: { imdbSeason: number; imdbEpisode: number };
 };
 
 type SavedDecision = {
@@ -23,6 +24,8 @@ type SavedDecision = {
   fingerprint: string;
   kind: "advance" | "remove";
   display?: DisplayState;
+  // Preserve the original proof time when a partial row carries the decision.
+  verifiedAt?: number;
 };
 
 type SavedExtra = {
@@ -137,7 +140,12 @@ function validDisplay(display: DisplayState | undefined): display is DisplayStat
     typeof display.videoId === "string" &&
     typeof display.upNext === "boolean" &&
     typeof display.waitingForAir === "boolean" &&
-    (display.nextAirDate === null || typeof display.nextAirDate === "string")
+    (display.nextAirDate === null || typeof display.nextAirDate === "string") &&
+    (display.providerMapping === undefined ||
+      (Number.isInteger(display.providerMapping.imdbSeason) &&
+        display.providerMapping.imdbSeason >= 1 &&
+        Number.isInteger(display.providerMapping.imdbEpisode) &&
+        display.providerMapping.imdbEpisode >= 1))
   );
 }
 
@@ -155,6 +163,7 @@ function applyDisplay(item: LibraryItem, display: DisplayState): LibraryItem {
       flaggedWatched: 0,
     },
     upNext: display.upNext,
+    cwVerifiedProviderMapping: display.providerMapping,
     waitingForAir: display.waitingForAir || undefined,
     nextAirDate: display.nextAirDate ?? undefined,
   };
@@ -170,6 +179,8 @@ export function saveCwDisplaySnapshot(
     now?: number;
     library?: readonly LibraryItem[];
     extra?: readonly LibraryItem[];
+    // A failed metadata lookup is not proof that the previous display is wrong.
+    unresolvedIds?: ReadonlySet<string>;
   } = {},
 ): void {
   const store = options.store === undefined ? storage() : options.store;
@@ -206,10 +217,55 @@ export function saveCwDisplaySnapshot(
         upNext: output.upNext === true,
         waitingForAir: output.waitingForAir === true,
         nextAirDate: output.nextAirDate ?? null,
+        providerMapping: output.cwVerifiedProviderMapping,
       },
     });
   }
   const now = options.now ?? Date.now();
+  // A partial hydration pass can arrive before Simkl (or another source).
+  // Carry only decisions for absent/unresolved inputs, never those already
+  // reconsidered successfully by the live worker. Keep their original proof
+  // timestamp so repeated partial passes cannot extend the validity window.
+  try {
+    const json = store.getItem(STORAGE_PREFIX + owner);
+    if (json) {
+      const previous = JSON.parse(json) as SavedSnapshot;
+      if (
+        previous.version === VERSION &&
+        previous.owner === owner &&
+        Number.isFinite(previous.savedAt) &&
+        previous.savedAt <= now &&
+        Array.isArray(previous.decisions)
+      ) {
+        const present = new Set(items.map((item) => item._id));
+        const retained = new Set(decisions.map((decision) => decision.id));
+        for (const decision of previous.decisions.slice(0, MAX_ITEMS)) {
+          if (decisions.length >= MAX_ITEMS) break;
+          if (!decision || typeof decision.id !== "string" || retained.has(decision.id))
+            continue;
+          if (present.has(decision.id) && !options.unresolvedIds?.has(decision.id))
+            continue;
+          if (
+            decision.kind !== "remove" &&
+            (decision.kind !== "advance" || !validDisplay(decision.display))
+          )
+            continue;
+          const verifiedAt = decision.verifiedAt ?? previous.savedAt;
+          const ttl = decision.kind === "remove" ? REMOVE_TTL_MS : ADVANCE_TTL_MS;
+          if (
+            !Number.isFinite(verifiedAt) ||
+            verifiedAt > now ||
+            now - verifiedAt > ttl
+          )
+            continue;
+          decisions.push({ ...decision, verifiedAt });
+          retained.add(decision.id);
+        }
+      }
+    }
+  } catch {
+    // Corrupt/legacy storage must never prevent the live display from saving.
+  }
   const extras: SavedExtra[] = [];
   if (options.extra?.length && options.library?.length) {
     const present = new Set(items.map((item) => item._id));
@@ -293,9 +349,23 @@ export function restoreCwDisplaySnapshot(
       const input = eligible.get(decision.id);
       if (!input?.state || cwDisplayInputFingerprint(input) !== decision.fingerprint) continue;
       if (decision.kind === "remove") {
-        if (now - saved.savedAt <= REMOVE_TTL_MS) result.removed.add(decision.id);
+        const verifiedAt = decision.verifiedAt ?? saved.savedAt;
+        if (
+          Number.isFinite(verifiedAt) &&
+          verifiedAt <= now &&
+          now - verifiedAt <= REMOVE_TTL_MS
+        ) {
+          result.removed.add(decision.id);
+        }
       } else if (validDisplay(decision.display)) {
-        result.advanced.set(decision.id, applyDisplay(input, decision.display));
+        const verifiedAt = decision.verifiedAt ?? saved.savedAt;
+        if (
+          Number.isFinite(verifiedAt) &&
+          verifiedAt <= now &&
+          now - verifiedAt <= ADVANCE_TTL_MS
+        ) {
+          result.advanced.set(decision.id, applyDisplay(input, decision.display));
+        }
       }
     }
     // Resurfaced cards are a provisional display only. New provider/alias

@@ -604,7 +604,14 @@ export const ContinueCard = memo(function ContinueCard({
     effectiveKitsuVideo?.imdbSeason,
   );
   const partSeasonCard = splitFranchiseDisplaySeason(cardKitsuId);
-  const animeSeasonMapped = providerMappedEpisode(effectiveKitsuVideo, ep, seasonForeignCard);
+  // The next-episode worker can verify the provider numbering before card
+  // metadata hydrates. Replay that display-only proof while the exact cour
+  // video is loading; the live video mapping takes precedence when available.
+  const animeSeasonMapped =
+    providerMappedEpisode(effectiveKitsuVideo, ep, seasonForeignCard) ??
+    (upNext
+      ? providerMappedEpisode(item.cwVerifiedProviderMapping, ep, seasonForeignCard)
+      : null);
   const displaySeason = animeSeasonMapped?.season ?? partSeasonCard ?? ep?.season;
   const displayEpisode = animeSeasonMapped?.episode ?? ep?.episode;
   useEffect(() => {

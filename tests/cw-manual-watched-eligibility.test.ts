@@ -212,7 +212,8 @@ test("the worker retains completed sources while only the final CW row hides unr
   assert.match(home, /isCwMember\(i\)/);
   assert.doesNotMatch(home, /isCwDisplayReady\(i\)/);
   assert.match(hook, /const candidates = items\.filter/);
-  assert.match(hook, /items\.filter\(\(i\) => isCwDisplayReady\(i\) && !isCwDismissed\(i\)\)/);
+  assert.match(hook, /restoredDisplay\.advanced\.get\(i\._id\)/);
+  assert.match(hook, /\.filter\(\(i\) => isCwDisplayReady\(i\) && !isCwDismissed\(i\)\)/);
   assert.match(hook, /\.map\(\(i\) => displayAdvanced\.get\(i\._id\) \?\? i\)/);
   assert.match(hook, /\.filter\(\(i\) => isCwDisplayReady\(i\) && !displayRemoved\.has\(i\._id\)/);
 });
