@@ -46,16 +46,32 @@ export function useHeroActionOverflow(rowRef: RefObject<HTMLDivElement | null>, 
       }
     };
     measure();
-    const ro = new ResizeObserver(measure);
+    let frame = 0;
+    const schedule = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        measure();
+      });
+    };
+    const widths = new WeakMap<Element, number>();
+    const ro = new ResizeObserver((entries) => {
+      for (const { target, contentRect } of entries) {
+        if (widths.get(target) === contentRect.width) continue;
+        widths.set(target, contentRect.width);
+        schedule();
+      }
+    });
     ro.observe(row);
     if (section) ro.observe(section);
-    const mo = new MutationObserver(measure);
-    if (section) mo.observe(section, { childList: true, subtree: true });
-    window.addEventListener("resize", measure);
+    const mo = new MutationObserver(schedule);
+    mo.observe(row, { childList: true, characterData: true, subtree: true });
+    window.addEventListener("resize", schedule);
     return () => {
+      cancelAnimationFrame(frame);
       ro.disconnect();
       mo.disconnect();
-      window.removeEventListener("resize", measure);
+      window.removeEventListener("resize", schedule);
     };
   }, deps);
 

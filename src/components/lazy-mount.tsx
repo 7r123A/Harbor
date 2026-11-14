@@ -1,5 +1,6 @@
 import {
   startTransition,
+  useContext,
   useEffect,
   useRef,
   useState,
@@ -7,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { observeWithin } from "@/lib/visibility";
+import { resolveRowScrollRoot, ScrollRootContext } from "./row";
 
 const CULL_PAD_Y = 24;
 
@@ -33,6 +35,7 @@ export function LazyMount({
   rootMargin?: string;
   minHeight?: number;
 }) {
+  const pageScrollRoot = useContext(ScrollRootContext);
   const ref = useRef<HTMLDivElement>(null);
   const [shown, setShown] = useState(false);
 
@@ -44,10 +47,15 @@ export function LazyMount({
       setShown(true);
       return;
     }
-    return observeWithin(el, rootMargin, (entry) => {
-      if (entry.isIntersecting) startTransition(() => setShown(true));
-    });
-  }, [shown, rootMargin]);
+    return observeWithin(
+      el,
+      rootMargin,
+      (entry) => {
+        if (entry.isIntersecting) startTransition(() => setShown(true));
+      },
+      resolveRowScrollRoot(pageScrollRoot, el),
+    );
+  }, [shown, rootMargin, pageScrollRoot]);
 
   return (
     <div
