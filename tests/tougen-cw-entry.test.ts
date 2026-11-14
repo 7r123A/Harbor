@@ -170,6 +170,136 @@ test("the anime overview resolves the addon entry before the external graph", ()
   assert.match(src, /directMeta &&[\s\S]*?parseKitsuId\(directMeta\.id\) === kitsuId/);
 });
 
+test("strict mapping surfaces the AniZip failure best effort hides", async () => {
+  const mapping = load("src/lib/providers/anime-mapping.ts", {
+    "./kitsu-mapping": { kitsuExternalIds: async () => null },
+    "@/lib/providers/anizip": {
+      aniZipByAnidb: async () => null,
+      aniZipByAnilist: async () => null,
+      aniZipByImdb: async () => {
+        throw new Error("anizip down");
+      },
+      aniZipByKitsu: async () => {
+        throw new Error("anizip down");
+      },
+      aniZipByMal: async () => null,
+      aniZipByTmdbTv: async () => {
+        throw new Error("anizip down");
+      },
+    },
+    "@/lib/providers/kitsu": {
+      kitsuAnime: async () => null,
+      kitsuMainTvSeries: async () => null,
+      kitsuRelated: async () => [],
+      parseKitsuId: () => null,
+    },
+    "@/lib/streams/anime-identity-core": { selectSiblingWindows: () => [] },
+    "./mapping-store": {
+      mappingStore: () => ({ ready: Promise.resolve(), get: () => undefined, set: () => {} }),
+    },
+    "@/lib/anime-identity-db": {
+      animeDbReadProvider: async () => null,
+      animeDbWriteProvider: async () => true,
+    },
+  });
+  // CW advancement cannot treat an unreachable mapping provider as "no anime".
+  await assert.rejects(mapping.imdbToKitsu("tt33258199", true), /anizip down/);
+  await assert.rejects(mapping.tmdbTvToKitsu(12345, true), /anizip down/);
+  // The downstream Kitsu/AniList lookups the resolver also needs behave the same.
+  await assert.rejects(mapping.animeMappingByKitsu(49147, [], undefined, true), /anizip down/);
+  assert.equal(await mapping.animeMappingByKitsu(49147), null);
+});
+
+test("ARM lookups share one request without sharing its policy", async () => {
+  let release!: (result: { ok: boolean; status: number; json: () => Promise<unknown> }) => void;
+  const gate = new Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>(
+    (resolve) => {
+      release = resolve;
+    },
+  );
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (() => gate) as typeof fetch;
+  try {
+    const mapping = load("src/lib/providers/anime-mapping.ts", {
+      "./kitsu-mapping": { kitsuExternalIds: async () => null },
+      "@/lib/providers/anizip": {
+        aniZipByAnidb: async () => null,
+        aniZipByAnilist: async () => null,
+        aniZipByImdb: async () => null,
+        aniZipByKitsu: async () => null,
+        aniZipByMal: async () => null,
+        aniZipByTmdbTv: async () => null,
+      },
+      "@/lib/providers/kitsu": {
+        kitsuAnime: async () => null,
+        kitsuMainTvSeries: async () => null,
+        kitsuRelated: async () => [],
+        parseKitsuId: () => null,
+      },
+      "@/lib/streams/anime-identity-core": { selectSiblingWindows: () => [] },
+      "./mapping-store": {
+        mappingStore: () => ({ ready: Promise.resolve(), get: () => undefined, set: () => {} }),
+      },
+      "@/lib/anime-identity-db": {
+        animeDbReadProvider: async () => null,
+        animeDbWriteProvider: async () => true,
+      },
+    });
+    const best = mapping.externalToKitsu("myanimelist", 4242);
+    const strict = mapping.externalToKitsu("myanimelist", 4242, undefined, true);
+    release({ ok: false, status: 500, json: async () => ({}) });
+    assert.equal(await best, null);
+    await assert.rejects(strict, /unavailable/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("requireComplete rejects an episode list with a missing season", async () => {
+  const h = seriesModule({
+    "./providers/tmdb": {
+      applyTmdbEpisodeNames: (eps: unknown[]) => eps,
+      needsTmdbEpisodeNames: () => false,
+      tmdbDetails: async () => ({ seasons: [{ seasonNumber: 1 }, { seasonNumber: 2 }] }),
+      tmdbEpisodeNames: async () => null,
+      tmdbSeasonEpisodes: async (_key: string, _id: number, season: number) =>
+        season === 1 ? [{ seasonNumber: 1, episodeNumber: 1, name: "One" }] : [],
+    },
+  });
+  await assert.rejects(
+    h.module.fetchEpisodeList(
+      { id: "tmdb:tv:9001", type: "series", name: "Fixture" },
+      { tmdbKey: "key", requireComplete: true },
+    ),
+    /unavailable/,
+  );
+  // Best-effort callers keep the partial list.
+  const partial = await h.module.fetchEpisodeList(
+    { id: "tmdb:tv:9002", type: "series", name: "Fixture" },
+    { tmdbKey: "key" },
+  );
+  assert.equal(partial.length, 1);
+});
+
+test("requireComplete accepts a complete multi-season list", async () => {
+  const h = seriesModule({
+    "./providers/tmdb": {
+      applyTmdbEpisodeNames: (eps: unknown[]) => eps,
+      needsTmdbEpisodeNames: () => false,
+      tmdbDetails: async () => ({ seasons: [{ seasonNumber: 1 }, { seasonNumber: 2 }] }),
+      tmdbEpisodeNames: async () => null,
+      tmdbSeasonEpisodes: async (_key: string, _id: number, season: number) => [
+        { seasonNumber: season, episodeNumber: 1, name: `S${season}E1` },
+      ],
+    },
+  });
+  const list = await h.module.fetchEpisodeList(
+    { id: "tmdb:tv:9003", type: "series", name: "Fixture" },
+    { tmdbKey: "key", requireComplete: true },
+  );
+  assert.equal(list.length, 2);
+});
+
 test("a cached miss is retried after the short negative TTL", async () => {
   let fetches = 0;
   let stored: { kitsu: number | null; t: number } | null = {

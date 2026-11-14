@@ -1,4 +1,4 @@
-import { kitsuMappingRequest } from "./kitsu";
+import { kitsuMappingRequest, kitsuMappingRequestStrict } from "./kitsu";
 
 type Mapping = {
   type?: string;
@@ -33,6 +33,7 @@ export async function kitsuFromExternal(
   site: KitsuExternalSite,
   id: number,
   maxAge?: number,
+  strict = false,
 ): Promise<number | null> {
   if (!Number.isSafeInteger(id) || id <= 0) return null;
   const query = new URLSearchParams({
@@ -42,8 +43,15 @@ export async function kitsuFromExternal(
     "fields[anime]": "canonicalTitle",
     "page[limit]": "20",
   });
-  const doc = await kitsuMappingRequest<MappingDocument>(`/mappings?${query}`, maxAge);
-  if (!complete(doc)) throw new Error("Incomplete Kitsu mapping response");
+  const doc = strict
+    ? await kitsuMappingRequestStrict<MappingDocument>(`/mappings?${query}`, maxAge)
+    : await kitsuMappingRequest<MappingDocument>(`/mappings?${query}`, maxAge);
+  if (doc == null) return null;
+  if (!complete(doc)) {
+    // A 200 that cannot be read is not a confirmed absence for a strict caller.
+    if (strict) throw new Error("kitsu mapping unusable");
+    return null;
+  }
   const candidates = new Set<number>();
   for (const row of doc.data) {
     if (!row || typeof row !== "object") throw new Error("Invalid Kitsu mapping");
@@ -66,18 +74,30 @@ export async function kitsuFromExternal(
 export async function kitsuExternalIds(
   kitsuId: number,
   maxAge?: number,
+  strict = false,
 ): Promise<{ anilist?: number; mal?: number } | null> {
   if (!Number.isSafeInteger(kitsuId) || kitsuId <= 0) return null;
-  const doc = await kitsuMappingRequest<MappingDocument>(
-    `/anime/${kitsuId}/mappings?page%5Blimit%5D=20`,
-    maxAge,
-  );
-  if (!complete(doc)) return null;
+  const path = `/anime/${kitsuId}/mappings?page%5Blimit%5D=20`;
+  const doc = strict
+    ? await kitsuMappingRequestStrict<MappingDocument>(path, maxAge)
+    : await kitsuMappingRequest<MappingDocument>(path, maxAge);
+  if (doc == null) return null;
+  if (!complete(doc)) {
+    // A 200 that cannot be read is not a confirmed absence for a strict caller.
+    if (strict) throw new Error("kitsu mapping unusable");
+    return null;
+  }
   const ids: { anilist?: number; mal?: number } = {};
   for (const row of doc.data) {
-    if (!row || row.type !== "mappings" || !row.attributes) return null;
+    if (!row || row.type !== "mappings" || !row.attributes) {
+      if (strict) throw new Error("kitsu mapping unusable");
+      return null;
+    }
     const item = row.relationships?.item?.data;
-    if (item && (item.type !== "anime" || positiveId(item.id) !== kitsuId)) return null;
+    if (item && (item.type !== "anime" || positiveId(item.id) !== kitsuId)) {
+      if (strict) throw new Error("kitsu mapping unusable");
+      return null;
+    }
     const key =
       row.attributes.externalSite === "anilist/anime"
         ? "anilist"
@@ -86,7 +106,10 @@ export async function kitsuExternalIds(
           : null;
     if (!key) continue;
     const id = positiveId(row.attributes.externalId);
-    if (id == null || (ids[key] != null && ids[key] !== id)) return null;
+    if (id == null || (ids[key] != null && ids[key] !== id)) {
+      if (strict) throw new Error("kitsu mapping unusable");
+      return null;
+    }
     ids[key] = id;
   }
   return ids;

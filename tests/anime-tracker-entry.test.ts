@@ -55,6 +55,30 @@ const SEQUEL_FLAT = {
   episodes: { "1": {}, "2": {}, "3": {} },
 };
 
+test("a provider failure is best effort by default and strict only when asked", async () => {
+  const api = load({
+    ...base,
+    "@/lib/providers/anime-mapping": {
+      ...base["@/lib/providers/anime-mapping"],
+      imdbToKitsu: async () => {
+        throw new Error("network down");
+      },
+    },
+  });
+  // Playback and scrobbling share this resolver and must keep their fallback.
+  assert.equal(await api.resolveTrackerAnimeEntry("tt33258199", { season: 1, episode: 1 }), null);
+  // CW advancement must not read that failure as a confirmed absence.
+  await assert.rejects(
+    api.resolveTrackerAnimeEntry("tt33258199", { season: 1, episode: 1 }, undefined, true),
+    /network down/,
+  );
+});
+
+test("a working provider that finds no entry still resolves to no sequel", async () => {
+  const api = load(base);
+  assert.equal(await api.resolveTrackerAnimeEntry("tt33258199", { season: 1, episode: 1 }), null);
+});
+
 test("an existing season is resolved by the base entry, not the franchise walk", async () => {
   const api = load(base);
   const entry = await api.resolveTrackerAnimeEntry(

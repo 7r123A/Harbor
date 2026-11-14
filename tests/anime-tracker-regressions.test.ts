@@ -30,6 +30,9 @@ test("addon-only anime detection can resolve external ids without reading built-
   assert.match(MAPPING, /kitsuAnime\(kitsuId, undefined, true\)/);
   assert.match(MAPPING, /kitsuMainTvSeries\(kitsuId, true\)/);
   assert.match(DETAIL, /kitsuSearchAnime\(name, 8, true\)/);
-  assert.match(KITSU, /async function get<T>\(path: string, maxAge\?: number, identity = false\)/);
-  assert.match(KITSU, /if \(addonOnlyMetadata\(\) && !identity\) return null;/);
+  assert.match(
+    KITSU,
+    /async function get<T>\(\s*path: string,\s*maxAge\?: number,\s*identity = false,\s*strict = false,\s*\)/,
+  );
+  assert.match(KITSU, /if \(addonOnlyMetadata\(\) && !identity && !strict\) return null;/);
 });
