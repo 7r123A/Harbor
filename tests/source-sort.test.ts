@@ -63,6 +63,11 @@ test("parseSize reads European sizes with dot thousands and comma decimals", () 
   assert.equal(parseSize("1.234 GB"), Math.round(1.234 * GB), "a lone dot stays a decimal point");
 });
 
+test("parseSize does not start a thousands group inside a filename number", () => {
+  assert.equal(parseSize("Movie.2024.123,45GB"), Math.round(123.45 * GB));
+  assert.equal(parseSize("Movie.2024,123 MB"), 123 * MB);
+});
+
 test("parseSize prefers the addon's size field over a size in the release name", () => {
   assert.equal(parseSize("Movie.2010.1080p.1.0GB.x264\n💾 1.07 GB 👤 12"), Math.round(1.07 * GB));
   assert.equal(parseSize("Movie.800MB.mkv\n💾 594.75 MB"), Math.round(594.75 * MB));

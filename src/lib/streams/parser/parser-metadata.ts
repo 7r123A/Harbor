@@ -5,8 +5,10 @@ const CONTAINER_RX = /\.(mkv|mp4|m4v|avi|webm|mov|ts|wmv)\b/i;
 // Accepts thousands separators ("1,024 MB", European "1.234,56 GB") and comma decimals
 // ("2,91Gb"), which otherwise match only the digits after the separator and misread the size.
 // A dot without a comma decimal stays a decimal point, so "1.234 GB" is 1.234 GB.
+// The thousands forms cannot start inside a longer number, or "Movie.2024.123,45GB" would
+// read as "024.123,45".
 const SIZE_RX =
-  /(\d{1,3}(?:\.\d{3})+,\d{1,2}|\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+|,\d{1,2})?)\s*(GB|MB|TB|GiB|MiB|TiB)\b/i;
+  /((?<!\d)\d{1,3}(?:\.\d{3})+,\d{1,2}|(?<!\d)\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+|,\d{1,2})?)\s*(GB|MB|TB|GiB|MiB|TiB)\b/i;
 // The addon's own size field ("💾 1.07 GB") beats a rounded size inside the release name.
 const MARKED_SIZE_RX = new RegExp(`💾\\s*${SIZE_RX.source}`, "iu");
 const SEEDERS_RX = /(?:👥|👤|S:|seeds?:?|\bS\s*=\s*)\s*(\d+)/i;
