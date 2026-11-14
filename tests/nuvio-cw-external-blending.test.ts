@@ -113,6 +113,7 @@ function fixture(initialNuvioActive = true, nuvioSignedIn = true) {
     },
     "@/lib/nuvio/nuvio-client": {
       isNuvioSignedIn: () => isSignedIn,
+      getNuvioAccountId: () => (isSignedIn ? "fixture-nuvio-account" : null),
     },
     "@/lib/nuvio/nuvio-sync": {
       isNuvioProviderActive: () => isNuvioActive,
