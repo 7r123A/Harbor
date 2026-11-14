@@ -561,6 +561,11 @@ const PosterCard = memo(function PosterCard({
             : ""
         }`}
       >
+        <FriendReviewBadges
+          metaId={meta.id}
+          kind={meta.type}
+          className="relative z-20 mb-1 flex w-full items-center gap-1 px-0.5"
+        />
         <Poster
           src={posterSrc}
           seed={meta.id}
@@ -573,7 +578,6 @@ const PosterCard = memo(function PosterCard({
           }`}
         >
           {posterOverlays}
-          <FriendReviewBadges metaId={meta.id} kind={meta.type} />
         </Poster>
         {settings.cardHoverShine && (
           <div

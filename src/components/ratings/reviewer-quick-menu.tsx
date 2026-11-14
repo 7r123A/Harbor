@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, MessageSquare, Search, Star, X } from "lucide-react";
+import { Loader2, MessageSquare, Search, Star, UserPlus, X } from "lucide-react";
 import { ModalShell, useEscape, useModalExit } from "@/components/modal-shell";
 import { useT } from "@/lib/i18n";
+import { requestFriendship } from "@/lib/social/friend-request";
 import { socialGet } from "@/lib/social/client";
 import { openDmConversation } from "@/lib/social/dm";
 import { requestOpenDm } from "@/lib/social/dm-store";
@@ -134,13 +135,13 @@ function ReviewerReviewRow({
   const long = text.length > 260;
 
   return (
-    <article className="rounded-xl bg-elevated/40 p-2.5 ring-1 ring-edge-soft">
+    <article className="rounded-xl bg-elevated/40 p-3 ring-1 ring-edge-soft">
       <div className="flex items-start gap-2.5">
         <button
           type="button"
           onClick={() => onOpenTitle(review)}
           aria-label={t("Open {title}", { title: review.title || review.contentId })}
-          className="h-[52px] w-[36px] shrink-0 overflow-hidden rounded-md bg-canvas/70"
+          className="h-[72px] w-[50px] shrink-0 overflow-hidden rounded-md bg-canvas/70"
         >
           {review.posterUrl ? (
             <img
@@ -157,16 +158,16 @@ function ReviewerReviewRow({
             <button
               type="button"
               onClick={() => onOpenTitle(review)}
-              className="min-w-0 flex-1 truncate text-start text-[12.5px] font-semibold text-ink transition-colors hover:text-accent"
+              className="min-w-0 flex-1 truncate text-start text-[14px] font-semibold text-ink transition-colors hover:text-accent"
             >
               {review.title || review.contentId}
             </button>
-            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-canvas/60 px-1.5 py-0.5 text-[11.5px] font-bold tabular-nums text-ink">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-canvas/60 px-2 py-1 text-[12.5px] font-bold tabular-nums text-ink">
               <Star size={10} className="fill-current" />
               {review.score}
             </span>
           </div>
-          <div className="mt-0.5 flex items-center gap-2 text-[11px] text-ink-subtle">
+          <div className="mt-1 flex items-center gap-2 text-[12px] text-ink-subtle">
             <span>{timeAgo(review.updatedAt || review.createdAt)}</span>
             <span aria-hidden>·</span>
             <span className="inline-flex items-center gap-1">
@@ -235,6 +236,8 @@ export function ReviewerQuickMenu({
   const [total, setTotal] = useState(0);
   const [sort, setSort] = useState<QuickSort>("recent");
   const [query, setQuery] = useState("");
+  const [withReview, setWithReview] = useState(false);
+  const [friend, setFriend] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [debounced, setDebounced] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [paging, setPaging] = useState(false);
@@ -254,12 +257,13 @@ export function ReviewerQuickMenu({
     p.set("limit", String(PAGE));
     p.set("sort", sort);
     if (debounced) p.set("q", debounced);
+    if (withReview) p.set("withReview", "1");
     if (excludeContentId) {
       p.set("excludeContentId", excludeContentId);
       if (excludeContentType) p.set("excludeContentType", excludeContentType);
     }
     return p.toString();
-  }, [sort, debounced, excludeContentId, excludeContentType]);
+  }, [sort, debounced, withReview, excludeContentId, excludeContentType]);
 
   const loadFallback = useCallback(
     async (offset: number): Promise<QuickResponse> => {
@@ -427,19 +431,39 @@ export function ReviewerQuickMenu({
                 <button
                   type="button"
                   onClick={openFullProfile}
-                  className="min-w-0 truncate text-start text-[16px] font-semibold text-ink transition-colors hover:text-accent"
+                  className="min-w-0 truncate text-start text-[17.5px] font-semibold text-ink transition-colors hover:text-accent"
                 >
                   <span id="reviewer-quick-title">{profile?.alias || fallback?.alias || handle}</span>
                 </button>
                 {profile?.verified && <VerifiedBadge size="sm" />}
               </div>
-              <div className="flex items-center gap-1.5 text-[12px] text-ink-subtle">
+              <div className="flex items-center gap-1.5 text-[13px] text-ink-subtle">
                 <span className={`h-2 w-2 rounded-full ${PRESENCE_DOT[profile?.status || "offline"] || PRESENCE_DOT.offline}`} />
                 <span className="truncate">@{profile?.handle || handle}</span>
                 {profile?.level ? <span className="shrink-0">· {t("Level {n}", { n: profile.level })}</span> : null}
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1.5 pb-1">
+              {!mine && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setFriend("sending");
+                    try {
+                      const result = await requestFriendship(profile?.handle || handle);
+                      setFriend(result === "requested" ? "sent" : "error");
+                    } catch {
+                      setFriend("error");
+                    }
+                  }}
+                  disabled={friend === "sending" || friend === "sent"}
+                  aria-label={t("Add friend")}
+                  title={friend === "sent" ? t("Friend request sent") : t("Add friend — send a friend request")}
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-elevated/60 text-ink-muted transition-colors hover:text-ink disabled:opacity-60"
+                >
+                  {friend === "sending" ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} strokeWidth={2.2} />}
+                </button>
+              )}
               {!mine && (
                 <button
                   type="button"
@@ -467,7 +491,16 @@ export function ReviewerQuickMenu({
               className="h-8 w-full rounded-full bg-elevated/60 ps-8 pe-3 text-[12.5px] text-ink outline-none placeholder:text-ink-subtle focus:ring-1 focus:ring-inset focus:ring-accent/40"
             />
           </div>
-          <select
+                    <button
+            type="button"
+            onClick={() => setWithReview((v) => !v)}
+            aria-pressed={withReview}
+            title={t("Only ratings that include a written review")}
+            className={`h-8 shrink-0 rounded-full px-2.5 text-[12px] font-medium transition-colors ${withReview ? "bg-ink text-canvas" : "bg-elevated/60 text-ink-muted hover:text-ink"}`}
+          >
+            {t("With review")}
+          </button>
+<select
             value={sort}
             onChange={(e) => setSort(e.target.value as QuickSort)}
             aria-label={t("Sort reviews")}
@@ -482,7 +515,7 @@ export function ReviewerQuickMenu({
         </div>
 
         <div className="mt-2 flex-1 overflow-y-auto px-4 pb-4">
-          <div className="mb-1.5 flex items-center justify-between text-[11px] uppercase tracking-wider text-ink-subtle">
+          <div className="mb-2 flex items-center justify-between text-[11.5px] uppercase tracking-wider text-ink-subtle">
             <span>{t("Other reviews")}</span>
             {state === "ready" && <span className="tabular-nums">{total}</span>}
           </div>
@@ -506,7 +539,7 @@ export function ReviewerQuickMenu({
               {debounced ? t("No reviews match that search.") : t("No other reviews yet.")}
             </p>
           )}
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2.5">
             {items.map((review) => (
               <ReviewerReviewRow key={review.id} review={review} onOpenTitle={openTitle} />
             ))}
