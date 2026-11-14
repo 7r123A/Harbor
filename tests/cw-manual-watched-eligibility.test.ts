@@ -213,9 +213,11 @@ test("the worker retains completed sources while only the final CW row hides unr
   assert.doesNotMatch(home, /isCwDisplayReady\(i\)/);
   assert.match(hook, /const candidates = items\.filter/);
   assert.match(hook, /restoredDisplay\.advanced\.get\(i\._id\)/);
-  assert.match(hook, /\.filter\(\(i\) => isCwDisplayReady\(i\) && !isCwDismissed\(i\)\)/);
+  assert.match(hook, /function isPlayableCwDisplay\(i: LibraryItem, advancementEnabled: boolean\)/);
+  assert.match(hook, /if \(!isCwDisplayReady\(i\)\) return false/);
+  assert.match(hook, /\.filter\(\(i\) => isPlayableCwDisplay\(i, enabled\) && !isCwDismissed\(i\)\)/);
   assert.match(hook, /\.map\(\(i\) => displayAdvanced\.get\(i\._id\) \?\? i\)/);
-  assert.match(hook, /\.filter\(\(i\) => isCwDisplayReady\(i\) && !displayRemoved\.has\(i\._id\)/);
+  assert.match(hook, /\.filter\(\(i\) => isPlayableCwDisplay\(i, enabled\) && !displayRemoved\.has\(i\._id\)/);
 });
 
 test("stremio keeps the series progression branch the tray tests pin", () => {

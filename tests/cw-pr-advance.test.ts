@@ -438,6 +438,79 @@ test("future and unknown anime episodes are not presented as playable up next", 
   }
 });
 
+test("finished Psycho-Pass 2 is not shown as a resume while its final episode is checked", async () => {
+  const h = harness();
+  const source = {
+    ...item(11, iso(-3600000), "anilist:20513"),
+    name: "Psycho-Pass 2",
+    local: true,
+    state: {
+      ...item(11, iso(-3600000), "anilist:20513").state,
+      season: 2,
+      episode: 11,
+      video_id: "kitsu:7863:11",
+      timeOffset: 1_316_899,
+      duration: 1_341_385,
+      flaggedWatched: 1,
+    },
+  };
+  h.setEpisodes([{ season: 2, episode: 11, airDate: "2014-12-18" }]);
+  let release: () => void = () => {};
+  h.setGate(new Promise<void>((resolve) => (release = resolve)));
+  try {
+    assert.deepEqual(h.render([source], "", true, []), [],
+      "the finished S2 E11 source flashed as a 0m-left resume before metadata resolved");
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(h.readIds.includes(source._id),
+      "hiding a completed checkpoint must not prevent checking for the next episode");
+  } finally {
+    release();
+  }
+  assert.deepEqual(await h.flush(), [], "caught-up Psycho-Pass reappeared after reconciliation");
+});
+
+test("completed sources are hidden while pending, then yield their verified next episode", async () => {
+  const h = harness();
+  const source = {
+    ...item(1, iso(-3600000), "ttPsychoNext"),
+    state: { ...item(1, iso(-3600000), "ttPsychoNext").state,
+      timeOffset: 1_316_899, duration: 1_341_385, flaggedWatched: 1 },
+  };
+  h.setEpisodes([1, 2].map((episode) => ({ season: 1, episode, airDate: "2020-01-01" })));
+  let release: () => void = () => {};
+  h.setGate(new Promise<void>((resolve) => (release = resolve)));
+  try {
+    assert.deepEqual(h.render([source], "", true, []), [],
+      "a completed source was shown before its successor was verified");
+  } finally {
+    release();
+  }
+  const after = await h.flush();
+  assert.equal(after.length, 1, "the legitimate next episode was hidden with its source");
+  assert.equal(after[0].state.episode, 2);
+  assert.equal(after[0].upNext, true);
+});
+
+test("in-progress and manually unwatched checkpoints remain visible without metadata", async () => {
+  const h = harness();
+  const id = "ttPsychoManual";
+  const partial = item(1, iso(-3600000), id);
+  const finished = { ...partial, state: {
+    ...partial.state, timeOffset: 1_316_899, duration: 1_341_385, flaggedWatched: 1,
+  } };
+  let release: () => void = () => {};
+  h.setGate(new Promise<void>((resolve) => (release = resolve)));
+  try {
+    assert.equal(h.render([partial], "", true, [partial])[0]?._id, id);
+    h.manual.set(`${id}:1:1`, false);
+    assert.equal(h.render([finished], "", true, [finished])[0]?._id, id,
+      "an explicit manual unwatched override must not be hidden");
+  } finally {
+    release();
+  }
+  await h.flush();
+});
+
 test("local completion does not wait for a slow history request", async () => {
   const h = harness();
   h.setRemote(new Promise(() => {}));
