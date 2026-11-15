@@ -401,6 +401,7 @@ export function TvCardArtwork({
           placement={card.badgePlacement}
           topClass={scoreTopClass}
           shiftedFromEnd={inWatchlist && scoreStackAtBottom && card.watchlistBadge === "bottomEnd"}
+          scaleBadges={settings.tvCardOptions.scaleScoreStack}
         />
       )}
       {showTop10 && <TopTenRibbon side={ribbonSide} />}

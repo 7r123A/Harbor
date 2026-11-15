@@ -129,6 +129,7 @@ export type TvCardOptions = {
   showMdblistBadge: boolean;
   showTraktBadge: boolean;
   showSimklBadge: boolean;
+  scaleScoreStack: boolean;
   showDubBadge: boolean;
   showCardBadges: boolean;
   top10Ribbon: boolean;
@@ -843,6 +844,7 @@ export type Settings = {
   gamesOpenInLibrary: boolean;
   wrappedButton: boolean;
   libraryHero: boolean;
+  libraryHiddenTabs: string[];
   mangaEnabled: boolean;
   feedLocaleBias: boolean;
   uiLanguage: UiLanguage;
