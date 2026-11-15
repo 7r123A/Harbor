@@ -410,6 +410,50 @@ const es: Record<string, string> = {
   ...reviews,
   ...queueBasket,
   ...liveWeb,
+  "Refract sync":
+    "Sincronización de Refract",
+  "Sync watched history and Harbor watchlist changes with Refract.":
+    "Sincroniza el historial de reproducción y los cambios de la lista de Harbor con Refract.",
+  "Refract personal API key":
+    "Clave API personal de Refract",
+  "Verifying...":
+    "Verificando…",
+  "Connect Refract":
+    "Conectar Refract",
+  "Refract key saved in Harbor's secret store":
+    "Clave de Refract guardada en el almacén seguro de Harbor",
+  "Sync watched history and watchlist":
+    "Sincronizar historial y lista de seguimiento",
+  "Send watched history and watchlist changes from Harbor to Refract. Only the primary Harbor profile is synced.":
+    "Envía el historial y los cambios de la lista de Harbor a Refract. Solo se sincroniza el perfil principal de Harbor.",
+  "Retry pending watches":
+    "Reintentar reproducciones pendientes",
+  "Disconnect Refract":
+    "Desconectar Refract",
+  "Connected to Refract ({identity}). Watched history sync is enabled.":
+    "Conectado a Refract ({identity}). La sincronización del historial está activada.",
+  "Could not verify the key via Refract /v1/me. Check permissions and connectivity.":
+    "No se pudo verificar la clave mediante Refract /v1/me. Comprueba los permisos y la conexión.",
+  "Disconnected from Refract.":
+    "Desconectado de Refract.",
+  "Create a personal API key in Refract with profile:read, library:read, library:write and history:write. Never share or commit the key.":
+    "Crea una clave API personal en Refract con profile:read, library:read, library:write y history:write. Nunca compartas ni publiques la clave.",
+  "Automatic watch threshold":
+    "Umbral de visionado automático",
+  "After {count} minutes":
+    "Después de {count} minutos",
+  "{count}% (default)":
+    "{count} % (predeterminado)",
+  "Log a movie or episode in Refract when playback reaches the selected time or percentage. Seeking past it also qualifies. Early logging counts as watched in Refract, not partially watched. Harbor's own completion threshold is unchanged.":
+    "Registra una película o episodio en Refract al alcanzar el tiempo o porcentaje elegido. Adelantar más allá del umbral también cuenta. El registro anticipado marca el contenido como visto, no parcialmente visto. El umbral de finalización de Harbor no cambia.",
+  "Harbor → Refract Plan to Watch":
+    "Harbor → Refract: pendientes de ver",
+  "New watchlist additions and removals are sent automatically while sync is enabled. Requires library:write; reconnect with an updated key if needed. Existing Refract history and other library statuses are preserved.":
+    "Las adiciones y eliminaciones de la lista se envían automáticamente con la sincronización activada. Requiere library:write; vuelve a conectar con una clave actualizada si es necesario. Se conservan el historial y otros estados de Refract.",
+  "{sent} sent · {pending} pending · {failed} unmatched":
+    "{sent} enviados · {pending} pendientes · {failed} sin coincidencia",
+  "Unmatched items":
+    "Elementos sin coincidencia",
 };
 
 export default es;
