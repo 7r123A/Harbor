@@ -161,24 +161,41 @@ export function TagDropdown({
   useEffect(() => {
     let alive = true;
     let request = 0;
-    const load = (opts?: { clear?: boolean }) => {
+    let retries = 0;
+    let retryTimer: number | null = null;
+    const load = (opts?: { clear?: boolean }, isRetry = false) => {
+      if (retryTimer != null) window.clearTimeout(retryTimer);
+      retryTimer = null;
+      if (!isRetry) retries = 0;
       const id = ++request;
       if (opts?.clear && alive) setTags([]);
       mangaTags()
         .then((list) => {
-          if (alive && id === request) setTags(list);
+          if (alive && id === request) {
+            retries = 0;
+            setTags(list);
+          }
         })
         .catch((err) => {
+          if (!alive || id !== request) return;
           console.warn("[manga] filter list refresh failed", err);
+          // A temporary server outage must not leave the menu empty indefinitely.
+          if (retries < 2) {
+            const delay = retries === 0 ? 1500 : 5000;
+            retries++;
+            retryTimer = window.setTimeout(() => load(undefined, true), delay);
+          }
         });
     };
     load();
     const unsubMangaSources = subscribeMangaSources(() => load({ clear: true }));
     const unsubSources = subscribeSuwayomiSourcesChanged(() => load());
     const unsubLibrary = subscribeMangaLibraryChanged(() => load());
-    const unsubLang = subscribeMangaLangFilter(() => load({ clear: true }));
+    // Keep the last good extension list visible until the new filter loads.
+    const unsubLang = subscribeMangaLangFilter(() => load());
     return () => {
       alive = false;
+      if (retryTimer != null) window.clearTimeout(retryTimer);
       unsubMangaSources();
       unsubSources();
       unsubLibrary();

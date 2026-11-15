@@ -344,7 +344,9 @@ export function makeSuwayomiProvider(
       ),
       loadSources(client, t),
     ]);
-    if (categories.status === "rejected" && sources.status === "rejected") throw categories.reason;
+    // Categories can succeed when source discovery fails. Avoid caching an
+    // apparently valid category-only list when extensions are unavailable.
+    if (sources.status === "rejected") throw sources.reason;
     const categoryTags: MangaTag[] = (categories.status === "fulfilled" ? categories.value : [])
       .filter((c) => c?.id != null && /^\d+$/.test(String(c.id)) && typeof c.name === "string")
       .sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0))
