@@ -13,20 +13,20 @@ Statuses: Not started · In progress · Implemented, not verified · Verified co
 
 | # | Task | Status | Notes |
 | --- | --- | --- | --- |
-| 1.1 | Stop avatars colliding with New/awards | Not started | avatars currently sit above the poster in `pick-card.tsx`, overlapping the top badge strip |
-| 1.2 | Move avatars below poster **and** below the title, compact `+N` row | In progress | moved out of the artwork, still above the poster |
-| 1.3 | Grid alignment: reserved avatar row, stable card height | Not started | the in-flow row currently shifts some cards |
-| 1.4 | Works with every poster variant/customization/size/ratio | Not started | must be checked against `pick-card.tsx` variants and card customization |
+| 1.1 | Stop avatars colliding with New/awards | Verified complete | avatars left the poster area entirely; the top badge strip is untouched |
+| 1.2 | Move avatars below poster **and** below the title, compact `+N` row | Verified complete | `pick-card.tsx`: row sits after the title block, `+N` handled by the badge component |
+| 1.3 | Grid alignment: reserved avatar row, stable card height | Verified complete | the row is always rendered at `h-[18px]`, so cards with and without friends match |
+| 1.4 | Works with every poster variant/customization/size/ratio | In progress | row is inside `PickCard` below the reused title block, so scale/aspect are inherited; still needs a sweep of the card-size and hide-title settings |
 
 ### Part 2 — Mutual Ratings on the real profile
 
 | # | Task | Status | Notes |
 | --- | --- | --- | --- |
 | 2.0 | Backend `GET /social/u/{handle}/mutual` (scores, diffs, both reviews, likes/comments, sort, paging, score) | Verified complete | `social/features/mutual-ratings.js`, 11 checks |
-| 2.1 | Mutual section inside the profile ratings area | Not started | `src/views/profile/ratings-card.tsx`, `profile.tsx` |
-| 2.2 | Match score badge with colour ranges + count + empty state | Not started | formula in the backend: `100 × (1 − avg|diff| / 9)` |
-| 2.3 | Side-by-side review comparison, all four presence cases | Not started | API already returns `myReview`/`theirReview` as `null` when absent |
-| 2.4 | Verified on own profile (no self-compare) and others' profiles | Not started | backend returns 422 for self |
+| 2.1 | Mutual section inside the profile ratings area | Implemented, not verified | `src/views/profile/mutual-ratings-card.tsx`, mounted next to `RatingsCard` in `profile.tsx` |
+| 2.2 | Match score badge with colour ranges + count + empty state | Implemented, not verified | five bands, count, "small sample" note under 5, empty state at `score == null` |
+| 2.3 | Side-by-side review comparison, all four presence cases | Implemented, not verified | each row expands to two columns, "No written review" per side; no invented summary |
+| 2.4 | Verified on own profile (no self-compare) and others' profiles | In progress | card returns `null` when `isOwner`; needs a browser pass once the backend is deployed |
 
 ### Part 3 — Quick Access
 
