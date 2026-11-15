@@ -75,6 +75,8 @@ export async function castLoad(opts: {
   /** Embedded audio ordinal in this exact source (FFmpeg 0:a:N), never mpv aid. */
   audioTrackOrdinal?: number;
   audioStartPaused?: boolean;
+  /** The discovered device id; lets Harbor find a DLNA renderer again after it restarts. */
+  deviceId?: string;
 }): Promise<{ ok: boolean; error: string | null }> {
   if (!isTauri) return { ok: false, error: "Casting requires the desktop build." };
   try {
@@ -96,6 +98,7 @@ export async function castLoad(opts: {
       audioOnly: opts.audioOnly ?? false,
       audioTrackOrdinal: opts.audioTrackOrdinal ?? null,
       audioStartPaused: opts.audioStartPaused ?? false,
+      deviceId: opts.deviceId ?? null,
     });
     return { ok: true, error: null };
   } catch (e) {

@@ -243,6 +243,7 @@ export function useCastSession(
           port: device.port,
           kind: device.kind,
           controlUrl: device.control_url,
+          deviceId: device.id,
           ...params,
         }),
       );

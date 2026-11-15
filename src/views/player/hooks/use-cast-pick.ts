@@ -229,7 +229,14 @@ export function useCastPick(params: {
       const isLiveIptv = src.meta.id?.startsWith("iptv:") ?? false;
       const burnSub = burnSubsOnTv ? buildCastSub(snap.subtitleTracks) : null;
       const forceTranscode = resolved.kind === "transcode" || isLiveIptv || burnSub != null;
-      const profile = forceTranscode ? UNIVERSAL_SAFE_PROFILE : undefined;
+      // Remuxing a compatible file (to burn in subtitles, say) is not a re-encode: only a device
+      // the source does not suit, or live TV, gets the safe 1080p H.264 stereo profile.
+      const profile =
+        resolved.kind === "transcode"
+          ? resolved.profile
+          : isLiveIptv
+            ? UNIVERSAL_SAFE_PROFILE
+            : undefined;
       setCastTranscoding(forceTranscode);
       await pickCastDevice(
         device,
