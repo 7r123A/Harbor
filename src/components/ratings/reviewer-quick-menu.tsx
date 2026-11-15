@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, MessageSquare, Search, Star, UserPlus, X } from "lucide-react";
+import { Heart, Loader2, MessageSquare, Search, Star, UserPlus,
+  Users as UsersIcon, X } from "lucide-react";
 import { ModalShell, useEscape, useModalExit } from "@/components/modal-shell";
 import { useT } from "@/lib/i18n";
-import { requestFriendship } from "@/lib/social/friend-request";
+import { requestFriendship, friendRowState } from "@/lib/social/friend-request";
+import type { FriendRowState } from "@/lib/social/friend-request";
+import { fetchFriends, fetchPendingRequests } from "@/lib/social/friends";
+import { likeReview, unlikeReview } from "@/lib/social/review-reactions";
 import { socialGet } from "@/lib/social/client";
 import { openDmConversation } from "@/lib/social/dm";
 import { requestOpenDm } from "@/lib/social/dm-store";
@@ -130,6 +134,9 @@ function ReviewerReviewRow({
   const t = useT();
   const [expanded, setExpanded] = useState(false);
   const [revealed, setRevealed] = useState(false);
+  const [likes, setLikes] = useState(review.reactions?.count ?? 0);
+  const [liked, setLiked] = useState(review.reactions?.viewerReacted === true);
+  const [liking, setLiking] = useState(false);
   const text = review.review ?? "";
   const hidden = review.spoiler === true && !revealed;
   const long = text.length > 260;
@@ -170,12 +177,38 @@ function ReviewerReviewRow({
           <div className="mt-1 flex items-center gap-2 text-[12px] text-ink-subtle">
             <span>{timeAgo(review.updatedAt || review.createdAt)}</span>
             <span aria-hidden>·</span>
-            <span className="inline-flex items-center gap-1">
-              <Star size={10} /> {review.reactions.count}
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <MessageSquare size={10} /> {review.comments.count}
-            </span>
+            <button
+              type="button"
+              aria-pressed={liked}
+              aria-label={liked ? t("Unlike this review") : t("Like this review")}
+              disabled={liking}
+              onClick={async () => {
+                const next = !liked;
+                setLiking(true);
+                setLiked(next);
+                setLikes((n) => Math.max(0, n + (next ? 1 : -1)));
+                try {
+                  const result = next ? await likeReview(review.id) : await unlikeReview(review.id);
+                  setLikes(result.count);
+                  setLiked(result.reacted);
+                } catch {
+                  setLiked(!next);
+                  setLikes(review.reactions?.count ?? 0);
+                } finally {
+                  setLiking(false);
+                }
+              }}
+              className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 transition-colors ${liked ? "text-accent" : "text-ink-subtle hover:text-ink"}`}
+            >
+              <Heart size={12} className={liked ? "fill-current" : undefined} /> {likes}
+            </button>
+            <button
+              type="button"
+              aria-label={t("Comments")}
+              className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-ink-subtle transition-colors hover:text-ink"
+            >
+              <MessageSquare size={12} /> {review.comments?.count ?? 0}
+            </button>
           </div>
           {text ? (
             hidden ? (
@@ -238,6 +271,25 @@ export function ReviewerQuickMenu({
   const [query, setQuery] = useState("");
   const [withReview, setWithReview] = useState(false);
   const [friend, setFriend] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [friendship, setFriendship] = useState<FriendRowState>("idle");
+
+  useEffect(() => {
+    let alive = true;
+    void Promise.all([fetchFriends().catch(() => []), fetchPendingRequests().catch(() => [])]).then(([frs, pend]) => {
+      if (!alive) return;
+      setFriendship(
+        friendRowState(handle, {
+          self: me?.handle ?? null,
+          friends: frs.map((f) => f.handle),
+          pending: pend.map((r) => r.from.handle),
+        }),
+      );
+    });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handle]);
   const [debounced, setDebounced] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [paging, setPaging] = useState(false);
@@ -436,6 +488,15 @@ export function ReviewerQuickMenu({
                   <span id="reviewer-quick-title">{profile?.alias || fallback?.alias || handle}</span>
                 </button>
                 {profile?.verified && <VerifiedBadge size="sm" />}
+                {friendship === "friends" && (
+                  <span
+                    title={t("Your friend")}
+                    aria-label={t("Your friend")}
+                    className="shrink-0 text-ink-subtle"
+                  >
+                    <UsersIcon size={13} strokeWidth={2.2} />
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1.5 text-[13px] text-ink-subtle">
                 <span className={`h-2 w-2 rounded-full ${PRESENCE_DOT[profile?.status || "offline"] || PRESENCE_DOT.offline}`} />
@@ -456,7 +517,7 @@ export function ReviewerQuickMenu({
                       setFriend("error");
                     }
                   }}
-                  disabled={friend === "sending" || friend === "sent"}
+                  disabled={friendship === "friends" || friendship === "requested" || friend === "sending" || friend === "sent"}
                   aria-label={t("Add friend")}
                   title={friend === "sent" ? t("Friend request sent") : t("Add friend — send a friend request")}
                   className="flex h-8 w-8 items-center justify-center rounded-full bg-elevated/60 text-ink-muted transition-colors hover:text-ink disabled:opacity-60"
