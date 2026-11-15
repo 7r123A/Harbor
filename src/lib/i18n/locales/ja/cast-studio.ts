@@ -136,5 +136,6 @@ const castStudio: Record<string, string> = {
     "これらの設定は選んだデバイスに合わせて自動で調整されます。",
   "Shifted {offset}, {parts} part(s), timing not verified":
     "{offset} ずらしました、{parts} 区間、精度は未確認",
+  "The film changed while the audio was syncing, so it was not added.": "音声の同期中に映画が切り替わったため、追加しませんでした。",
 };
 export default castStudio;

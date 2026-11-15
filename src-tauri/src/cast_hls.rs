@@ -341,6 +341,20 @@ async fn prune_behind(session: &HlsSession, requested: u32) {
     }
 }
 
+/// Only a segment FFmpeg has finished and listed moves the pruning boundary, so a request for a
+/// missing or future segment never deletes ones the receiver can still play.
+async fn prune_after_serving(session: &HlsSession, filename: &str) {
+    let Some(n) = segment_number(filename) else {
+        return;
+    };
+    let Ok(playlist) = tokio::fs::read_to_string(session.temp_dir.join("playlist.m3u8")).await else {
+        return;
+    };
+    if playlist.lines().any(|line| line.trim() == filename) {
+        prune_behind(session, n).await;
+    }
+}
+
 async fn handle_segment(
     State(state): State<HlsState>,
     Path((id, filename)): Path<(String, String)>,
@@ -360,7 +374,6 @@ async fn handle_segment(
         if n < session.pruned_below.load(Ordering::SeqCst) {
             return (StatusCode::GONE, "segment pruned").into_response();
         }
-        prune_behind(&session, n).await;
     }
     let path = session.temp_dir.join(&filename);
     let deadline = std::time::Instant::now() + SEGMENT_WAIT_MAX;
@@ -369,6 +382,7 @@ async fn handle_segment(
             tokio::time::sleep(Duration::from_millis(80)).await;
             if let Ok(bytes) = tokio::fs::read(&path).await {
                 if !bytes.is_empty() && bytes[0] == 0x47 {
+                    prune_after_serving(&session, &filename).await;
                     return binary_response(bytes, "video/mp2t");
                 }
             }
@@ -551,6 +565,36 @@ mod tests {
         assert!(!temp_dir.join("seg00009.ts").exists());
         assert!(temp_dir.join("seg00010.ts").exists());
         assert_eq!(s.pruned_below.load(Ordering::SeqCst), 10);
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn missing_or_future_segment_requests_never_prune() {
+        let temp_dir = std::env::temp_dir().join(format!("harbor-hls-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let mut playlist = String::from("#EXTM3U
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+");
+        for n in 0..40u32 {
+            std::fs::write(temp_dir.join(format!("seg{n:05}.ts")), b"G").unwrap();
+            playlist.push_str(&format!("#EXTINF:4.000000,
+seg{n:05}.ts
+"));
+        }
+        std::fs::write(temp_dir.join("playlist.m3u8"), &playlist).unwrap();
+        // Written to disk but not listed yet: FFmpeg has not finished it.
+        std::fs::write(temp_dir.join("seg00045.ts"), b"G").unwrap();
+        let s = session(temp_dir.clone());
+        prune_after_serving(&s, "seg01000.ts").await;
+        prune_after_serving(&s, "seg00045.ts").await;
+        assert_eq!(s.pruned_below.load(Ordering::SeqCst), 0);
+        assert_eq!(s.newest_requested.load(Ordering::SeqCst), 0);
+        assert!(temp_dir.join("seg00000.ts").exists());
+        prune_after_serving(&s, "seg00035.ts").await;
+        assert_eq!(s.pruned_below.load(Ordering::SeqCst), 5);
+        assert!(!temp_dir.join("seg00004.ts").exists());
+        assert!(temp_dir.join("seg00005.ts").exists());
         let _ = std::fs::remove_dir_all(temp_dir);
     }
 

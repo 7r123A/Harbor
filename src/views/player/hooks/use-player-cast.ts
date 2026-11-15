@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { castCapabilities, castPreview, type CastCapabilities, type CastPreview } from "@/lib/cast";
 import { castOptionsFor, panelDevice, useCastPreferences } from "@/lib/cast/cast-preferences";
+import { fitTracksToCastSource } from "@/lib/cast/cast-source";
 import { useDebridClients } from "@/lib/debrid/registry";
 import type { PlayerBridge, PlayerSnapshot, TrackInfo } from "@/lib/player/bridge";
 import {
@@ -72,6 +73,7 @@ export function usePlayerCast(params: {
   ]);
   const appliedKeyRef = useRef<string | null>(null);
   const reloadCast = session.reloadCast;
+  const swapped = pick.castSourceSwapped;
   useEffect(() => {
     if (!casting) {
       appliedKeyRef.current = null;
@@ -84,7 +86,10 @@ export function usePlayerCast(params: {
     if (appliedKeyRef.current === settingsKey) return;
     const timer = window.setTimeout(() => {
       appliedKeyRef.current = settingsKey;
-      const media = resolveCastMedia(snapRef.current, castChoices, settings, castDevice);
+      const media = fitTracksToCastSource(
+        resolveCastMedia(snapRef.current, castChoices, settings, castDevice),
+        swapped,
+      );
       void reloadCast({
         options: media.options,
         subtitle: media.subtitle,
@@ -94,10 +99,13 @@ export function usePlayerCast(params: {
       });
     }, 700);
     return () => window.clearTimeout(timer);
-  }, [casting, settingsKey, castChoices, settings, snapRef, reloadCast, castDevice]);
+  }, [casting, settingsKey, castChoices, settings, snapRef, reloadCast, castDevice, swapped]);
 
   const restartCast = useCallback(() => {
-    const media = resolveCastMedia(snapRef.current, castChoices, settings, castDevice);
+    const media = fitTracksToCastSource(
+      resolveCastMedia(snapRef.current, castChoices, settings, castDevice),
+      swapped,
+    );
     return reloadCast({
       options: media.options,
       subtitle: media.subtitle,
@@ -105,7 +113,7 @@ export function usePlayerCast(params: {
       audioTrackOrdinal: media.audioTrackOrdinal ?? 0,
       externalAudio: media.externalAudio ?? "",
     });
-  }, [snapRef, castChoices, settings, reloadCast, castDevice]);
+  }, [snapRef, castChoices, settings, reloadCast, castDevice, swapped]);
 
   const addSubtitleFile = useCallback(async () => {
     try {

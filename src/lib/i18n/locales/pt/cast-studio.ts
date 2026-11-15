@@ -138,5 +138,6 @@ const castStudio: Record<string, string> = {
     "Estes ajustes se adaptam ao dispositivo que você escolher.",
   "Shifted {offset}, {parts} part(s), timing not verified":
     "Deslocado {offset}, {parts} parte(s), precisão não verificada",
+  "The film changed while the audio was syncing, so it was not added.": "O filme mudou enquanto o áudio era sincronizado, então ele não foi adicionado.",
 };
 export default castStudio;

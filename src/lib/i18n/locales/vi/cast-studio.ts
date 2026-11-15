@@ -135,5 +135,6 @@ const castStudio: Record<string, string> = {
     "Các cài đặt này tự điều chỉnh theo thiết bị bạn chọn.",
   "Shifted {offset}, {parts} part(s), timing not verified":
     "Đã dịch {offset}, {parts} phần, chưa kiểm tra độ chính xác",
+  "The film changed while the audio was syncing, so it was not added.": "Phim đã thay đổi trong lúc đồng bộ âm thanh nên âm thanh không được thêm.",
 };
 export default castStudio;

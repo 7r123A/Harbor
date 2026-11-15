@@ -136,5 +136,6 @@ const castStudio: Record<string, string> = {
     "تُضبط هذه الإعدادات تلقائيًا حسب الجهاز الذي تختاره.",
   "Shifted {offset}, {parts} part(s), timing not verified":
     "إزاحة {offset}، عدد الأجزاء {parts}، لم يُتحقق من الدقة",
+  "The film changed while the audio was syncing, so it was not added.": "تغيّر الفيلم أثناء مزامنة الصوت، لذلك لم تتم إضافته.",
 };
 export default castStudio;

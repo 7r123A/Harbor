@@ -1445,9 +1445,28 @@ async fn receiver_paused() -> bool {
     } else if let Some((h, p)) = snapshot_airplay() {
         airplay::status(h, p).await.ok().map(|(_, state)| state)
     } else {
-        None
+        chromecast_player_state().await
     };
-    state.is_some_and(|s| normalize_player_state(&s) == "PAUSED")
+    state_is_paused(state.as_deref())
+}
+
+fn state_is_paused(raw: Option<&str>) -> bool {
+    raw.is_some_and(|s| normalize_player_state(s) == "PAUSED")
+}
+
+/// The Chromecast media session's raw player state, e.g. `Paused`.
+async fn chromecast_player_state() -> Option<String> {
+    let (host, port, transport_id, msid, _) = snapshot_chromecast().ok()?;
+    let msid = msid?;
+    tokio::task::spawn_blocking(move || -> Option<String> {
+        let device = connect_device(&host, port).ok()?;
+        device.connection.connect(transport_id.clone()).ok()?;
+        let status = device.media.get_status(&transport_id, Some(msid)).ok()?;
+        status.entries.first().map(|entry| format!("{:?}", entry.player_state))
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 async fn pause_active() -> Result<(), String> {
@@ -1744,6 +1763,23 @@ fn drain_briefly(device: &CastDevice<'_>, ms: u64) {
             Ok(_) => {}
             Err(_) => break,
         }
+    }
+}
+
+#[cfg(test)]
+mod pause_state_tests {
+    use super::*;
+
+    #[test]
+    fn a_paused_receiver_of_any_kind_is_paused_again_after_a_restart() {
+        // Chromecast reports its state in the cast library's spelling.
+        let chromecast_paused = format!("{:?}", rust_cast::channels::media::PlayerState::Paused);
+        assert!(state_is_paused(Some(&chromecast_paused)));
+        assert!(!state_is_paused(Some(&format!("{:?}", rust_cast::channels::media::PlayerState::Playing))));
+        assert!(state_is_paused(Some("PAUSED_PLAYBACK")));
+        assert!(state_is_paused(Some("paused")));
+        assert!(!state_is_paused(Some("PLAYING")));
+        assert!(!state_is_paused(None));
     }
 }
 

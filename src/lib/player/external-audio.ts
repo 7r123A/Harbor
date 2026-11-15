@@ -196,6 +196,8 @@ function trackLanguage(info: AudioFileInfo | null, ordinal: number): string | nu
   );
 }
 
+export const FILM_CHANGED = "The film changed while the audio was syncing, so it was not added.";
+
 /** Step 2: check the audio belongs to this film, re-time it, and attach it. */
 export async function syncExternalAudio(
   path: string,
@@ -226,6 +228,13 @@ export async function syncExternalAudio(
         keepPitch: false,
       },
     });
+    // The result was timed against the film that played when the job started; another film may
+    // be playing by now, and it must not receive this audio.
+    const now = await currentSource();
+    if (now?.url !== source.url) {
+      set({ kind: "error", message: FILM_CHANGED });
+      return;
+    }
     const language = trackLanguage(info, ordinal);
     if (result.verdict === "mismatch" || !result.outputPath) {
       set({ kind: "mismatch", path, result, ordinal, language });

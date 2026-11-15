@@ -12,6 +12,7 @@ import {
   rememberCastDevice,
   type CastSubtitleLook,
 } from "@/lib/cast/cast-preferences";
+import { fitTracksToCastSource } from "@/lib/cast/cast-source";
 import type { RememberedDevice } from "@/lib/cast/device-settings";
 import { useDebridClients } from "@/lib/debrid/registry";
 import { t } from "@/lib/i18n";
@@ -203,6 +204,8 @@ export function useCastPick(params: {
   } = params;
   const [castIncompatError, setCastIncompatError] = useState<string | null>(null);
   const [castTranscoding, setCastTranscoding] = useState(false);
+  // Whether the TV plays a compatible alternative instead of the player's file.
+  const [castSourceSwapped, setCastSourceSwapped] = useState(false);
 
   useEffect(() => {
     if (!castIncompatError) return;
@@ -310,12 +313,14 @@ export function useCastPick(params: {
       const isLiveIptv = src.meta.id?.startsWith("iptv:") ?? false;
       // From here the device's own settings apply, and the panel shows them.
       rememberCastDevice(device);
-      const media = resolveCastMedia(snap, castChoices, settings, device);
-      // A swapped stream is another file: the player's track numbers say nothing about its
-      // tracks, so its default audio plays and only subtitle files (not embedded tracks) burn in.
       const swapped = resolved.kind === "swapped";
-      const audioTrackOrdinal = swapped ? undefined : media.audioTrackOrdinal;
-      const burnSub = swapped && media.subtitle?.kind === "embedded" ? null : media.subtitle;
+      setCastSourceSwapped(swapped);
+      const media = fitTracksToCastSource(
+        resolveCastMedia(snap, castChoices, settings, device),
+        swapped,
+      );
+      const audioTrackOrdinal = media.audioTrackOrdinal;
+      const burnSub = media.subtitle;
       // A copied stream plays its first audio track untouched, so another track or any audio
       // processing needs the conversion.
       const o = media.options;
@@ -381,6 +386,7 @@ export function useCastPick(params: {
     setCastIncompatError,
     castTranscoding,
     setCastTranscoding,
+    castSourceSwapped,
     onPickDevice,
   };
 }
