@@ -2,6 +2,7 @@ import {
   getAnimeCanonicalId,
   getAnimeCwId,
   getAnilistMalAlias,
+  recordAnilistMalAlias,
   recordAnimeCwId,
   notifyAnimeCwIds,
 } from "@/lib/anime-cw-ids";
@@ -13,6 +14,7 @@ import {
 import { resolveAnimeEntry } from "@/lib/providers/anime-entry";
 import { animeKitsuMeta, type AnimeKitsuMeta } from "@/lib/providers/anime-kitsu-addon";
 import { resolveTrackerAnimeEntry } from "@/lib/anime-tracker-entry";
+import { anilistAnimeEntry } from "@/lib/anilist/entry";
 
 const KITSU_ID = /^kitsu:[1-9]\d*$/;
 const KITSU_STREAM = /^kitsu:([1-9]\d*):[1-9]\d*$/;
@@ -531,6 +533,47 @@ async function warmMovie(item: CwIdentityItem, tmdbKey: string): Promise<void> {
   return task;
 }
 
+/**
+ * A newly airing anime may have AniList and MAL IDs but no Kitsu entry yet.
+ * Resolve AniList -> MAL only when both types are already present in this CW
+ * cohort. Never infer identity from translated or romanized titles.
+ *
+ * AniList entry results use the existing media cache; accepted links use the
+ * persisted, notifying anime ID alias map so both rooms update automatically.
+ */
+async function warmAnilistMalCwAliases(items: CwIdentityItem[]): Promise<void> {
+  const malIds = new Set(
+    items
+      .map((item) => item._id ?? item.id ?? "")
+      .filter((id) => /^mal:[1-9]\d*$/.test(id)),
+  );
+  if (malIds.size === 0) return;
+  const anilistIds = [...new Set(
+    items
+      .map((item) => item._id ?? item.id ?? "")
+      .filter((id) => /^anilist:[1-9]\d*$/.test(id) && !getAnilistMalAlias(id)),
+  )];
+  if (anilistIds.length === 0) return;
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(MAX_CONCURRENT, anilistIds.length) }, async () => {
+      while (cursor < anilistIds.length) {
+        const id = anilistIds[cursor++];
+        const number = Number(id.slice("anilist:".length));
+        const entry = await anilistAnimeEntry(number, "anilist").catch(() => null);
+        if (
+          !entry ||
+          entry.id !== number ||
+          !Number.isSafeInteger(entry.idMal) ||
+          entry.idMal == null ||
+          entry.idMal <= 0 ||
+          !malIds.has("mal:" + entry.idMal)
+        ) continue;
+        recordAnilistMalAlias(number, entry.idMal);
+      }
+    }),
+  );
+}
 /** Resolve checkpoint snapshots with bounded concurrency shared across all callers. */
 export async function warmCwAnimeIdentities(
   items: CwIdentityItem[],
@@ -545,14 +588,15 @@ export async function warmCwAnimeIdentities(
     item.cwMembers?.forEach(flatten);
   };
   items.forEach(flatten);
-  await Promise.all(
-    snapshots.map((item) =>
+  await Promise.all([
+    warmAnilistMalCwAliases(snapshots),
+    ...snapshots.map((item) =>
       (movieIds(item).length > 0
         ? warmMovie(item, options.tmdbKey ?? "")
         : warmOne(item, options.tmdbKey ?? "")
       ).catch(() => undefined),
     ),
-  );
+  ]);
 }
 
 function memberKey(item: CwIdentityItem): string {
