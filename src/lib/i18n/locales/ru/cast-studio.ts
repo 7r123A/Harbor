@@ -95,12 +95,52 @@ const castStudio: Record<string, string> = {
   "Resume on TV": "Продолжить на телевизоре",
   "Not responding": "Не отвечает",
   "Stopped on": "Остановлено на",
+  "Add audio from your files": "Добавить звук из файлов",
+  "Harbor checks it is this film and syncs it automatically.":
+    "Harbor проверит, что это тот же фильм, и синхронизирует автоматически.",
+  "More for this audio track": "Ещё для этой звуковой дорожки",
+  "Save this audio as a file": "Сохранить этот звук в файл",
+  "Matching the audio to the film…": "Сопоставление звука с фильмом…",
+  "Writing the synced audio…": "Запись синхронизированного звука…",
+  "Checking the sync…": "Проверка синхронизации…",
+  "Finishing…": "Завершение…",
+  "Reading both audio tracks…": "Чтение обеих звуковых дорожек…",
+  "Which audio track from this file?": "Какую звуковую дорожку из этого файла?",
+  "Saving the audio track…": "Сохранение звуковой дорожки…",
+  "Same film. Audio added and synced.": "Тот же фильм. Звук добавлен и синхронизирован.",
+  "Matches most of this film (a different cut). Synced where it matches.":
+    "Совпадает с большей частью фильма (другая версия). Синхронизировано там, где совпадает.",
+  "Shifted {offset}, {parts} part(s), accuracy within {ms} ms":
+    "Сдвиг {offset}, частей: {parts}, точность до {ms} мс",
+  "speed corrected": "скорость исправлена",
+  "This audio does not seem to belong to this film, so it was not synced.":
+    "Похоже, этот звук не от этого фильма, поэтому он не синхронизирован.",
+  "Add anyway": "Всё равно добавить",
+  "Saved to {path}": "Сохранено в {path}",
+  "Start the film before adding audio.": "Запустите фильм перед добавлением звука.",
+  "Start the film before saving audio.": "Запустите фильм перед сохранением звука.",
+  "This file has no audio": "В этом файле нет звука",
+  "File not found": "Файл не найден",
+  "This file could not be read": "Не удалось прочитать этот файл",
+  "Could not read enough of this film's audio":
+    "Не удалось прочитать достаточно звука этого фильма",
+  "Nothing in this audio matches the film": "Ничто в этом звуке не совпадает с фильмом",
   Synced: "Синхронизировано",
+  "Could not read this audio track": "Не удалось прочитать эту звуковую дорожку",
+  "Could not save this audio track": "Не удалось сохранить эту звуковую дорожку",
+  "Could not write the synced audio": "Не удалось записать синхронизированный звук",
+  "This source cannot be analysed": "Этот источник нельзя проанализировать",
+  "This source cannot be saved": "Этот источник нельзя сохранить",
+  "Choose where to save the audio": "Выберите, куда сохранить звук",
   "Set automatically for {device}": "Настроено автоматически для {device}",
   "Settings for {device}, with your changes": "Настройки для {device} с вашими изменениями",
   "Back to automatic": "Вернуть автоматические",
   "These settings set themselves for the device you pick.":
     "Эти настройки подстраиваются под выбранное устройство.",
+  "Shifted {offset}, {parts} part(s), timing not verified":
+    "Сдвиг {offset}, частей: {parts}, точность не проверена",
+  "The film changed while the audio was syncing, so it was not added.":
+    "Фильм сменился во время синхронизации звука, поэтому дорожка не добавлена.",
   "Subtitles will look like this on the TV.": "Так субтитры будут выглядеть на телевизоре.",
   "Conversion speed": "Скорость преобразования",
 };

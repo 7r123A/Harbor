@@ -94,12 +94,52 @@ const castStudio: Record<string, string> = {
   "Resume on TV": "Riprendi sulla TV",
   "Not responding": "Non risponde",
   "Stopped on": "Fermato su",
+  "Add audio from your files": "Aggiungi audio dai tuoi file",
+  "Harbor checks it is this film and syncs it automatically.":
+    "Harbor verifica che sia questo film e lo sincronizza automaticamente.",
+  "More for this audio track": "Altro per questa traccia audio",
+  "Save this audio as a file": "Salva questo audio come file",
+  "Matching the audio to the film…": "Confronto dell’audio con il film…",
+  "Writing the synced audio…": "Scrittura dell’audio sincronizzato…",
+  "Checking the sync…": "Verifica della sincronizzazione…",
+  "Finishing…": "Completamento…",
+  "Reading both audio tracks…": "Lettura delle due tracce audio…",
+  "Which audio track from this file?": "Quale traccia audio di questo file?",
+  "Saving the audio track…": "Salvataggio della traccia audio…",
+  "Same film. Audio added and synced.": "Stesso film. Audio aggiunto e sincronizzato.",
+  "Matches most of this film (a different cut). Synced where it matches.":
+    "Corrisponde alla maggior parte del film (montaggio diverso). Sincronizzato dove corrisponde.",
+  "Shifted {offset}, {parts} part(s), accuracy within {ms} ms":
+    "Spostato di {offset}, {parts} parte/i, precisione entro {ms} ms",
+  "speed corrected": "velocità corretta",
+  "This audio does not seem to belong to this film, so it was not synced.":
+    "Questo audio non sembra appartenere a questo film, quindi non è stato sincronizzato.",
+  "Add anyway": "Aggiungi comunque",
+  "Saved to {path}": "Salvato in {path}",
+  "Start the film before adding audio.": "Avvia il film prima di aggiungere l’audio.",
+  "Start the film before saving audio.": "Avvia il film prima di salvare l’audio.",
+  "This file has no audio": "Questo file non contiene audio",
+  "File not found": "File non trovato",
+  "This file could not be read": "Impossibile leggere questo file",
+  "Could not read enough of this film's audio":
+    "Impossibile leggere abbastanza audio di questo film",
+  "Nothing in this audio matches the film": "Niente in questo audio corrisponde al film",
   Synced: "Sincronizzato",
+  "Could not read this audio track": "Impossibile leggere questa traccia audio",
+  "Could not save this audio track": "Impossibile salvare questa traccia audio",
+  "Could not write the synced audio": "Impossibile scrivere l’audio sincronizzato",
+  "This source cannot be analysed": "Questa sorgente non può essere analizzata",
+  "This source cannot be saved": "Questa sorgente non può essere salvata",
+  "Choose where to save the audio": "Scegli dove salvare l’audio",
   "Set automatically for {device}": "Impostato automaticamente per {device}",
   "Settings for {device}, with your changes": "Impostazioni per {device}, con le tue modifiche",
   "Back to automatic": "Torna ad automatico",
   "These settings set themselves for the device you pick.":
     "Queste impostazioni si adattano al dispositivo che scegli.",
+  "Shifted {offset}, {parts} part(s), timing not verified":
+    "Spostato di {offset}, {parts} parte/i, precisione non verificata",
+  "The film changed while the audio was syncing, so it was not added.":
+    "Il film è cambiato durante la sincronizzazione dell'audio, quindi non è stato aggiunto.",
   "Subtitles will look like this on the TV.": "Ecco come appariranno i sottotitoli sulla TV.",
   "Conversion speed": "Velocità di conversione",
 };

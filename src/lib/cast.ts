@@ -152,6 +152,8 @@ export async function castLoad(opts: {
   options?: CastOptions;
   /** The discovered device id; lets Harbor find a DLNA renderer again after it restarts. */
   deviceId?: string;
+  /** A local audio file (an added, synced dub) sent instead of the film's own audio. */
+  externalAudio?: string;
 }): Promise<{ ok: boolean; error: string | null; info?: CastLoadInfo | null }> {
   if (!isTauri) return { ok: false, error: "Casting requires the desktop build." };
   try {
@@ -175,6 +177,7 @@ export async function castLoad(opts: {
       audioStartPaused: opts.audioStartPaused ?? false,
       options: opts.options ?? null,
       deviceId: opts.deviceId ?? null,
+      externalAudio: opts.externalAudio ?? null,
     });
     return { ok: true, error: null, info: info ?? null };
   } catch (e) {
@@ -189,6 +192,8 @@ export async function castReload(opts: {
   subtitle?: CastSubInfo | null;
   subStyle?: CastSubStyle | null;
   audioTrackOrdinal?: number;
+  /** A local audio file to send instead of the film's own audio; "" returns to the film's. */
+  externalAudio?: string;
 }): Promise<CastLoadInfo | null> {
   if (!isTauri) return null;
   return await invoke<CastLoadInfo>("cast_reload", {
@@ -198,6 +203,7 @@ export async function castReload(opts: {
       opts.subtitle === undefined ? null : (opts.subtitle ?? { kind: "external", off: true }),
     subStyle: opts.subStyle ?? null,
     audioTrackOrdinal: opts.audioTrackOrdinal ?? null,
+    externalAudio: opts.externalAudio ?? null,
   });
 }
 

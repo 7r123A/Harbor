@@ -98,6 +98,7 @@ export function resolveCastMedia(
   subtitle: CastSubInfo | null;
   subStyle: CastSubStyle | null;
   audioTrackOrdinal: number | undefined;
+  externalAudio: string | undefined;
   options: CastOptions;
 } {
   const prefs = getCastPreferences();
@@ -124,11 +125,19 @@ export function resolveCastMedia(
     choices.audioChoice === "auto"
       ? snap.audioTracks.find((t) => t.selected)
       : snap.audioTracks.find((t) => t.id === choices.audioChoice);
+  // An added audio file (a synced dub) is sent along with the film as a second input.
+  const externalAudio =
+    audioTrack?.external &&
+    audioTrack.externalFilename &&
+    !/^[a-z]+:\/\//i.test(audioTrack.externalFilename)
+      ? audioTrack.externalFilename
+      : undefined;
   const ordinal = audioTrack && !audioTrack.external ? embedded.indexOf(audioTrack) : -1;
   return {
     subtitle,
     subStyle: subtitle ? buildCastSubStyle(settings, prefs.look) : null,
     audioTrackOrdinal: ordinal >= 0 ? ordinal : undefined,
+    externalAudio,
     options: castOptionsFor(device, prefs),
   };
 }
@@ -325,6 +334,7 @@ export function useCastPick(params: {
         resolved.kind === "transcode" ||
         isLiveIptv ||
         burnSub != null ||
+        media.externalAudio != null ||
         audioWork ||
         o.forceConversion;
       // Remuxing a compatible file is not a re-encode; only a device the source does not suit
@@ -352,6 +362,7 @@ export function useCastPick(params: {
           subtitle: burnSub,
           subStyle: burnSub ? media.subStyle : null,
           audioTrackOrdinal,
+          externalAudio: media.externalAudio,
           options: media.options,
         },
         () => bridgeRef.current?.pause("cast"),

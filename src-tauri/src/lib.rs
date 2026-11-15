@@ -66,6 +66,8 @@ mod native_module;
 #[cfg(desktop)]
 mod captions;
 #[cfg(desktop)]
+mod audio_align;
+#[cfg(desktop)]
 mod cast;
 #[cfg(desktop)]
 mod cast_server;
@@ -89,6 +91,8 @@ mod dj_deck;
 mod dlna;
 #[cfg(desktop)]
 mod dvr;
+#[cfg(desktop)]
+mod external_audio;
 #[cfg(desktop)]
 mod external_player;
 #[cfg(desktop)]
@@ -2251,6 +2255,10 @@ pub fn run() {
             cast::cast_preview,
             cast::cast_volume,
             cast::cast_capabilities,
+            external_audio::external_audio_probe,
+            external_audio::external_audio_sync,
+            external_audio::external_audio_cancel,
+            external_audio::audio_track_export,
             cast_server::cast_server_status,
             cast_server::cast_server_restart,
             torrent_engine::torrent_engine_status,

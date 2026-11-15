@@ -95,6 +95,7 @@ export function usePlayerCast(params: {
         subtitle: media.subtitle,
         subStyle: media.subStyle,
         audioTrackOrdinal: media.audioTrackOrdinal ?? 0,
+        externalAudio: media.externalAudio ?? "",
       });
     }, 700);
     return () => window.clearTimeout(timer);
@@ -110,6 +111,7 @@ export function usePlayerCast(params: {
       subtitle: media.subtitle,
       subStyle: media.subStyle,
       audioTrackOrdinal: media.audioTrackOrdinal ?? 0,
+      externalAudio: media.externalAudio ?? "",
     });
   }, [snapRef, castChoices, settings, reloadCast, castDevice, swapped]);
 

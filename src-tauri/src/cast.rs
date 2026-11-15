@@ -171,6 +171,9 @@ struct Reload {
     /// What the receiver's device profile rules out (resolution, bit rate, surround, codecs).
     limits: DeviceLimits,
     hls: bool,
+    /// A local audio file (an added, synced dub) sent instead of the film's own audio.
+    external_audio: Option<String>,
+    external_audio_info: Option<cast_transcode::AudioInfo>,
 }
 
 /// Session state that every receiver kind shares.
@@ -610,6 +613,7 @@ pub async fn cast_load(
     audio_start_paused: Option<bool>,
     options: Option<CastOptions>,
     device_id: Option<String>,
+    external_audio: Option<String>,
 ) -> Result<CastLoadInfo, String> {
     let kind_str = kind.unwrap_or_else(|| "chromecast".into());
     let _operation = TRANSPORT_OPS.lock().await;
@@ -654,6 +658,7 @@ pub async fn cast_load(
             || options.force_conversion
             || options.audio_filters_requested()
             || audio_track_ordinal.unwrap_or(0) > 0
+            || reload_has_external_audio(&external_audio)
             || needs_auto_remux(&kind_str, &url, content_type.as_deref()));
     eprintln!(
         "[harbor::cast] load kind={} host={} convert={} subtitle={} start={:.1}",
@@ -677,6 +682,8 @@ pub async fn cast_load(
         force_video_encode: transcode.unwrap_or(false) && profile.as_ref().is_some_and(|p| p.force_h264),
         limits: device_limits(transcode.unwrap_or(false), profile.as_ref()),
         hls: wants_hls(&kind_str, &options),
+        external_audio: external_audio.filter(|p| !p.is_empty() && std::path::Path::new(p).is_file()),
+        external_audio_info: None,
     };
     if convert {
         if !crate::transcode::ffmpeg_present() {
@@ -832,12 +839,26 @@ async fn load_dlna_rediscovering(
     dlna::load(fresh.clone(), url.to_string(), title, start, mime, false).await.map(|_| fresh)
 }
 
+fn reload_has_external_audio(path: &Option<String>) -> bool {
+    path.as_deref().is_some_and(|p| !p.is_empty() && std::path::Path::new(p).is_file())
+}
+
 /// Probes the source and prepares the subtitle once; every restart of this cast reuses both.
 async fn prepare_reload(reload: &mut Reload) {
     if reload.probe.is_none() {
         match cast_transcode::probe(&reload.url, &reload.headers).await {
             Ok(probe) => reload.probe = Some(probe),
             Err(error) => eprintln!("[harbor::cast] probe failed ({error}); converting without stream details"),
+        }
+    }
+    reload.external_audio_info = None;
+    if let Some(path) = reload.external_audio.clone() {
+        match cast_transcode::probe(&path, &HashMap::new()).await {
+            Ok(probe) => reload.external_audio_info = probe.audio.into_iter().next(),
+            Err(error) => {
+                eprintln!("[harbor::cast] added audio unreadable ({error}); casting the film's own audio");
+                reload.external_audio = None;
+            }
         }
     }
     reload.sub_base = None;
@@ -889,6 +910,7 @@ async fn start_converted(
             audio_ordinal: reload.audio_ordinal,
             burn_sub: burn_pair.as_ref(),
             burn_bitmap: reload.burn_bitmap,
+            external_audio: reload.external_audio.as_ref().and(reload.external_audio_info.as_ref()),
             force_video_encode: reload.force_video_encode,
             limits: reload.limits,
         },
@@ -907,6 +929,7 @@ async fn start_converted(
         fast_seek,
         plan,
         stats: stats.clone(),
+        external_audio: reload.external_audio.clone().filter(|_| reload.external_audio_info.is_some()),
     };
     let registered = proxy.register_cast_job(job, &reload.host, reload.hls).await?;
     let stream_id = registered.session_id.clone();
@@ -1027,6 +1050,7 @@ pub async fn cast_reload(
     subtitle: Option<CastSub>,
     sub_style: Option<CastSubStyle>,
     audio_track_ordinal: Option<u32>,
+    external_audio: Option<String>,
 ) -> Result<CastLoadInfo, String> {
     let _operation = TRANSPORT_OPS.lock().await;
     restart_active(&proxy_state, position_sec, false, move |reload| {
@@ -1050,6 +1074,12 @@ pub async fn cast_reload(
         }
         if let Some(ordinal) = audio_track_ordinal {
             reload.audio_ordinal = ordinal;
+        }
+        if let Some(path) = external_audio {
+            // An empty path returns the TV to the film's own audio.
+            let next = (!path.is_empty()).then_some(path);
+            reprepare |= next != reload.external_audio;
+            reload.external_audio = next;
         }
         reprepare || reload.probe.is_none()
     })
@@ -1114,6 +1144,7 @@ pub async fn cast_preview(
             audio_ordinal: audio_track_ordinal.unwrap_or(0),
             burn_sub: (burning && bitmap.is_none()).then_some(&text_burn),
             burn_bitmap: if burning { bitmap } else { None },
+            external_audio: None,
             force_video_encode: false,
             limits: DeviceLimits::default(),
         },
@@ -1998,7 +2029,7 @@ mod live_tv_tests {
         Err(format!("renderer did not play {need}s within {timeout_secs}s ({last_line})"))
     }
 
-    fn reload_for(url: &str, host: &str, options: CastOptions, audio_ordinal: u32, subtitle: Option<CastSub>) -> Reload {
+    fn reload_for(url: &str, host: &str, options: CastOptions, audio_ordinal: u32, subtitle: Option<CastSub>, external_audio: Option<String>) -> Reload {
         Reload {
             url: url.to_string(),
             headers: HashMap::new(),
@@ -2017,6 +2048,8 @@ mod live_tv_tests {
             burn_bitmap: None,
             force_video_encode: false,
             limits: DeviceLimits::default(),
+            external_audio,
+            external_audio_info: None,
         }
     }
 
@@ -2055,7 +2088,7 @@ mod live_tv_tests {
             ("HLS, CPU only", CastOptions { stream_format: "hls".into(), hardware_decoding: false, hardware_encoding: false, ..CastOptions::default() }, None),
         ] {
             eprintln!("[live-stream] == {name}");
-            let mut reload = reload_for(&media, "127.0.0.1", options, 0, subtitle);
+            let mut reload = reload_for(&media, "127.0.0.1", options, 0, subtitle, None);
             prepare_reload(&mut reload).await;
             let caps = cast_transcode::caps().await;
             let burn = match reload.sub_base.as_ref() {
@@ -2070,6 +2103,7 @@ mod live_tv_tests {
                     audio_ordinal: 0,
                     burn_sub: pair.as_ref(),
                     burn_bitmap: reload.burn_bitmap,
+                    external_audio: None,
                     force_video_encode: false,
                     limits: DeviceLimits::default(),
                 },
@@ -2077,7 +2111,7 @@ mod live_tv_tests {
             );
             eprintln!("[live-stream]   plan {:?}", plan.summary);
             let stats = SharedStats::default();
-            let job = CastJob { url: media.clone(), headers: HashMap::new(), seek_sec: 600.0, fast_seek: false, plan, stats: stats.clone() };
+            let job = CastJob { url: media.clone(), headers: HashMap::new(), seek_sec: 600.0, fast_seek: false, plan, stats: stats.clone(), external_audio: None };
             let started = std::time::Instant::now();
             let registered = proxy.register_cast_job(job, "127.0.0.1", reload.hls).await.expect("register");
             let sample = if reload.hls {
@@ -2125,8 +2159,8 @@ mod live_tv_tests {
         let caps = cast_transcode::caps().await;
         eprintln!("[live-tv] {caps:?}");
         let embedded_sub = CastSub { kind: "embedded".into(), url: None, src_index: Some(0), format: None, off: false };
-        let scenarios = vec![
-            Scenario { name: "4K DV film as MPEG-TS, GPU + HDR tone mapping", reload: reload_for(&media, &host, CastOptions::default(), 0, None), start: 600.0 },
+        let mut scenarios = vec![
+            Scenario { name: "4K DV film as MPEG-TS, GPU + HDR tone mapping", reload: reload_for(&media, &host, CastOptions::default(), 0, None, None), start: 600.0 },
             Scenario {
                 name: "burned-in subtitles, 720p, Dolby Digital 5.1",
                 reload: reload_for(
@@ -2135,6 +2169,7 @@ mod live_tv_tests {
                     CastOptions { quality: "720p".into(), audio_mode: "surround".into(), ..CastOptions::default() },
                     0,
                     Some(embedded_sub.clone()),
+                    None,
                 ),
                 start: 1200.0,
             },
@@ -2152,10 +2187,18 @@ mod live_tv_tests {
                     },
                     1,
                     None,
+                    None,
                 ),
                 start: 2400.0,
             },
         ];
+        if let (Ok(film), Ok(audio)) = (std::env::var("HARBOR_TEST_MEDIA2"), std::env::var("HARBOR_TEST_EXTERNAL_AUDIO")) {
+            scenarios.push(Scenario {
+                name: "second film with the added, synced dub",
+                reload: reload_for(&film, &host, CastOptions::default(), 0, None, Some(audio)),
+                start: 900.0,
+            });
+        }
         let mut failures = Vec::new();
         for (index, scenario) in scenarios.into_iter().enumerate() {
             eprintln!("[live-tv] == {} (start {:.0}s)", scenario.name, scenario.start);

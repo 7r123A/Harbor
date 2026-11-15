@@ -514,6 +514,8 @@ pub struct PlanInput<'a> {
     pub burn_sub: Option<&'a (String, String)>,
     /// Absolute index of an embedded picture subtitle stream to overlay.
     pub burn_bitmap: Option<u32>,
+    /// A separate audio file opened as the second input replaces the film's own audio.
+    pub external_audio: Option<&'a AudioInfo>,
     /// The caller already knows the receiver cannot take the source's video as it is.
     pub force_video_encode: bool,
     /// What the receiver's device profile rules out.
@@ -665,7 +667,10 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
     let max_height = limits.max_height.map_or(quality_height, |m| m.clamp(240, quality_height));
     let target_kbps = limits.max_video_kbps.map_or(quality_kbps, |k| k.clamp(1_000, quality_kbps));
     let video = input.probe.and_then(|p| p.video.as_ref());
-    let audio = input.probe.and_then(|p| p.audio.get(input.audio_ordinal as usize));
+    let audio = match input.external_audio {
+        Some(info) => Some(info),
+        None => input.probe.and_then(|p| p.audio.get(input.audio_ordinal as usize)),
+    };
     let mut reasons: Vec<String> = Vec::new();
     let mut pre_input: Vec<String> = Vec::new();
     let mut output: Vec<String> = Vec::new();
@@ -736,7 +741,11 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         None => Some("0:v:0?".to_string()),
     };
     // The video map is decided below: an overlaid picture subtitle maps a filter graph output.
-    let audio_map = format!("0:a:{}?", input.audio_ordinal);
+    let audio_map = if input.external_audio.is_some() {
+        "1:a:0".to_string()
+    } else {
+        format!("0:a:{}?", input.audio_ordinal)
+    };
 
     let mut src_w = video.map(|v| v.width).unwrap_or(0);
     let mut src_h = video.map(|v| v.height).unwrap_or(0);
@@ -1072,6 +1081,8 @@ pub struct CastJob {
     pub fast_seek: bool,
     pub plan: CastPlan,
     pub stats: SharedStats,
+    /// A local audio file mapped as input 1 (see [`PlanInput::external_audio`]).
+    pub external_audio: Option<String>,
 }
 
 impl CastJob {
@@ -1094,6 +1105,12 @@ impl CastJob {
             args.extend(["-ss".into(), format!("{:.3}", self.seek_sec)]);
         }
         args.extend(["-i".into(), self.url.clone()]);
+        if let Some(audio) = self.external_audio.as_ref() {
+            if self.seek_sec > 0.5 {
+                args.extend(["-ss".into(), format!("{:.3}", self.seek_sec)]);
+            }
+            args.extend(["-i".into(), audio.clone()]);
+        }
         args
     }
 }
@@ -1123,11 +1140,46 @@ mod tests {
                 audio_ordinal: 1,
                 burn_sub: None,
                 burn_bitmap: None,
+                external_audio: None,
                 force_video_encode: false,
                 limits: DeviceLimits::default(),
             },
             caps,
         )
+    }
+
+    #[test]
+    fn an_added_audio_file_replaces_the_film_audio_as_a_second_input() {
+        let probe = mario();
+        let dub = AudioInfo { index: 0, codec: "ac3".into(), channels: 2, language: Some("ara".into()), bitrate: 0, sample_rate: 0 };
+        let options = CastOptions { audio_mode: "original".into(), ..Default::default() };
+        let p = build_plan(
+            &PlanInput {
+                probe: Some(&probe),
+                options: &options,
+                audio_ordinal: 1,
+                burn_sub: None,
+                burn_bitmap: None,
+                external_audio: Some(&dub),
+                force_video_encode: false,
+                limits: DeviceLimits::default(),
+            },
+            &FfmpegCaps::default(),
+        );
+        let args = p.output.join(" ");
+        assert!(args.contains("-map 0:0 -map 1:a:0"), "{args}");
+        assert!(args.contains("-c:a copy"), "{args}");
+        let job = CastJob {
+            url: "C:/Films/movie.mp4".into(),
+            headers: HashMap::new(),
+            seek_sec: 60.0,
+            fast_seek: false,
+            plan: p,
+            stats: SharedStats::default(),
+            external_audio: Some("C:/Temp/dub.mka".into()),
+        };
+        let input = job.input_args(false, &FfmpegCaps::default()).join(" ");
+        assert!(input.ends_with("-ss 60.000 -i C:/Films/movie.mp4 -ss 60.000 -i C:/Temp/dub.mka"), "{input}");
     }
 
     #[test]
@@ -1147,6 +1199,7 @@ mod tests {
                 audio_ordinal: 0,
                 burn_sub: None,
                 burn_bitmap: Some(3),
+                external_audio: None,
                 force_video_encode: false,
                 limits: DeviceLimits::default(),
             },
@@ -1226,7 +1279,7 @@ mod tests {
         let caps = FfmpegCaps::default();
         let build = |options: &CastOptions| {
             build_plan(
-                &PlanInput { probe: Some(&probe), options, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, force_video_encode: false, limits: DeviceLimits::default() },
+                &PlanInput { probe: Some(&probe), options, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, external_audio: None, force_video_encode: false, limits: DeviceLimits::default() },
                 &caps,
             )
         };
@@ -1253,7 +1306,7 @@ mod tests {
         )
         .unwrap();
         let p = build_plan(
-            &PlanInput { probe: Some(&scope), options: &fill, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, force_video_encode: false, limits: DeviceLimits::default() },
+            &PlanInput { probe: Some(&scope), options: &fill, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, external_audio: None, force_video_encode: false, limits: DeviceLimits::default() },
             &caps,
         );
         assert!(p.output.join(" ").contains("-vf crop=1422:800,scale=1422:800"), "{:?}", p.output);
@@ -1276,6 +1329,7 @@ mod tests {
             fast_seek: true,
             plan: plan(None, &CastOptions::default(), &FfmpegCaps::default()),
             stats: SharedStats::default(),
+            external_audio: None,
         };
         let args = job.input_args(true, &FfmpegCaps::default()).join(" ");
         assert!(!args.contains("-user_agent") && !args.contains("-reconnect"), "{args}");
@@ -1293,7 +1347,7 @@ mod tests {
         assert_eq!(probe.video.as_ref().and_then(|v| v.sar), Some((16, 15)));
         let options = CastOptions::default();
         let plan = build_plan(
-            &PlanInput { probe: Some(&probe), options: &options, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, force_video_encode: false, limits: DeviceLimits::default() },
+            &PlanInput { probe: Some(&probe), options: &options, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, external_audio: None, force_video_encode: false, limits: DeviceLimits::default() },
             &FfmpegCaps::default(),
         );
         let args = plan.output.join(" ");
@@ -1339,7 +1393,7 @@ mod tests {
 
     fn plan_with(probe: &MediaProbe, options: &CastOptions, limits: DeviceLimits) -> CastPlan {
         build_plan(
-            &PlanInput { probe: Some(probe), options, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, force_video_encode: false, limits },
+            &PlanInput { probe: Some(probe), options, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, external_audio: None, force_video_encode: false, limits },
             &FfmpegCaps::default(),
         )
     }
@@ -1409,7 +1463,7 @@ mod tests {
         // Settings that would otherwise send the picture through the encoder change nothing.
         let options = CastOptions { force_conversion: true, tonemap: "on".into(), aspect: "16:9".into(), ..Default::default() };
         let p = build_plan(
-            &PlanInput { probe: Some(&probe), options: &options, audio_ordinal: 0, burn_sub: None, burn_bitmap: Some(3), force_video_encode: true, limits: DeviceLimits::default() },
+            &PlanInput { probe: Some(&probe), options: &options, audio_ordinal: 0, burn_sub: None, burn_bitmap: Some(3), external_audio: None, force_video_encode: true, limits: DeviceLimits::default() },
             &FfmpegCaps::default(),
         );
         let args = p.output.join(" ");
@@ -1482,7 +1536,7 @@ mod tests {
         let plan_for = |delay: i32| {
             let options = CastOptions { sub_delay_ms: delay, ..Default::default() };
             build_plan(
-                &PlanInput { probe: Some(&probe), options: &options, audio_ordinal: 0, burn_sub: None, burn_bitmap: Some(2), force_video_encode: false, limits: DeviceLimits::default() },
+                &PlanInput { probe: Some(&probe), options: &options, audio_ordinal: 0, burn_sub: None, burn_bitmap: Some(2), external_audio: None, force_video_encode: false, limits: DeviceLimits::default() },
                 &FfmpegCaps::default(),
             )
             .output

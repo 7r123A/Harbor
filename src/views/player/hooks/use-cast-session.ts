@@ -53,6 +53,7 @@ type LoadParams = {
   audioTrackOrdinal?: number;
   options?: CastOptions;
   deviceId?: string;
+  externalAudio?: string;
 };
 
 /** Receiver trouble the session bar offers a fix for. */
@@ -546,6 +547,7 @@ export function useCastSession(
       subtitle?: CastSubInfo | null;
       subStyle?: CastSubStyle | null;
       audioTrackOrdinal?: number;
+      externalAudio?: string;
     }): Promise<CastLoadInfo | null> => {
       if (!castDeviceRef.current || audio.getSnapshot().device) return null;
       const position = lastCastPositionRef.current;

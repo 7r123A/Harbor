@@ -1315,6 +1315,7 @@ mod tests {
                 audio_ordinal: 0,
                 burn_sub: None,
                 burn_bitmap: None,
+                external_audio: None,
                 force_video_encode: false,
                 limits: Default::default(),
             },
@@ -1327,6 +1328,7 @@ mod tests {
             fast_seek: false,
             plan,
             stats: Default::default(),
+            external_audio: None,
         });
         let now = Instant::now();
         assert!(session_expired(&session_at(long_ago, None), now), "a relayed stream still expires");
