@@ -126,6 +126,7 @@ function loadIdentityHarness(
       getAnimeCwId: () => null,
       getAnimeCanonicalId: () => null,
       getAnilistMalAlias: () => null,
+      recordAnilistMalAlias: () => {},
       recordAnimeCwId: () => {},
       notifyAnimeCwIds: onNotify,
     },
@@ -135,6 +136,7 @@ function loadIdentityHarness(
       animeDbWriteProvider: async () => {},
     },
     "@/lib/providers/anime-entry": { resolveAnimeEntry: async () => null },
+    "@/lib/anilist/entry": { anilistAnimeEntry: async () => null },
     "@/lib/providers/anime-kitsu-addon": { animeKitsuMeta: async () => PROOF_META },
     "@/lib/anime-tracker-entry": {
       resolveTrackerAnimeEntry: async () => ({ id: "kitsu:49444" }),
@@ -353,4 +355,133 @@ test("anime ranking preserves input order when playback timestamps are missing, 
     const second = { _id: "kitsu:1801", state: { lastWatched: "2026-11-14T10:00:00Z" } };
     assert.equal(dedupeAnimeCw([first, second])[0]._id, first._id);
   }
+});
+
+test("Magic Repo Man CW resolves AniList/MAL identity without Kitsu and keeps both source checkpoints", async () => {
+  const aliases = new Map<string, string>();
+  let metadataCalls = 0;
+  const identity = loadIdentityHarness(undefined, {
+    "@/lib/anime-cw-ids": {
+      getAnimeCwId: () => null,
+      getAnimeCanonicalId: () => null,
+      getAnilistMalAlias: (id: string) => aliases.get(id) ?? null,
+      recordAnilistMalAlias: (anilistId: number, malId: number) => {
+        aliases.set("anilist:" + anilistId, "mal:" + malId);
+      },
+      recordAnimeCwId: () => {},
+      notifyAnimeCwIds: () => {},
+    },
+    "@/lib/anilist/entry": {
+      anilistAnimeEntry: async (id: number, scheme: string) => {
+        metadataCalls += 1;
+        assert.equal(id, 202250);
+        assert.equal(scheme, "anilist");
+        return { id, idMal: 62922, type: "ANIME" };
+      },
+    },
+  });
+  const simkl = {
+    _id: "mal:62922", name: "Kashita Maryoku wa [Revo Barai] de Kyousei Choushuu",
+    type: "series", external: "simkl", state: { season: 1, episode: 7 },
+  };
+  const local = {
+    _id: "anilist:202250",
+    name: "Magic Repo Man: Dumped by My Party, I’ll Cash In With a Cute Support Fairy to Become the Strongest!",
+    type: "series", local: true, state: { season: 1, episode: 7 },
+  };
+  assert.equal(identity.dedupeAnimeCw([simkl, local]).length, 2);
+  await identity.warmCwAnimeIdentities([simkl, local]);
+  assert.equal(metadataCalls, 1);
+  assert.equal(aliases.get("anilist:202250"), "mal:62922");
+  const merged = identity.dedupeAnimeCw([simkl, local]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]._id, "mal:62922");
+  assert.deepEqual(merged[0].cwMembers?.map((member) => member._id),
+    ["mal:62922", "anilist:202250"]);
+});
+
+test("an AniList mapping cannot merge an unrelated MAL show", async () => {
+  let calls = 0;
+  const links = new Map<string, string>();
+  const identity = loadIdentityHarness(undefined, {
+    "@/lib/anime-cw-ids": {
+      getAnimeCwId: () => null,
+      getAnimeCanonicalId: () => null,
+      getAnilistMalAlias: (id: string) => links.get(id) ?? null,
+      recordAnilistMalAlias: (id: number, mal: number) => links.set("anilist:" + id, "mal:" + mal),
+      recordAnimeCwId: () => {},
+      notifyAnimeCwIds: () => {},
+    },
+    "@/lib/anilist/entry": {
+      anilistAnimeEntry: async () => {
+        calls += 1;
+        return { id: 202250, idMal: 62922, type: "ANIME" };
+      },
+    },
+  });
+  const anime = { _id: "anilist:202250", name: "Magic Repo Man", type: "series" };
+  const unrelated = { _id: "mal:62923", name: "Different Anime", type: "series" };
+  await identity.warmCwAnimeIdentities([anime, unrelated]);
+  assert.equal(calls, 1);
+  assert.equal(links.size, 0, "only a matching MAL record authorizes a shared ID");
+  assert.equal(identity.dedupeAnimeCw([anime, unrelated]).length, 2);
+});
+
+test("no extra AniList identity lookup when the corresponding MAL source is absent", async () => {
+  let calls = 0;
+  const identity = loadIdentityHarness(undefined, {
+    "@/lib/anilist/entry": {
+      anilistAnimeEntry: async () => { calls += 1; return null; },
+    },
+  });
+  await identity.warmCwAnimeIdentities([
+    { _id: "anilist:202250", name: "Magic Repo Man", type: "series" },
+  ]);
+  assert.equal(calls, 0);
+});
+
+test("Magic Repo Man honors the newer explicit playback timestamp across source languages", async () => {
+  const aliases = new Map<string, string>();
+  const identity = loadIdentityHarness(undefined, {
+    "@/lib/anime-cw-ids": {
+      getAnimeCwId: () => null,
+      getAnimeCanonicalId: () => null,
+      getAnilistMalAlias: (id: string) => aliases.get(id) ?? null,
+      recordAnilistMalAlias: (anilistId: number, malId: number) => {
+        aliases.set("anilist:" + anilistId, "mal:" + malId);
+      },
+      recordAnimeCwId: () => {},
+      notifyAnimeCwIds: () => {},
+    },
+    "@/lib/anilist/entry": {
+      anilistAnimeEntry: async (id: number) => ({ id, idMal: 62922, type: "ANIME" }),
+    },
+  });
+  const simkl = {
+    _id: "mal:62922", name: "Kashita Maryoku wa Revo Barai",
+    type: "series", external: "simkl",
+    state: { season: 1, episode: 7, lastWatched: "2026-11-10T12:00:00Z" },
+  };
+  const local = {
+    _id: "anilist:202250", name: "Magic Repo Man",
+    type: "series", local: true,
+    state: { season: 1, episode: 3, lastWatched: "2026-11-14T12:00:00Z" },
+  };
+  await identity.warmCwAnimeIdentities([simkl, local]);
+  const localNewer = identity.dedupeAnimeCw([simkl, local]);
+  assert.equal(localNewer.length, 1);
+  assert.equal(localNewer[0]._id, "anilist:202250", "newer local rewatch wins despite lower episode number");
+  assert.equal(localNewer[0].state?.episode, 3);
+  assert.deepEqual(localNewer[0].cwMembers?.map((item) => item._id),
+    ["anilist:202250", "mal:62922"]);
+  const simklNew = {
+    ...simkl,
+    state: { ...simkl.state, lastWatched: "2026-11-15T12:00:00Z" },
+  };
+  const simklNewer = identity.dedupeAnimeCw([local, simklNew]);
+  assert.equal(simklNewer.length, 1);
+  assert.equal(simklNewer[0]._id, "mal:62922", "newer Simkl playback wins despite being second");
+  assert.equal(simklNewer[0].state?.episode, 7);
+  assert.deepEqual(simklNewer[0].cwMembers?.map((item) => item._id),
+    ["mal:62922", "anilist:202250"]);
 });
