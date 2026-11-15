@@ -574,6 +574,69 @@ async function warmAnilistMalCwAliases(items: CwIdentityItem[]): Promise<void> {
     }),
   );
 }
+/**
+ * The Kitsu addon can publish exact IMDb episode coordinates for a MAL entry
+ * before AniZip publishes its IMDb/Kitsu IDs. Use that episode-level evidence
+ * to bridge a catalog CW checkpoint to an existing native anime CW member.
+ * Never infer this relationship from names or a series-wide IMDb ID alone.
+ */
+async function warmNativeCatalogCwProofs(items: CwIdentityItem[]): Promise<void> {
+  const catalog = items.flatMap((item) => {
+    const id = item._id ?? item.id ?? "";
+    if (!catalogEntry.test(id) || item.type === "movie") return [];
+    const videoId = item.videoId ?? item.state?.video_id;
+    const coords = checkpointCoords(item, id, videoId);
+    const imdbId = sourceImdbFor(item, id);
+    if (
+      !imdbId || !/^tt\d+$/.test(imdbId) ||
+      !Number.isInteger(coords.season) || coords.season! < 1 ||
+      !Number.isInteger(coords.episode) || coords.episode! < 1 ||
+      cwAnimeIdentityKey(id, videoId, coords)
+    ) return [];
+    return [{ id, videoId, coords, imdbId }];
+  });
+  if (catalog.length === 0) return;
+  const nativeIds = [...new Set(
+    items.filter((item) => item.type !== "movie")
+      .map((item) => item._id ?? item.id ?? "")
+      .filter((id) => nativeEntry.test(id) || KITSU_ID.test(id)),
+  )];
+  if (nativeIds.length === 0) return;
+
+  const metas = await Promise.all(
+    nativeIds.map((id) => limited(() => animeKitsuMeta(id).catch(() => null))),
+  );
+  for (const entry of catalog) {
+    const identities = new Set<string>();
+    for (const meta of metas) {
+      if (!meta || meta.type !== "series" || !KITSU_ID.test(meta.id)) continue;
+      const found = meta.videos.some(
+        (video) =>
+          video.id.startsWith(`${meta.id}:`) &&
+          /^kitsu:[1-9]\d*:[1-9]\d*$/.test(video.id) &&
+          video.imdb_id === entry.imdbId &&
+          video.imdbSeason === entry.coords.season &&
+          video.imdbEpisode === entry.coords.episode,
+      );
+      if (found) identities.add(meta.id);
+    }
+    // Two entries claiming the same IMDb checkpoint are ambiguous, not proof.
+    if (identities.size !== 1) continue;
+    const identity = identities.values().next().value!;
+    const key = proofKey(entry.id, entry.videoId, entry.coords);
+    const previous = catalogProofs.get(key);
+    if (previous && previous.expiresAt > Date.now()) {
+      if (previous.identity && previous.identity !== identity) continue;
+      if (previous.identity === identity) continue;
+    }
+    boundedSet(catalogProofs, key, {
+      identity,
+      expiresAt: Date.now() + POSITIVE_TTL,
+    });
+    scheduleWarmNotify();
+  }
+}
+
 /** Resolve checkpoint snapshots with bounded concurrency shared across all callers. */
 export async function warmCwAnimeIdentities(
   items: CwIdentityItem[],
@@ -590,6 +653,7 @@ export async function warmCwAnimeIdentities(
   items.forEach(flatten);
   await Promise.all([
     warmAnilistMalCwAliases(snapshots),
+    warmNativeCatalogCwProofs(snapshots),
     ...snapshots.map((item) =>
       (movieIds(item).length > 0
         ? warmMovie(item, options.tmdbKey ?? "")
