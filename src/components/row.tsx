@@ -33,31 +33,36 @@ function columnSpan(value?: string): number {
 const NEAR_MARGIN = "300px";
 const PAGE_MARGIN = "800px 0px";
 const FAR_RELEASE_MS = 15000;
-// At 144Hz a six-card mount batch regularly took two vsyncs, so a scrolling page
-// fills a row one card at a time. At rest, where there is no frame budget to
-// protect, the same queue drains at the original rate.
-const CARD_MOUNTS_DURING_SCROLL = 1;
-const CARD_MOUNTS_AT_REST = 6;
-const pendingCardMounts = new Set<() => void>();
-let cardMountFrame: number | undefined;
+// Mounts and artwork updates compete for the same scroll frame. At rest the queue
+// can fill more cards at once.
+const CARD_UPDATES_DURING_SCROLL = 1;
+const CARD_UPDATES_AT_REST = 6;
+const pendingCardUpdates = new Set<() => void>();
+let cardUpdateFrame: number | undefined;
 
-function mountQueuedCards() {
-  cardMountFrame = undefined;
-  const perFrame = isScrollActive() ? CARD_MOUNTS_DURING_SCROLL : CARD_MOUNTS_AT_REST;
+function updateQueuedCards() {
+  cardUpdateFrame = undefined;
+  const perFrame = isScrollActive() ? CARD_UPDATES_DURING_SCROLL : CARD_UPDATES_AT_REST;
   startTransition(() => {
     for (let i = 0; i < perFrame; i++) {
-      const mount = pendingCardMounts.values().next().value;
-      if (!mount) break;
-      pendingCardMounts.delete(mount);
-      mount();
+      const update = pendingCardUpdates.values().next().value;
+      if (!update) break;
+      pendingCardUpdates.delete(update);
+      update();
     }
   });
-  if (pendingCardMounts.size) cardMountFrame = requestAnimationFrame(mountQueuedCards);
+  if (pendingCardUpdates.size) cardUpdateFrame ??= requestAnimationFrame(updateQueuedCards);
 }
 
-function queueCardMount(mount: () => void) {
-  pendingCardMounts.add(mount);
-  cardMountFrame ??= requestAnimationFrame(mountQueuedCards);
+export function queueRowCardUpdate(update: () => void): () => void {
+  pendingCardUpdates.add(update);
+  cardUpdateFrame ??= requestAnimationFrame(updateQueuedCards);
+  return () => {
+    pendingCardUpdates.delete(update);
+    if (pendingCardUpdates.size || cardUpdateFrame === undefined) return;
+    cancelAnimationFrame(cardUpdateFrame);
+    cardUpdateFrame = undefined;
+  };
 }
 
 export type RowShape = "portrait" | "landscape" | "service" | "rank" | "tile" | "square" | "cta";
@@ -143,7 +148,9 @@ function LazyChild({
       release();
       return cancelRelease;
     }
+    let cancelMount: (() => void) | undefined;
     const mount = () => {
+      cancelMount = undefined;
       mounted.current = true;
       setVisible(true);
     };
@@ -152,18 +159,19 @@ function LazyChild({
       NEAR_MARGIN,
       (entry) => {
         if (!entry.isIntersecting) {
-          pendingCardMounts.delete(mount);
+          cancelMount?.();
+          cancelMount = undefined;
           release();
           return;
         }
         cancelRelease();
-        if (!mounted.current) queueCardMount(mount);
+        if (!mounted.current) cancelMount ??= queueRowCardUpdate(mount);
       },
       root,
     );
     return () => {
       stop();
-      pendingCardMounts.delete(mount);
+      cancelMount?.();
       cancelRelease();
     };
   }, [root, eager, active]);

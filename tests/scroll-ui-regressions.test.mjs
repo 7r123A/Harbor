@@ -2,6 +2,53 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadModule, readSource } from "../scripts/benchmark-discover.mjs";
 
+test("row card mounts and artwork share the scroll budget and queued work can be cancelled", () => {
+  const source = readSource("src/components/row.tsx");
+  const start = source.indexOf("const CARD_UPDATES_DURING_SCROLL");
+  const end = source.indexOf("export type RowShape", start);
+  assert.ok(start >= 0 && end > start);
+  let scrolling = true;
+  let id = 0;
+  const frames = new Map();
+  const { queueRowCardUpdate } = loadModule(
+    source.slice(start, end),
+    {},
+    {
+      isScrollActive: () => scrolling,
+      startTransition: (task) => task(),
+      requestAnimationFrame: (task) => (frames.set(++id, task), id),
+      cancelAnimationFrame: (frame) => frames.delete(frame),
+    },
+  );
+  const flush = () => {
+    const pending = [...frames.values()];
+    frames.clear();
+    pending.forEach((task) => task());
+  };
+  const updates = [];
+  queueRowCardUpdate(() => updates.push("mount"));
+  const cancelArtwork = queueRowCardUpdate(() => updates.push("cancelled artwork"));
+  queueRowCardUpdate(() => updates.push("current artwork"));
+  flush();
+  assert.deepEqual(updates, ["mount"]);
+  cancelArtwork();
+  flush();
+  assert.deepEqual(updates, ["mount", "current artwork"]);
+  assert.equal(frames.size, 0);
+
+  const cancelLast = queueRowCardUpdate(() => assert.fail("cancelled update ran"));
+  cancelLast();
+  assert.equal(frames.size, 0);
+
+  scrolling = false;
+  for (let i = 0; i < 7; i++) queueRowCardUpdate(() => updates.push(i));
+  flush();
+  assert.deepEqual(updates.slice(2), [0, 1, 2, 3, 4, 5]);
+  flush();
+  assert.deepEqual(updates.slice(2), [0, 1, 2, 3, 4, 5, 6]);
+  assert.equal(frames.size, 0);
+});
+
 test("Back to Top checks a final scroll event inside its throttle window", () => {
   const timers = new Map();
   const frames = new Map();

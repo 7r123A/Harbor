@@ -6,7 +6,7 @@ import { rpdbPoster } from "@/lib/providers/rpdb";
 import { useSettings } from "@/lib/settings";
 import { claimUniqueArt, releaseUniqueArt } from "@/lib/unique-art";
 import { useView } from "@/lib/view";
-import { Row } from "./row";
+import { queueRowCardUpdate, Row } from "./row";
 import { Poster } from "./poster";
 
 const ISO = [
@@ -82,6 +82,7 @@ function CountryTile({ iso, name }: { iso: string; name: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    let cancelArtwork: (() => void) | undefined;
     const key = `country:${iso}`;
     tmdbDiscover(settings.tmdbKey, "movie", {
       with_origin_country: iso,
@@ -90,12 +91,16 @@ function CountryTile({ iso, name }: { iso: string; name: string }) {
     })
       .then((list) => {
         if (cancelled) return;
-        const pool = list.filter((m) => m.background);
-        setArt(claimUniqueArt(key, pool, (m) => m.id, 3));
+        cancelArtwork = queueRowCardUpdate(() => {
+          cancelArtwork = undefined;
+          const pool = list.filter((m) => m.background);
+          setArt(claimUniqueArt(key, pool, (m) => m.id, 3));
+        });
       })
       .catch(() => {});
     return () => {
       cancelled = true;
+      cancelArtwork?.();
       releaseUniqueArt(key);
     };
   }, [iso, settings.tmdbKey]);
