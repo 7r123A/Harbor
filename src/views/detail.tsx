@@ -22,6 +22,7 @@ import {
 } from "@/lib/providers/anime-detail";
 import { isTextInLanguage } from "@/lib/providers/anime-episode-build";
 import { peekAnimeArt, saveAnimeArt } from "@/lib/providers/anime-art-cache";
+import { animeArtworkKind } from "@/lib/providers/anime-format";
 import { imdbToKitsu, tmdbTvToKitsu } from "@/lib/providers/anime-mapping";
 import {
   kitsuAnime,
@@ -340,7 +341,7 @@ function DetailContent({
       return;
     }
     seasonEntryRef.current = sel.entryId;
-    const cachedLogo = peekAnimeArt(sel.entryId)?.logo;
+    const cachedLogo = peekAnimeArt(sel.entryId, "tv")?.logo;
     startTransition(() => {
       setSeasonArt({
         background: sel.background,
@@ -1348,7 +1349,7 @@ function DetailContent({
                 .then((bg) => {
                   if (cancelled || request !== generation || !bg) return;
                   setEnrichedBg(bg);
-                  saveAnimeArt(meta.id, { bg });
+                  saveAnimeArt(meta.id, res.detail.kind, { bg });
                 })
                 .catch(() => {});
               // Install the base detail before subscribing: on a warm cache this
@@ -1359,7 +1360,7 @@ function DetailContent({
                     if (cancelled || request !== generation) return;
                     setDetail((prev) => (prev ? mergeAnimeDetailExtras(prev, patch) : prev));
                     if (patch.gallery?.backdrops?.length) setBackdrops(patch.gallery.backdrops);
-                    saveAnimeArt(meta.id, {
+                    saveAnimeArt(meta.id, res.detail.kind, {
                       logo: patch.logo,
                       backdrops: patch.gallery?.backdrops,
                     });
@@ -1606,7 +1607,9 @@ function DetailContent({
   const tagline = detail?.tagline ?? "";
   const detailCast = sourceText.cast ?? detail?.cast ?? [];
   const pinnedLogo = useTitleLogo(meta.id);
-  const animeArt = isAnime ? peekAnimeArt(meta.id) : undefined;
+  const animeArt = isAnime
+    ? peekAnimeArt(meta.id, detail?.kind ?? animeArtworkKind(meta))
+    : undefined;
   const stableBackdrop = useStableAsset(
     isAnime
       ? [
@@ -1626,27 +1629,33 @@ function DetailContent({
   );
   // Anime resolves curated 16:9 art after the page opens; letting it replace the cached
   // artwork avoids pinning an older promo image for the whole visit.
+  const textlessBackdrops = detail?.textlessBackdrops;
+  const firstTextlessBackdrop = textlessBackdrops?.[0];
   const primaryBackdrop =
     pinnedBackdropHi ||
     sourceText.backdrop ||
     (prioritizeMetadataAddons
       ? (detail?.backdrop ?? cinemetaFull?.background ?? meta.background)
       : isAnime
-        ? (enrichedBg ?? animeArt?.bg)
-        : stableBackdrop) ||
+        ? ((detail?.kind === "movie" ? firstTextlessBackdrop : undefined) ??
+          enrichedBg ??
+          animeArt?.bg)
+        : firstTextlessBackdrop
+          ? (detail?.backdrop ?? firstTextlessBackdrop)
+          : stableBackdrop) ||
     (isAnime ? undefined : loading ? undefined : meta.poster) ||
     undefined;
   const backdropPool = useMemo(() => {
     const seen = new Set<string>();
     const pool: string[] = [];
-    for (const b of [primaryBackdrop, ...backdrops]) {
+    for (const b of [primaryBackdrop, ...(textlessBackdrops ?? backdrops)]) {
       const hi = toHiResBackdrop(b ?? undefined, settings.heroFullQuality);
       if (!hi || seen.has(hi)) continue;
       seen.add(hi);
       pool.push(hi);
     }
     return pool;
-  }, [primaryBackdrop, backdrops, settings.heroFullQuality]);
+  }, [primaryBackdrop, backdrops, textlessBackdrops, settings.heroFullQuality]);
   const reducedMotion = useReducedMotion();
   const carouselOn =
     settings.heroBackdropCarousel && !pinnedBackdrop && backdropPool.length >= 2 && !reducedMotion;

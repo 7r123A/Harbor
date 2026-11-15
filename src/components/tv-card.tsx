@@ -6,6 +6,7 @@ import { useContextMenu, type MembershipContext } from "@/lib/context-menu";
 import { useSettings } from "@/lib/settings";
 import { useViewActions } from "@/lib/view";
 import { usePosterChain } from "@/components/poster";
+import { animeArtworkKind } from "@/lib/providers/anime-format";
 import { ensureStaticHeroArt, peekStaticHeroArt } from "@/lib/providers/anime-hero-art-static";
 import { prepareExpandingCardArtwork } from "@/lib/expanding-card-artwork";
 import { ScoreStack, type CardBadge } from "@/components/card-score-stack";
@@ -199,7 +200,7 @@ function useAnimeBackdrop(meta: Meta): string | undefined {
   const isAnime = isTvCardAnimeId(meta.id);
   const [backdrop, setBackdrop] = useState<{ meta: Meta; url?: string }>(() => ({
     meta,
-    url: isAnime ? peekStaticHeroArt(meta.id)?.bg : undefined,
+    url: isAnime ? peekStaticHeroArt(meta.id, animeArtworkKind(meta))?.bg : undefined,
   }));
   useEffect(() => {
     if (!isAnime || (meta.background && meta.background !== meta.poster)) {
@@ -209,7 +210,7 @@ function useAnimeBackdrop(meta: Meta): string | undefined {
     const resolve = async () => {
       await ensureStaticHeroArt().catch(() => {});
       if (cancelled) return;
-      const staticBg = peekStaticHeroArt(meta.id)?.bg;
+      const staticBg = peekStaticHeroArt(meta.id, animeArtworkKind(meta))?.bg;
       if (staticBg) {
         setBackdrop({ meta, url: staticBg });
         return;

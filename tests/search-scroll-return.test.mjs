@@ -64,7 +64,7 @@ function searchHarness() {
     "@/lib/use-window-fullscreen": { useWindowFullscreen: () => false },
     "@/lib/games/steam-store-search": { steamStoreQuery: () => null },
     "./use-collection-hits": { useCollectionHits: () => [], collectionForTitle: () => null },
-    "./person-top-match": { matchPersonForQuery: () => null },
+    "@/lib/search-top-match": { matchPersonForQuery: () => null },
     "@/lib/search-display-state": {
       getSearchDisplayState: () =>
         state.navigating

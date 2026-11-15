@@ -8,6 +8,7 @@ import { tvFocus } from "@/lib/keyboard-navigation";
 import { useT } from "@/lib/i18n";
 import type { Meta } from "@/lib/cinemeta";
 import { useSearch } from "@/lib/search-context";
+import { matchPersonForQuery } from "@/lib/search-top-match";
 import { useView } from "@/lib/view";
 import { MOVIE_GENRES, TV_GENRES } from "@/lib/feed/tags";
 import { warmAnimeResolution } from "@/lib/anime-detect";
@@ -23,7 +24,7 @@ import { LiveTvRow } from "./live-tv-row";
 import { TopMatch } from "./top-match";
 import { CollectionHitsRow } from "./collection-pane";
 import { ExplorePane, type ExploreFrame } from "./explore-pane";
-import { matchPersonForQuery, PersonTopMatch } from "./person-top-match";
+import { PersonTopMatch } from "./person-top-match";
 import { PeopleRow } from "./people-row";
 import { collectionForTitle, useCollectionHits } from "./use-collection-hits";
 import { MetaList } from "./meta-list";
@@ -334,7 +335,11 @@ export function SearchOverlay() {
   const shownAddonGroups = (currentResults?.addonGroups ?? []).filter(
     (group) => !addonFilter || group.id === addonFilter,
   );
-  const personMatch = matchPersonForQuery(currentResults?.people, trimmed);
+  const personMatch = matchPersonForQuery(
+    currentResults?.people,
+    trimmed,
+    currentResults?.topMatch,
+  );
   const magnetInput = !!trimmed && isMagnetInput(trimmed);
   const urlInput = !!trimmed && !magnetInput && isDirectVideoUrl(trimmed);
   const directInput = magnetInput || urlInput;

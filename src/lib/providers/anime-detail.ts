@@ -850,23 +850,46 @@ async function loadAnimeDetails(
     .then((aid) => (aid ? anilistArtById(aid) : {}))
     .catch(() => ({}));
 
+  const mappedTmdbId = Number(aniZip?.mappings?.themoviedb_id);
+  const hasTmdbMapping = Number.isSafeInteger(mappedTmdbId) && mappedTmdbId > 0;
   const firstArtBatch = Promise.all([
     settings.tmdbKey
-      ? tmdbAnimeLogo(settings.tmdbKey, anime.title, anime.year, kind).catch(() => null)
+      ? tmdbAnimeLogo(
+          settings.tmdbKey,
+          anime.title,
+          anime.year,
+          kind,
+          kind === "movie"
+            ? { exact: true, tmdbId: hasTmdbMapping ? mappedTmdbId : undefined }
+            : undefined,
+        ).catch(() => null)
       : Promise.resolve(null),
     settings.fanartKey && kind === "tv"
       ? kitsuToTvdb(kitsuId).catch(() => null)
       : Promise.resolve(null),
-    fetchTvdbArtwork({ kitsuId }).catch(() => null),
-    staticHeroArt(`kitsu:${kitsuId}`).catch(() => undefined),
+    fetchTvdbArtwork({ kind, kitsuId }).catch(() => null),
+    staticHeroArt(`kitsu:${kitsuId}`, kind).catch(() => undefined),
   ]);
 
+  const movieFanartPromise =
+    kind === "movie" && settings.fanartKey
+      ? (hasTmdbMapping
+          ? Promise.resolve(mappedTmdbId)
+          : firstArtBatch.then(([art]) => art?.tmdbId)
+        )
+          .then((id) => (id ? fanartMovie(settings.fanartKey, id) : null))
+          .catch(() => null)
+      : Promise.resolve(null);
+
   const heroBgPromise: Promise<string | undefined> = Promise.all([firstArtBatch, anilistArtPromise])
-    .then(([[tmdbHit, , tvdbArt, curated], aniArt]) =>
+    .then(async ([[tmdbHit, , tvdbArt, curated], aniArt]) =>
       pickAnimeHeroBackdrop({
-        curated: curated?.bg,
+        curated: kind === "tv" ? curated?.bg : undefined,
         tvdb: tvdbArt?.backgrounds?.[0],
-        tmdb: tmdbHit?.backdrop,
+        tmdb:
+          kind === "movie"
+            ? (tmdbHit?.backdrop ?? curated?.bg ?? (await movieFanartPromise)?.backdrop)
+            : tmdbHit?.backdrop,
         kitsu: anime.backdrop,
         banner: aniArt.banner,
       }),
@@ -875,17 +898,13 @@ async function loadAnimeDetails(
 
   const extrasPromise: Promise<AnimeDetailExtras> = (async () => {
     const [tmdbHit, tvdbId, tvdbArt, curated] = await firstArtBatch;
-    const aniArt = await anilistArtPromise;
     let logo: string | undefined =
-      addonMeta?.logo ?? tvdbArt?.clearLogos?.[0] ?? tmdbHit?.logo ?? undefined;
+      addonMeta?.logo ??
+      tvdbArt?.clearLogos?.[0] ??
+      tmdbHit?.logo ??
+      (kind === "movie" ? curated?.logo : undefined);
     let poster = anime.poster;
-    const backdrop = pickAnimeHeroBackdrop({
-      curated: curated?.bg,
-      tvdb: tvdbArt?.backgrounds?.[0],
-      tmdb: tmdbHit?.backdrop,
-      kitsu: anime.backdrop,
-      banner: aniArt.banner,
-    });
+    const backdrop = await heroBgPromise;
     const gallery: string[] = [];
     const addBackdrop = (b?: string | null) => {
       if (b && !gallery.includes(b)) gallery.push(b);
@@ -894,13 +913,12 @@ async function loadAnimeDetails(
     addBackdrop(anime.backdrop);
     addBackdrop(tmdbHit?.backdrop);
     const fanartPromise =
-      settings.fanartKey && kind === "movie" && tmdbHit?.tmdbId
-        ? fanartMovie(settings.fanartKey, tmdbHit.tmdbId).catch(() => null)
-        : settings.fanartKey && kind === "tv" && tvdbId
+      kind === "movie"
+        ? movieFanartPromise
+        : settings.fanartKey && tvdbId
           ? fanartTv(settings.fanartKey, tvdbId).catch(() => null)
           : Promise.resolve(null);
-    const tmdbFullId = Number(aniZip?.mappings?.themoviedb_id) || tmdbHit?.tmdbId || 0;
-    const tmdbFullFromMapping = Number(aniZip?.mappings?.themoviedb_id) > 0;
+    const tmdbFullId = hasTmdbMapping ? mappedTmdbId : tmdbHit?.tmdbId;
     const tmdbFullPromise =
       settings.tmdbKey && tmdbFullId
         ? tmdbDetails(
@@ -924,7 +942,7 @@ async function loadAnimeDetails(
     let tmdbFull: TmdbDetail | null = null;
     if (fullRaw) {
       // AniZip's themoviedb_id is authoritative per entry; the title-search id can false-positive, so it keeps the year gate.
-      if (tmdbFullFromMapping) {
+      if (hasTmdbMapping) {
         tmdbFull = fullRaw;
       } else {
         const ay = Number(anime.year);
@@ -958,6 +976,7 @@ async function loadAnimeDetails(
       productionCompanies: Array.from(new Set(sortedStudios.map((studio) => studio.name))),
       logo,
       backdrop,
+      textlessBackdrops: tmdbHit?.textlessBackdrops ?? tmdbFull?.textlessBackdrops,
       poster,
       imdbId: seriesImdb ?? addonMeta?.imdb_id ?? tmdbFull?.imdbId ?? null,
       tmdbTvId: tmdbFull?.tmdbTvId,

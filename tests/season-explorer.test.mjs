@@ -1672,7 +1672,7 @@ test("TMDB English season names survive both default and TVDB-fallback picker pa
         tmdbPosterUrl: (path) => (path ? `https://image.tmdb.org/t/p/w500${path}` : undefined),
       },
       "@/lib/settings/load": { loadStoredSettings: () => ({}) },
-      "./tmdb-images": { pickLogo: () => undefined },
+      "./tmdb-images": { pickLogo: () => undefined, textlessTmdbBackdrops: () => [] },
       "./tmdb-image-lang": { imageLangParam: () => "en", imageLangRank: () => 0 },
       "./tmdb-trailers": {
         pickTrailers: () => [],

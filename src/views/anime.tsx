@@ -681,7 +681,7 @@ export function AnimeView({ active = true }: { active?: boolean }) {
     for (const m of peekHostedHero() ?? [])
       if ((m as { source?: string }).source === "MyAnimeList" && consider(m)) malPool.push(m);
     for (const it of malExtra) {
-      const art = peekStaticHeroArt(it.id);
+      const art = peekStaticHeroArt(it.id, it.format === "MOVIE" ? "movie" : "tv");
       if (!art?.bg) continue;
       const m: Meta & { source?: string } = {
         id: it.id,
