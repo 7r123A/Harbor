@@ -329,7 +329,7 @@ function EpisodeStripCard({
           <span
             className={`truncate text-[13.5px] font-semibold text-ink ${spoiler?.title ? SPOILER_TEXT_CLASS : ""}`}
           >
-            {ep.name || t("Episode {n}", { n: ep.episodeNumber })}
+            {ep.name || t("Episode {n}", { n: ep.orderNumber ?? ep.episodeNumber })}
           </span>
           <span className="text-[11.5px] text-ink-subtle">
             S{ep.orderSeason ?? ep.seasonNumber} E{ep.orderNumber ?? ep.episodeNumber}

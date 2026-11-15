@@ -150,7 +150,7 @@ export function EpisodeRow({
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <h4 className="flex items-center gap-2 truncate text-[16px] font-semibold text-ink">
             <span className={`truncate ${spoiler?.title ? SPOILER_TEXT_CLASS : ""}`}>
-              {ep.name || t("Episode {n}", { n: ep.episodeNumber })}
+              {ep.name || t("Episode {n}", { n: ep.orderNumber ?? ep.episodeNumber })}
             </span>
             {isUpcomingEpisode(ep) ? <UpcomingBadge /> : isNewEpisode(ep) && <NewBadge />}
           </h4>
