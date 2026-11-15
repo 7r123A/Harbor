@@ -52,7 +52,7 @@ export function FriendReviewBadges({
       {shown.map((mark, i) => (
         <span
           key={mark.handle}
-          className="inline-flex shrink-0 overflow-hidden rounded-full bg-canvas ring-2 ring-canvas"
+          className="inline-flex shrink-0 overflow-hidden rounded-full bg-canvas ring-1 ring-canvas"
           style={{
             width: avatarSize,
             height: avatarSize,
@@ -63,7 +63,7 @@ export function FriendReviewBadges({
         </span>
       ))}
       {extra > 0 && (
-        <span className="ms-1 rounded-full bg-canvas/90 px-1 text-[9.5px] font-bold leading-4 text-ink ring-1 ring-edge-soft">
+        <span className="ms-0.5 rounded-full bg-canvas/90 px-1 text-[9px] font-bold leading-[14px] text-ink ring-1 ring-edge-soft">
           +{extra}
         </span>
       )}

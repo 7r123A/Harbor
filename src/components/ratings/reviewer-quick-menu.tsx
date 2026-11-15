@@ -506,6 +506,7 @@ export function ReviewerQuickMenu({
             </div>
             <div className="flex shrink-0 items-center gap-1.5 pb-1">
               {!mine && (
+              <span className="inline-flex" title={friendship === "friends" ? t("This user is your friend.") : friendship === "requested" ? t("Friend request pending") : undefined}>
                 <button
                   type="button"
                   onClick={async () => {
@@ -519,11 +520,12 @@ export function ReviewerQuickMenu({
                   }}
                   disabled={friendship === "friends" || friendship === "requested" || friend === "sending" || friend === "sent"}
                   aria-label={t("Add friend")}
-                  title={friend === "sent" ? t("Friend request sent") : t("Add friend — send a friend request")}
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-elevated/60 text-ink-muted transition-colors hover:text-ink disabled:opacity-60"
+                  title={undefined}
+                  className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${friendship === "friends" ? "cursor-default bg-elevated/30 text-ink-subtle opacity-55" : "bg-elevated/60 text-ink-muted hover:text-ink"}`}
                 >
                   {friend === "sending" ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} strokeWidth={2.2} />}
                 </button>
+                </span>
               )}
               {!mine && (
                 <button
