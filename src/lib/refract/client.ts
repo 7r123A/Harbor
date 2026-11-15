@@ -287,7 +287,7 @@ async function runRefractWatchlistSync(
 
 const watchlistQueues = new Map<string, Promise<unknown>>();
 
-/** Preserve the order of rapid add/remove requests for each verified title. */
+/** Serialize membership writes per account, even when a title gains a new external ID. */
 export function syncRefractWatchlist(
   key: string,
   input: RefractWatchlistInput,
@@ -296,7 +296,7 @@ export function syncRefractWatchlist(
 ): Promise<string | undefined> {
   const identity = refractWatchlistIdentity(input);
   if (!identity) return runRefractWatchlistSync(key, input, on, assertCurrent);
-  const queueKey = `${identity.type}:${identity.idType}:${identity.id}`;
+  const queueKey = key;
   const next = (watchlistQueues.get(queueKey) ?? Promise.resolve()).then(() =>
     runRefractWatchlistSync(key, input, on, assertCurrent),
   );
