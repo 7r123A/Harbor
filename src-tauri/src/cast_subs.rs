@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use uuid::Uuid;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct CastSub {
     pub kind: String,
     #[serde(default)]
@@ -135,16 +135,29 @@ fn ensure_utf8(path: &Path, declared: &str, dir: &Path) -> PathBuf {
     let Ok(bytes) = std::fs::read(path) else {
         return path.to_path_buf();
     };
-    let body = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF][..]).unwrap_or(&bytes);
     let declared = declared.trim().to_ascii_lowercase();
-    if (declared.is_empty() || declared == "auto" || declared == "utf-8") && std::str::from_utf8(body).is_ok() {
+    let automatic = matches!(declared.as_str(), "" | "auto" | "utf-8");
+    // A byte-order mark names the encoding outright. Notepad saves "Unicode" as UTF-16, which
+    // every guess below would misread.
+    let (encoding, body) = match encoding_rs::Encoding::for_bom(&bytes) {
+        Some((encoding, bom)) if automatic && encoding != encoding_rs::UTF_8 => (encoding, &bytes[bom..]),
+        _ => {
+            let body = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF][..]).unwrap_or(&bytes);
+            if automatic && std::str::from_utf8(body).is_ok() {
+                return path.to_path_buf();
+            }
+            let encoding = if automatic {
+                guess_legacy_encoding(body)
+            } else {
+                encoding_rs::Encoding::for_label(declared.as_bytes()).unwrap_or(encoding_rs::WINDOWS_1252)
+            };
+            (encoding, body)
+        }
+    };
+    if encoding == encoding_rs::UTF_8 {
         return path.to_path_buf();
     }
-    let encoding = match declared.as_str() {
-        "" | "auto" | "utf-8" => guess_legacy_encoding(body),
-        label => encoding_rs::Encoding::for_label(label.as_bytes()).unwrap_or(encoding_rs::WINDOWS_1252),
-    };
-    let (text, _, _) = encoding.decode(body);
+    let (text, _) = encoding.decode_without_bom_handling(body);
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("srt");
     let out = dir.join(format!("{}.{ext}", Uuid::new_v4()));
     if std::fs::write(&out, text.as_bytes()).is_ok() {
@@ -289,11 +302,6 @@ async fn download_remote(url: &str, declared_format: Option<&str>, encoding: &st
     }
 }
 
-fn is_http_url(s: &str) -> bool {
-    let lower = s.to_lowercase();
-    lower.starts_with("http://") || lower.starts_with("https://")
-}
-
 async fn prepare_local(path: &str, declared_format: Option<&str>, encoding: &str, dir: &Path) -> Option<PathBuf> {
     let src = PathBuf::from(path);
     if !src.is_file() {
@@ -308,30 +316,36 @@ async fn prepare_local(path: &str, declared_format: Option<&str>, encoding: &str
     }
 }
 
-async fn convert_to_srt(input: &Path, dir: &Path) -> Option<PathBuf> {
+/// Small subtitle files convert in well under a second.
+const SUBTITLE_JOB_TIMEOUT: Duration = Duration::from_secs(30);
+/// Pulling a track out of a film reads the whole container, which takes minutes over a network.
+const EXTRACT_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Runs one FFmpeg job that writes `out`, within `timeout`. The cast command waiting on it holds
+/// the cast controls, so a stalled download or a damaged file must not hold them forever.
+async fn run_ffmpeg(args: Vec<std::ffi::OsString>, out: PathBuf, timeout: Duration) -> Option<PathBuf> {
     let ffmpeg = crate::transcode::locate_ffmpeg()?;
+    let mut cmd = crate::cast_transcode::quiet_command(&ffmpeg);
+    cmd.args(["-hide_banner", "-loglevel", "error", "-nostdin", "-y"]).args(args).arg(&out);
+    match crate::process_output::output(cmd, timeout).await {
+        Ok(result) if result.status.success() && out.is_file() => Some(out),
+        Ok(result) => {
+            let detail = String::from_utf8_lossy(&result.stderr);
+            eprintln!("[harbor::cast-subs] ffmpeg failed: {}", detail.lines().last().unwrap_or("").trim());
+            let _ = std::fs::remove_file(&out);
+            None
+        }
+        Err(error) => {
+            eprintln!("[harbor::cast-subs] ffmpeg did not finish: {error}");
+            let _ = std::fs::remove_file(&out);
+            None
+        }
+    }
+}
+
+async fn convert_to_srt(input: &Path, dir: &Path) -> Option<PathBuf> {
     let out = dir.join(format!("{}.srt", Uuid::new_v4()));
-    let mut cmd = tokio::process::Command::new(&ffmpeg);
-    cmd.arg("-hide_banner")
-        .arg("-loglevel")
-        .arg("error")
-        .arg("-y")
-        .arg("-i")
-        .arg(input)
-        .arg(&out);
-    #[cfg(windows)]
-    {
-        cmd.creation_flags(0x0800_0000);
-    }
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    let status = cmd.status().await.ok()?;
-    if status.success() && out.is_file() {
-        Some(out)
-    } else {
-        None
-    }
+    run_ffmpeg(vec!["-i".into(), input.into()], out, SUBTITLE_JOB_TIMEOUT).await
 }
 
 async fn extract_embedded(
@@ -340,52 +354,18 @@ async fn extract_embedded(
     headers: &HashMap<String, String>,
     dir: &Path,
 ) -> Option<PathBuf> {
-    let ffmpeg = crate::transcode::locate_ffmpeg()?;
     let out = dir.join(format!("{}.srt", Uuid::new_v4()));
-    let mut cmd = tokio::process::Command::new(&ffmpeg);
-    cmd.arg("-hide_banner")
-        .arg("-loglevel")
-        .arg("error")
-        .arg("-y");
-    apply_ffmpeg_headers(&mut cmd, headers);
-    cmd.arg("-i")
-        .arg(source_url)
-        .arg("-map")
-        .arg(format!("0:s:{}", src_index))
-        .arg("-c:s")
-        .arg("srt")
-        .arg(&out);
-    #[cfg(windows)]
-    {
-        cmd.creation_flags(0x0800_0000);
+    let mut args: Vec<std::ffi::OsString> = crate::cast_transcode::http_input_args(source_url, headers, true)
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    if crate::cast_transcode::is_http(source_url) {
+        // A connection that stays open but sends nothing would otherwise stall until the timeout.
+        args.extend(["-rw_timeout".into(), "20000000".into()]);
     }
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    let status = cmd.status().await.ok()?;
-    if status.success() && out.is_file() {
-        Some(out)
-    } else {
-        None
-    }
-}
-
-fn apply_ffmpeg_headers(cmd: &mut tokio::process::Command, headers: &HashMap<String, String>) {
-    for (k, v) in headers {
-        if k.to_lowercase() == "user-agent" {
-            cmd.arg("-user_agent").arg(v);
-        }
-    }
-    let mut blob = String::new();
-    for (k, v) in headers {
-        if k.to_lowercase() == "user-agent" {
-            continue;
-        }
-        blob.push_str(&format!("{}: {}\r\n", k, v));
-    }
-    if !blob.is_empty() {
-        cmd.arg("-headers").arg(blob);
-    }
+    args.extend(["-i".into(), source_url.into(), "-map".into(), format!("0:s:{src_index}").into()]);
+    args.extend(["-c:s".into(), "srt".into()]);
+    run_ffmpeg(args, out, EXTRACT_TIMEOUT).await
 }
 
 /// Extracted embedded tracks, so a seek or a settings change on the TV does not read a large
@@ -409,7 +389,7 @@ pub async fn prepare_base(
     match sub.kind.as_str() {
         "external" => {
             let url = sub.url.as_deref()?;
-            if is_http_url(url) {
+            if crate::cast_transcode::is_http(url) {
                 download_remote(url, sub.format.as_deref(), encoding, &dir).await
             } else {
                 prepare_local(url, sub.format.as_deref(), encoding, &dir).await
@@ -447,7 +427,6 @@ pub async fn place(base: &Path, style: &CastSubStyle, seek_start: f64, delay: f6
 }
 
 async fn shift_subtitle(input: &Path, seek_start: f64, delay: f64, dir: &Path) -> Option<PathBuf> {
-    let ffmpeg = crate::transcode::locate_ffmpeg()?;
     // ASS keeps its own styling; everything else is re-written as SRT.
     let ass = input
         .extension()
@@ -455,28 +434,15 @@ async fn shift_subtitle(input: &Path, seek_start: f64, delay: f64, dir: &Path) -
         .is_some_and(|e| e.eq_ignore_ascii_case("ass") || e.eq_ignore_ascii_case("ssa"));
     let (ext, codec) = if ass { ("ass", "ass") } else { ("srt", "srt") };
     let out = dir.join(format!("{}.{ext}", Uuid::new_v4()));
-    let mut cmd = tokio::process::Command::new(&ffmpeg);
-    cmd.arg("-hide_banner").arg("-loglevel").arg("error").arg("-y");
+    let mut args: Vec<std::ffi::OsString> = Vec::new();
     if delay.abs() > 0.0005 {
-        cmd.arg("-itsoffset").arg(format!("{delay:.3}"));
+        args.extend(["-itsoffset".into(), format!("{delay:.3}").into()]);
     }
     if seek_start > 0.0 {
-        cmd.arg("-ss").arg(format!("{:.3}", seek_start));
+        args.extend(["-ss".into(), format!("{seek_start:.3}").into()]);
     }
-    cmd.arg("-i").arg(input).arg("-c:s").arg(codec).arg(&out);
-    #[cfg(windows)]
-    {
-        cmd.creation_flags(0x0800_0000);
-    }
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    let status = cmd.status().await.ok()?;
-    if status.success() && out.is_file() {
-        Some(out)
-    } else {
-        None
-    }
+    args.extend(["-i".into(), input.into(), "-c:s".into(), codec.into()]);
+    run_ffmpeg(args, out, SUBTITLE_JOB_TIMEOUT).await
 }
 
 pub fn cleanup() {
@@ -513,6 +479,17 @@ mod encoding_tests {
         let out = ensure_utf8(&fr, "windows-1252", &dir);
         assert_eq!(std::fs::read_to_string(out).unwrap(), french);
         assert_eq!(guess_legacy_encoding(&latin).name(), "windows-1252");
+        // Notepad's "Unicode" (UTF-16 with a byte-order mark) is read by its mark, not guessed.
+        let mut utf16 = vec![0xFF, 0xFE];
+        utf16.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
+        let wide = dir.join("wide.srt");
+        std::fs::write(&wide, &utf16).unwrap();
+        let out = ensure_utf8(&wide, "auto", &dir);
+        assert_eq!(std::fs::read_to_string(out).unwrap(), text);
+        // A UTF-8 file with a mark is already readable.
+        let marked = dir.join("marked.srt");
+        std::fs::write(&marked, [&[0xEF, 0xBB, 0xBF][..], text.as_bytes()].concat()).unwrap();
+        assert_eq!(ensure_utf8(&marked, "auto", &dir), marked);
         let _ = std::fs::remove_dir_all(dir);
     }
 

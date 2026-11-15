@@ -137,6 +137,9 @@ const castStudio: Record<string, string> = {
     "Pengaturan ini menyesuaikan diri dengan perangkat yang Anda pilih.",
   "Shifted {offset}, {parts} part(s), timing not verified":
     "Digeser {offset}, {parts} bagian, akurasi belum diverifikasi",
-  "The film changed while the audio was syncing, so it was not added.": "Film berganti saat audio sedang disinkronkan, jadi audio tidak ditambahkan.",
+  "The film changed while the audio was syncing, so it was not added.":
+    "Film berganti saat audio sedang disinkronkan, jadi audio tidak ditambahkan.",
+  "Subtitles will look like this on the TV.": "Beginilah tampilan subtitle di TV.",
+  "Conversion speed": "Kecepatan konversi",
 };
 export default castStudio;

@@ -317,7 +317,21 @@ async fn transcode_failed(session: &HlsSession) -> bool {
 }
 
 fn segment_number(filename: &str) -> Option<u32> {
-    filename.strip_prefix("seg")?.strip_suffix(".ts")?.parse().ok()
+    let stem = filename.strip_prefix("seg")?;
+    stem.strip_suffix(".ts").or_else(|| stem.strip_suffix(".m4s"))?.parse().ok()
+}
+
+/// The fragmented-MP4 header every `.m4s` segment of an H.265 stream starts from.
+const FMP4_INIT: &str = "init.mp4";
+
+/// The content type of a finished segment, or None while FFmpeg is still writing it.
+fn finished_segment_type(filename: &str, bytes: &[u8]) -> Option<&'static str> {
+    if filename.ends_with(".ts") {
+        return (bytes.first() == Some(&0x47)).then_some("video/mp2t");
+    }
+    // An MP4 file starts with a box: a 4-byte size, then a 4-letter type (ftyp, styp, moof).
+    let boxed = bytes.len() >= 8 && bytes[4..8].iter().all(u8::is_ascii_alphanumeric);
+    boxed.then_some("video/mp4")
 }
 
 /// Deletes segments well behind what the receiver plays so a long film does not fill the disk.
@@ -359,7 +373,7 @@ async fn handle_segment(
     State(state): State<HlsState>,
     Path((id, filename)): Path<(String, String)>,
 ) -> Response {
-    if !filename.ends_with(".ts") {
+    if segment_number(&filename).is_none() && filename != FMP4_INIT {
         return (StatusCode::NOT_FOUND, "not a segment").into_response();
     }
     if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
@@ -381,9 +395,9 @@ async fn handle_segment(
         if path.is_file() {
             tokio::time::sleep(Duration::from_millis(80)).await;
             if let Ok(bytes) = tokio::fs::read(&path).await {
-                if !bytes.is_empty() && bytes[0] == 0x47 {
+                if let Some(content_type) = finished_segment_type(&filename, &bytes) {
                     prune_after_serving(&session, &filename).await;
-                    return binary_response(bytes, "video/mp2t");
+                    return binary_response(bytes, content_type);
                 }
             }
         }
@@ -471,18 +485,22 @@ pub(crate) fn watch_stderr(stderr: tokio::process::ChildStderr, stats: SharedSta
 async fn spawn_continuous_ffmpeg(job: &CastJob, temp_dir: &std::path::Path) -> Result<Child, String> {
     let ffmpeg = crate::transcode::locate_ffmpeg().ok_or_else(|| "ffmpeg not found".to_string())?;
     let caps = crate::cast_transcode::caps().await;
-    let segment_pattern = temp_dir.join("seg%05d.ts");
+    let fmp4 = job.plan.hls_fmp4;
+    let segment_pattern = temp_dir.join(if fmp4 { "seg%05d.m4s" } else { "seg%05d.ts" });
     let playlist_path = temp_dir.join("playlist.m3u8");
     let mut cmd = tokio::process::Command::new(&ffmpeg);
-    cmd.args(job.input_args(true, &caps))
-        .args(&job.plan.output)
-        .args([
+    cmd.args(job.input_args(true, &caps)).args(&job.plan.output);
+    if fmp4 {
+        // `hvc1` is the sample entry Apple's players require for H.265.
+        cmd.args(["-tag:v", "hvc1", "-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", FMP4_INIT]);
+    } else {
+        cmd.args(["-hls_segment_type", "mpegts"]);
+    }
+    cmd.args([
             "-f",
             "hls",
             "-hls_time",
             "4",
-            "-hls_segment_type",
-            "mpegts",
             "-hls_playlist_type",
             "event",
             "-hls_list_size",
@@ -540,6 +558,28 @@ mod tests {
         let body = master_playlist(&Variant { codecs: "avc1.640029,ac-3".into(), ..variant() });
         assert!(body.contains("CODECS=\"avc1.640029,ac-3\",RESOLUTION=1920x1080,FRAME-RATE=23.976"));
         assert!(body.ends_with("variant.m3u8\n"));
+    }
+
+    #[test]
+    fn mp4_segments_are_served_once_finished() {
+        assert_eq!(segment_number("seg00042.m4s"), Some(42));
+        assert_eq!(segment_number("init.mp4"), None);
+        let moof = [0u8, 0, 0, 24, b'm', b'o', b'o', b'f'];
+        assert_eq!(finished_segment_type("seg00001.m4s", &moof), Some("video/mp4"));
+        assert_eq!(finished_segment_type(FMP4_INIT, &[0, 0, 0, 32, b'f', b't', b'y', b'p']), Some("video/mp4"));
+        assert_eq!(finished_segment_type("seg00001.m4s", &[0, 0]), None);
+        assert_eq!(finished_segment_type("seg00001.ts", &[0x47, 0x40]), Some("video/mp2t"));
+        assert_eq!(finished_segment_type("seg00001.ts", &[0, 0]), None);
+        // FFmpeg's fMP4 playlist: pruning keeps the header map every segment depends on.
+        let mut p = String::from(
+            "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-MAP:URI=\"init.mp4\"\n",
+        );
+        for n in 0..14 {
+            p.push_str(&format!("#EXTINF:4.004000,\nseg{n:05}.m4s\n"));
+        }
+        let out = start_at_beginning(&retained_playlist(&p, 10));
+        assert!(out.contains("#EXT-X-MAP:URI=\"init.mp4\"\n#EXT-X-MEDIA-SEQUENCE:10\n"), "{out}");
+        assert!(!out.contains("seg00009.m4s") && out.contains("seg00010.m4s"), "{out}");
     }
 
     #[test]

@@ -7,6 +7,7 @@
 //! is avoided on Windows), and every child is killed when its job is cancelled.
 
 use crate::audio_align::{self, FeatureExtractor, Features, RefClip, Verdict, VerifyStats};
+use crate::cast_transcode::is_http;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read};
@@ -126,11 +127,6 @@ impl Drop for JobGuard {
     }
 }
 
-fn is_http(url: &str) -> bool {
-    let lower = url.trim_start().to_ascii_lowercase();
-    lower.starts_with("http://") || lower.starts_with("https://")
-}
-
 /// Accepts plain paths and `file://` URLs; anything else must be HTTP(S).
 fn local_path(url: &str) -> Option<PathBuf> {
     if is_http(url) {
@@ -189,23 +185,8 @@ fn hide_window(cmd: &mut Command) {
 
 /// HTTP-only input options. FFmpeg refuses to open a local file when they are present.
 fn push_input(cmd: &mut Command, url: &str, headers: &HashMap<String, String>) {
+    cmd.args(crate::cast_transcode::http_input_args(url, headers, true));
     if is_http(url) {
-        let ua = headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("user-agent"))
-            .map(|(_, v)| v.clone())
-            .unwrap_or_else(|| "Harbor".into());
-        cmd.arg("-user_agent").arg(ua);
-        let blob: String = headers
-            .iter()
-            .filter(|(k, _)| !k.eq_ignore_ascii_case("user-agent") && !k.contains(['\r', '\n']))
-            .filter(|(_, v)| !v.contains(['\r', '\n']))
-            .map(|(k, v)| format!("{k}: {v}\r\n"))
-            .collect();
-        if !blob.is_empty() {
-            cmd.arg("-headers").arg(blob);
-        }
-        cmd.arg("-reconnect").arg("1").arg("-reconnect_streamed").arg("1").arg("-reconnect_delay_max").arg("4");
         // A connection that stays open but sends nothing would otherwise block the read forever.
         cmd.arg("-rw_timeout").arg("20000000");
     }

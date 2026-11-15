@@ -315,7 +315,7 @@ pub(crate) fn parse_probe(json: &str) -> Result<MediaProbe, String> {
     Ok(probe)
 }
 
-fn quiet_command(program: &std::path::Path) -> std::process::Command {
+pub(crate) fn quiet_command(program: &std::path::Path) -> std::process::Command {
     let mut cmd = std::process::Command::new(program);
     #[cfg(windows)]
     {
@@ -462,6 +462,9 @@ pub struct CastPlan {
     pub output: Vec<String>,
     pub summary: PlanSummary,
     pub hls_codecs: String,
+    /// H.265 sent untouched: HLS receivers (Apple TV above all) only take it in fragmented MP4
+    /// segments, never in MPEG-TS.
+    pub hls_fmp4: bool,
     pub width: u32,
     pub height: u32,
     pub fps: f64,
@@ -531,6 +534,19 @@ fn fill_crop(src_w: u32, src_h: u32, aspect: (u32, u32)) -> Option<(String, u32,
         (src_w, even(src_w as f64 / target))
     };
     Some((format!("crop={w}:{h}"), w, h))
+}
+
+/// The CODECS name the HLS playlist announces: High profile, level 4.1 up to 1080p, 5.1 above.
+/// Receivers check it before loading, so a 4K stream announced as 4.1 is refused.
+fn h264_codec_string(height: u32) -> &'static str {
+    if height > 1080 { "avc1.640033" } else { "avc1.640029" }
+}
+
+/// Main 10 for 10-bit (HDR) sources, Main for 8-bit ones; level 5.1 above 1080p, 4.1 up to it.
+fn hevc_codec_string(video: &VideoInfo) -> String {
+    let profile = if video.pix_fmt.contains("10") || video.pix_fmt.contains("12") || video.hdr { "2.4" } else { "1.6" };
+    let level = if video.height > 1080 { 153 } else { 123 };
+    format!("hvc1.{profile}.L{level}.B0")
 }
 
 pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
@@ -644,6 +660,7 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         reasons,
     };
     let mut hls_video_codec = "avc1.640029".to_string();
+    let mut hls_fmp4 = false;
 
     if encode_video {
         let encoder = if options.hardware_encoding && caps.nvenc {
@@ -744,19 +761,19 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
             output.extend(["-level".into(), if out_h > 1080 { "5.1".into() } else { "4.1".into() }]);
             output.extend(["-keyint_min".into(), gop.to_string()]);
         }
-        if out_h > 1080 {
-            hls_video_codec = "avc1.640033".into();
-        }
+        hls_video_codec = h264_codec_string(out_h).into();
         summary.video = encoder.into();
         summary.hardware = (encoder != "libx264").then(|| caps.hardware_label().unwrap_or("GPU").to_string());
         summary.output_height = out_h;
     } else {
         output.extend(["-c:v".into(), "copy".into()]);
-        if video.is_some_and(|v| v.codec == "h264") {
+        if let Some(v) = video.filter(|v| v.codec == "h264") {
             output.extend(["-bsf:v".into(), "h264_mp4toannexb".into()]);
-        } else if video.is_some_and(|v| v.codec == "hevc") {
+            hls_video_codec = h264_codec_string(v.height).into();
+        } else if let Some(v) = video.filter(|v| v.codec == "hevc") {
             output.extend(["-bsf:v".into(), "hevc_mp4toannexb".into()]);
-            hls_video_codec = "hvc1.2.4.L153.B0".into();
+            hls_video_codec = hevc_codec_string(v);
+            hls_fmp4 = true;
         }
     }
 
@@ -812,6 +829,7 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         output,
         summary,
         hls_codecs: format!("{hls_video_codec},{hls_audio_codec}"),
+        hls_fmp4,
         width: if encode_video { out_w } else { src_w.max(2) },
         height: if encode_video { out_h } else { src_h.max(2) },
         fps,
@@ -1069,6 +1087,7 @@ mod tests {
         assert!(args.contains("-c:v copy -bsf:v hevc_mp4toannexb"), "{args}");
         assert!(args.contains("-c:a copy"), "{args}");
         assert_eq!(plan.hls_codecs, "hvc1.2.4.L153.B0,ec-3");
+        assert!(plan.hls_fmp4, "H.265 travels in fragmented MP4 over HLS");
         let forced = CastOptions { force_conversion: true, ..options };
         let args = self::plan(Some(&probe), &forced, &caps).output.join(" ");
         assert!(args.contains("-c:v h264_nvenc") && args.contains("-c:a ac3"), "{args}");
@@ -1088,7 +1107,10 @@ mod tests {
                 &caps,
             )
         };
-        let args = build(&CastOptions::default()).output.join(" ");
+        let copied = build(&CastOptions::default());
+        assert_eq!(copied.hls_codecs, "avc1.640029,mp4a.40.2");
+        assert!(!copied.hls_fmp4);
+        let args = copied.output.join(" ");
         assert!(args.contains("-c:v copy -bsf:v h264_mp4toannexb"), "{args}");
         assert!(args.contains("-c:a copy"), "{args}");
         let louder = CastOptions { volume_boost: 50, night_mode: true, audio_delay_ms: -250, ..Default::default() };
@@ -1155,6 +1177,17 @@ mod tests {
         let args = plan.output.join(" ");
         // 720x576 at 16:15 shows as 4:3, so square pixels need 768x576, not 720x576 (5:4).
         assert!(args.contains("scale=768:576,setsar=1"), "{args}");
+    }
+
+    #[test]
+    fn hls_announces_the_profile_and_level_actually_sent() {
+        let mut v = VideoInfo { codec: "hevc".into(), pix_fmt: "yuv420p".into(), height: 1080, ..Default::default() };
+        assert_eq!(hevc_codec_string(&v), "hvc1.1.6.L123.B0");
+        v.pix_fmt = "yuv420p10le".into();
+        v.height = 2160;
+        assert_eq!(hevc_codec_string(&v), "hvc1.2.4.L153.B0");
+        assert_eq!(h264_codec_string(2160), "avc1.640033");
+        assert_eq!(h264_codec_string(720), "avc1.640029");
     }
 
     #[test]

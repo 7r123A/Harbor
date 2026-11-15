@@ -1008,9 +1008,14 @@ pub async fn cast_reload(
             reload.options = options;
         }
         if let Some(sub) = subtitle {
-            reload.subtitle = (!sub.off).then_some(sub);
-            reprepare = true;
+            // Every settings change sends the subtitle along; downloading, extracting and
+            // re-encoding it again is only needed when it is another one.
+            let next = (!sub.off).then_some(sub);
+            reprepare |= next != reload.subtitle;
+            reload.subtitle = next;
         }
+        // A subtitle that could not be prepared last time (say, a download that timed out) is tried again.
+        reprepare |= reload.subtitle.is_some() && reload.sub_base.is_none() && reload.burn_bitmap.is_none();
         if let Some(style) = sub_style {
             reload.sub_style = Some(style);
         }

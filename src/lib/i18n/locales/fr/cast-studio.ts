@@ -137,6 +137,10 @@ const castStudio: Record<string, string> = {
     "Ces réglages s’adaptent à l’appareil que vous choisissez.",
   "Shifted {offset}, {parts} part(s), timing not verified":
     "Décalé de {offset}, {parts} partie(s), précision non vérifiée",
-  "The film changed while the audio was syncing, so it was not added.": "Le film a changé pendant la synchronisation de l'audio, il n'a donc pas été ajouté.",
+  "The film changed while the audio was syncing, so it was not added.":
+    "Le film a changé pendant la synchronisation de l'audio, il n'a donc pas été ajouté.",
+  "Subtitles will look like this on the TV.":
+    "Voici à quoi ressembleront les sous-titres sur la TV.",
+  "Conversion speed": "Vitesse de conversion",
 };
 export default castStudio;

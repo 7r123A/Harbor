@@ -135,6 +135,9 @@ const castStudio: Record<string, string> = {
     "이 설정은 선택한 기기에 맞게 자동으로 조정됩니다.",
   "Shifted {offset}, {parts} part(s), timing not verified":
     "{offset} 이동, {parts}개 구간, 정확도 미확인",
-  "The film changed while the audio was syncing, so it was not added.": "오디오를 동기화하는 동안 영화가 바뀌어 추가하지 않았습니다.",
+  "The film changed while the audio was syncing, so it was not added.":
+    "오디오를 동기화하는 동안 영화가 바뀌어 추가하지 않았습니다.",
+  "Subtitles will look like this on the TV.": "TV에서 자막이 이렇게 보입니다.",
+  "Conversion speed": "변환 속도",
 };
 export default castStudio;

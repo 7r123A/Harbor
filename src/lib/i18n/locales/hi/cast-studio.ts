@@ -134,6 +134,9 @@ const castStudio: Record<string, string> = {
     "ये सेटिंग्स आपके चुने हुए डिवाइस के हिसाब से अपने-आप सेट होती हैं।",
   "Shifted {offset}, {parts} part(s), timing not verified":
     "{offset} खिसकाया गया, {parts} भाग, सटीकता की जाँच नहीं हुई",
-  "The film changed while the audio was syncing, so it was not added.": "ऑडियो सिंक होते समय फ़िल्म बदल गई, इसलिए इसे नहीं जोड़ा गया।",
+  "The film changed while the audio was syncing, so it was not added.":
+    "ऑडियो सिंक होते समय फ़िल्म बदल गई, इसलिए इसे नहीं जोड़ा गया।",
+  "Subtitles will look like this on the TV.": "टीवी पर उपशीर्षक ऐसे दिखेंगे।",
+  "Conversion speed": "रूपांतरण गति",
 };
 export default castStudio;

@@ -136,6 +136,9 @@ const castStudio: Record<string, string> = {
     "Bu ayarlar seçtiğiniz cihaza göre kendiliğinden ayarlanır.",
   "Shifted {offset}, {parts} part(s), timing not verified":
     "{offset} kaydırıldı, {parts} parça, doğruluk doğrulanmadı",
-  "The film changed while the audio was syncing, so it was not added.": "Ses eşitlenirken film değişti, bu yüzden ses eklenmedi.",
+  "The film changed while the audio was syncing, so it was not added.":
+    "Ses eşitlenirken film değişti, bu yüzden ses eklenmedi.",
+  "Subtitles will look like this on the TV.": "Altyazılar TV'de böyle görünecek.",
+  "Conversion speed": "Dönüştürme hızı",
 };
 export default castStudio;
