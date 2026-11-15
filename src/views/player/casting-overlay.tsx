@@ -1,6 +1,7 @@
 import { CastIcon } from "@/components/player/cast-icon";
-import type { CastDeviceInfo } from "@/lib/cast";
+import type { CastDeviceInfo, CastPlanSummary } from "@/lib/cast";
 import { useT } from "@/lib/i18n";
+import type { CastTrouble } from "./hooks/use-cast-session";
 
 export function CastingOverlay({
   device,
@@ -8,15 +9,39 @@ export function CastingOverlay({
   poster,
   playing,
   connecting,
+  trouble,
+  summary,
 }: {
   device: CastDeviceInfo;
   title?: string;
   poster?: string | null;
   playing: boolean;
   connecting?: boolean;
+  trouble?: CastTrouble;
+  summary?: CastPlanSummary | null;
 }) {
   const t = useT();
-  const label = connecting ? t("Connecting to") : playing ? t("Casting to") : t("Paused on");
+  const label = connecting
+    ? t("Connecting to")
+    : trouble === "unreachable"
+      ? t("Not responding")
+      : trouble === "stopped"
+        ? t("Stopped on")
+        : playing
+          ? t("Casting to")
+          : t("Paused on");
+  const sent = summary
+    ? [
+        summary.video === "copy" || summary.video === "none"
+          ? null
+          : `H.264 ${summary.outputHeight}p`,
+        summary.audio,
+        summary.tonemap ? "HDR → SDR" : null,
+        summary.burnedSubtitles ? t("Subtitles") : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : null;
   return (
     <div className="pointer-events-none absolute inset-0 z-10 flex animate-[harbor-cast-in_240ms_ease-out] items-center justify-center bg-canvas">
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-canvas via-canvas to-canvas/95" />
@@ -72,6 +97,11 @@ export function CastingOverlay({
           {title && !connecting && (
             <span className="mt-3 max-w-[28rem] truncate text-[14px] font-medium text-ink-muted">
               {title}
+            </span>
+          )}
+          {sent && !connecting && (
+            <span className="mt-1 max-w-[32rem] truncate text-[11.5px] text-ink-subtle">
+              {sent}
             </span>
           )}
         </div>

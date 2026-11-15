@@ -1019,6 +1019,167 @@ async fn restart_active(
     Ok(info)
 }
 
+/// Applies cast settings to the running cast by restarting it at `position_sec`.
+#[tauri::command]
+pub async fn cast_reload(
+    proxy_state: tauri::State<'_, ProxyState>,
+    position_sec: f64,
+    options: Option<CastOptions>,
+    subtitle: Option<CastSub>,
+    sub_style: Option<CastSubStyle>,
+    audio_track_ordinal: Option<u32>,
+) -> Result<CastLoadInfo, String> {
+    let _operation = TRANSPORT_OPS.lock().await;
+    restart_active(&proxy_state, position_sec, false, move |reload| {
+        let mut reprepare = false;
+        if let Some(options) = options {
+            reprepare |= options.sub_encoding != reload.options.sub_encoding;
+            reload.hls = wants_hls(&reload.kind, &options);
+            reload.options = options;
+        }
+        if let Some(sub) = subtitle {
+            // Every settings change sends the subtitle along; downloading, extracting and
+            // re-encoding it again is only needed when it is another one.
+            let next = (!sub.off).then_some(sub);
+            reprepare |= next != reload.subtitle;
+            reload.subtitle = next;
+        }
+        // A subtitle that could not be prepared last time (say, a download that timed out) is tried again.
+        reprepare |= reload.subtitle.is_some() && reload.sub_base.is_none() && reload.burn_bitmap.is_none();
+        if let Some(style) = sub_style {
+            reload.sub_style = Some(style);
+        }
+        if let Some(ordinal) = audio_track_ordinal {
+            reload.audio_ordinal = ordinal;
+        }
+        reprepare || reload.probe.is_none()
+    })
+    .await
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CastPreview {
+    pub duration_sec: f64,
+    pub summary: PlanSummary,
+    pub caps: cast_transcode::FfmpegCaps,
+    pub hardware: Option<String>,
+    pub subtitle_codecs: Vec<String>,
+}
+
+fn preview_cache() -> &'static Mutex<HashMap<String, (std::time::Instant, MediaProbe)>> {
+    static CACHE: std::sync::OnceLock<Mutex<HashMap<String, (std::time::Instant, MediaProbe)>>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// What casting this source with these settings would do, for the settings panel.
+#[tauri::command]
+pub async fn cast_preview(
+    url: String,
+    headers: Option<HashMap<String, String>>,
+    options: Option<CastOptions>,
+    audio_track_ordinal: Option<u32>,
+    burn_subtitles: Option<bool>,
+    subtitle_ordinal: Option<u32>,
+) -> Result<CastPreview, String> {
+    let headers = headers.unwrap_or_default();
+    let cached = preview_cache()
+        .lock()
+        .ok()
+        .and_then(|c| c.get(&url).filter(|(at, _)| at.elapsed() < Duration::from_secs(600)).map(|(_, p)| p.clone()));
+    let probe = match cached {
+        Some(p) => p,
+        None => {
+            let p = cast_transcode::probe(&url, &headers).await?;
+            if let Ok(mut c) = preview_cache().lock() {
+                if c.len() > 16 {
+                    c.clear();
+                }
+                c.insert(url.clone(), (std::time::Instant::now(), p.clone()));
+            }
+            p
+        }
+    };
+    let caps = cast_transcode::caps().await;
+    let options = options.unwrap_or_default();
+    let bitmap = subtitle_ordinal
+        .and_then(|o| probe.subtitles.get(o as usize))
+        .filter(|s| s.is_bitmap())
+        .map(|s| s.index);
+    let text_burn = ("preview".to_string(), String::new());
+    let burning = burn_subtitles.unwrap_or(false);
+    let plan = cast_transcode::build_plan(
+        &PlanInput {
+            probe: Some(&probe),
+            options: &options,
+            audio_ordinal: audio_track_ordinal.unwrap_or(0),
+            burn_sub: (burning && bitmap.is_none()).then_some(&text_burn),
+            burn_bitmap: if burning { bitmap } else { None },
+            force_video_encode: false,
+            limits: DeviceLimits::default(),
+        },
+        &caps,
+    );
+    Ok(CastPreview {
+        duration_sec: probe.duration,
+        summary: plan.summary,
+        hardware: caps.hardware_label().map(str::to_string),
+        caps,
+        subtitle_codecs: probe.subtitles.iter().map(|s| s.codec.clone()).collect(),
+    })
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CastVolume {
+    pub supported: bool,
+    /// 0..=100
+    pub level: u32,
+    pub muted: bool,
+}
+
+/// Reads, and optionally changes, the receiver's own volume.
+#[tauri::command]
+pub async fn cast_volume(level: Option<u32>, muted: Option<bool>) -> Result<CastVolume, String> {
+    if let Some(cu) = snapshot_dlna() {
+        if level.is_some() || muted.is_some() {
+            dlna::set_volume(&cu, level, muted).await?;
+        }
+        return match dlna::get_volume(&cu).await {
+            Ok((level, muted)) => Ok(CastVolume { supported: true, level, muted }),
+            Err(_) => Ok(CastVolume { supported: false, level: 0, muted: false }),
+        };
+    }
+    if let Ok((host, port, ..)) = snapshot_chromecast() {
+        return tokio::task::spawn_blocking(move || -> Result<CastVolume, String> {
+            let device = connect_device(&host, port)?;
+            if level.is_some() || muted.is_some() {
+                device
+                    .receiver
+                    .set_volume(rust_cast::channels::receiver::Volume {
+                        level: level.map(|l| l.min(100) as f32 / 100.0),
+                        muted,
+                    })
+                    .map_err(|e| format!("volume: {e}"))?;
+            }
+            let status = device.receiver.get_status().map_err(|e| format!("volume: {e}"))?;
+            Ok(CastVolume {
+                supported: true,
+                level: (status.volume.level.unwrap_or(0.0) * 100.0).round() as u32,
+                muted: status.volume.muted.unwrap_or(false),
+            })
+        })
+        .await
+        .map_err(|e| format!("join: {e}"))?;
+    }
+    Ok(CastVolume { supported: false, level: 0, muted: false })
+}
+
+#[tauri::command]
+pub async fn cast_capabilities() -> cast_transcode::FfmpegCaps {
+    cast_transcode::caps().await
+}
+
 async fn load_dlna_audio(proxy: &ProxyState, control_url: String, input: AudioCastInput, paused: bool, expected_previous: Option<&str>) -> Result<(), String> {
     let title = input.title.clone();
     let mime = input.format.mime().to_string();
@@ -2058,7 +2219,7 @@ mod live_tv_tests {
                 Err(e) => failures.push(format!("{}: {e}", scenario.name)),
             }
             if index == 0 {
-                // Pause must hold the picture and Play continue it.
+                // Pause must hold the picture, Play continue it, and the TV volume follow.
                 let _ = dlna::pause(control.clone()).await;
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 let before = dlna::status(control.clone()).await;
@@ -2074,6 +2235,11 @@ mod live_tv_tests {
                 match wait_playing(&control, 3.0, 40, stats.as_ref()).await {
                     Ok(t) => eprintln!("[live-tv]   resumed after {t:.1}s"),
                     Err(e) => failures.push(format!("resume: {e}")),
+                }
+                let _ = dlna::set_volume(&control, Some(35), None).await;
+                match dlna::get_volume(&control).await {
+                    Ok((35, _)) => eprintln!("[live-tv]   TV volume set to 35"),
+                    other => failures.push(format!("volume: {other:?}")),
                 }
             }
             // A seek on a converted cast restarts the conversion at the new position.
