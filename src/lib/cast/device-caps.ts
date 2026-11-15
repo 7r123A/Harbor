@@ -245,6 +245,11 @@ export function getDeviceCaps(device: Pick<CastDeviceInfo, "kind" | "name" | "mo
   return CAPS_CHROMECAST_GEN1_2;
 }
 
+/** The DLNA fallback is a guess for renderers Harbor does not recognise, not knowledge of them. */
+export function isGuessedDlnaCaps(caps: DeviceCaps): boolean {
+  return caps === CAPS_GENERIC_DLNA;
+}
+
 export type StreamLike = {
   parsedTitle?: string | null;
   title?: string | null;

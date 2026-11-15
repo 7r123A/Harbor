@@ -12,12 +12,17 @@ import {
   castLoad,
   castPause,
   castPlay,
+  castReload,
   castSeek,
   castStatus,
   castStop,
   type CastDeviceInfo,
+  type CastLoadInfo,
+  type CastOptions,
+  type CastPlanSummary,
   type CastSubInfo,
   type CastSubStyle,
+  type CastTranscodeStats,
   type TranscodeProfile,
 } from "@/lib/cast";
 import type { PlayerBridge, PlayerSnapshot } from "@/lib/player/bridge";
@@ -46,7 +51,12 @@ type LoadParams = {
   subStyle?: CastSubStyle | null;
   audioOnly?: boolean;
   audioTrackOrdinal?: number;
+  options?: CastOptions;
+  deviceId?: string;
 };
+
+/** Receiver trouble the session bar offers a fix for. */
+export type CastTrouble = "unreachable" | "stopped" | null;
 
 export function localizedFfmpegInstallStep(): string {
   const step = ffmpegInstallStep();
@@ -148,6 +158,19 @@ export function useCastSession(
   const [castPlaying, setCastPlaying] = useState<boolean>(true);
   const [castPositionSec, setCastPositionSec] = useState<number>(0);
   const [burnSubsOnTv, setBurnSubsOnTv] = useState<boolean>(true);
+  const [castAudioChoice, setCastAudioChoice] = useState<string>("auto");
+  const [castSubtitleChoice, setCastSubtitleChoice] = useState<string>("auto");
+  const [castSubtitleFile, setCastSubtitleFile] = useState<string | null>(null);
+  const [castApplying, setCastApplying] = useState(false);
+  const [castTrouble, setCastTrouble] = useState<CastTrouble>(null);
+  const [castStats, setCastStats] = useState<CastTranscodeStats | null>(null);
+  const [castSummary, setCastSummary] = useState<CastPlanSummary | null>(null);
+  const idleTicksRef = useRef(0);
+  const everPlayedRef = useRef(false);
+  const seekTargetRef = useRef<number | null>(null);
+  const seekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seekWaitersRef = useRef<Array<() => void>>([]);
+  const applyingRef = useRef(false);
   const lastCastPositionRef = useRef<number>(0);
   const castStartTargetRef = useRef<number>(0);
   const castSeekConfirmedRef = useRef<boolean>(false);
@@ -231,6 +254,11 @@ export function useCastSession(
         return;
       }
       setPendingCastDevice(device);
+      setCastTrouble(null);
+      setCastStats(null);
+      setCastSummary(null);
+      idleTicksRef.current = 0;
+      everPlayedRef.current = false;
       beforeLoad?.();
       const startTarget = params.startTimeSec ?? 0;
       lastCastPositionRef.current = startTarget;
@@ -251,6 +279,7 @@ export function useCastSession(
       if (res.ok) {
         setCastDevice(device);
         setPendingCastDevice(null);
+        setCastSummary(res.info?.summary ?? null);
       } else {
         setPendingCastDevice(null);
         try {
@@ -290,6 +319,21 @@ export function useCastSession(
         return null;
       });
       if (cancelled || !s || !ownsCastSession(lease)) return;
+      setCastStats(s.transcode ?? null);
+      if (s.summary) setCastSummary(s.summary);
+      if (s.player_state === "UNREACHABLE") {
+        setCastTrouble("unreachable");
+        return;
+      }
+      // A receiver that drops to idle by itself (decoder error, renderer restart) is no longer
+      // playing, whatever Harbor last asked of it.
+      if (s.player_state === "IDLE" && everPlayedRef.current) {
+        idleTicksRef.current += 1;
+        if (idleTicksRef.current >= 3) setCastTrouble("stopped");
+      } else {
+        idleTicksRef.current = 0;
+        if (s.player_state === "PLAYING" || s.player_state === "PAUSED") setCastTrouble(null);
+      }
       if (s.player_state === "PLAYING") {
         castPlayingRef.current = true;
         setCastPlaying(true);
@@ -308,8 +352,15 @@ export function useCastSession(
         }
       }
       if (s.position_sec > 0) {
-        lastCastPositionRef.current = s.position_sec;
-        setCastPositionSec(s.position_sec);
+        if (s.player_state === "PLAYING" && s.position_sec > castStartTargetRef.current + 1) {
+          everPlayedRef.current = true;
+        }
+        // While a seek or a settings change restarts the stream, the receiver still reports the
+        // old stream for a moment; keep showing where it is going.
+        if (seekTargetRef.current == null && !applyingRef.current) {
+          lastCastPositionRef.current = s.position_sec;
+          setCastPositionSec(s.position_sec);
+        }
       }
     };
     void tick();
@@ -400,6 +451,10 @@ export function useCastSession(
       return;
     }
     const finalPos = lastCastPositionRef.current;
+    if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
+    seekTimerRef.current = null;
+    seekTargetRef.current = null;
+    seekWaitersRef.current.splice(0).forEach((done) => done());
     try {
       await owned(castStop);
     } catch (error) {
@@ -434,15 +489,84 @@ export function useCastSession(
         await audio.seek(sec).catch(() => {});
         return;
       }
+      // A converted cast restarts its conversion on every seek, so rapid presses (+15 s, +15 s)
+      // become one seek to where they end up.
+      const target = Math.max(0, sec);
+      seekTargetRef.current = target;
+      lastCastPositionRef.current = target;
+      setCastPositionSec(target);
+      if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
+      // The seek belongs to the cast it was made in: if that cast stops or another one starts
+      // before the timer fires, the seek is dropped instead of reaching the new cast.
+      const lease = leaseRef.current;
+      await new Promise<void>((resolve) => {
+        seekWaitersRef.current.push(resolve);
+        seekTimerRef.current = setTimeout(() => {
+          seekTimerRef.current = null;
+          const waiters = seekWaitersRef.current.splice(0);
+          const finalTarget = seekTargetRef.current ?? target;
+          if (!lease || leaseRef.current !== lease || !ownsCastSession(lease)) {
+            waiters.forEach((done) => done());
+            return;
+          }
+          void withCastSession(lease, () => castSeek(finalTarget))
+            .then(() => {
+              if (leaseRef.current !== lease) return;
+              castStartTargetRef.current = finalTarget;
+              castSeekConfirmedRef.current = false;
+              everPlayedRef.current = false;
+              idleTicksRef.current = 0;
+            })
+            .catch((error) => {
+              if (leaseRef.current === lease) setCastError(String(error));
+            })
+            .finally(() => {
+              if (seekTargetRef.current === finalTarget) seekTargetRef.current = null;
+              waiters.forEach((done) => done());
+            });
+        }, 450);
+      });
+    },
+    [audio],
+  );
+
+  /** Drops a seek still waiting for its timer and releases whoever awaits it. */
+  const cancelPendingSeek = useCallback(() => {
+    if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
+    seekTimerRef.current = null;
+    seekTargetRef.current = null;
+    seekWaitersRef.current.splice(0).forEach((done) => done());
+  }, []);
+  useEffect(() => cancelPendingSeek, [cancelPendingSeek]);
+
+  /** Restarts the running cast with changed settings at the current position. */
+  const reloadCast = useCallback(
+    async (params: {
+      options?: CastOptions;
+      subtitle?: CastSubInfo | null;
+      subStyle?: CastSubStyle | null;
+      audioTrackOrdinal?: number;
+    }): Promise<CastLoadInfo | null> => {
+      if (!castDeviceRef.current || audio.getSnapshot().device) return null;
+      const position = lastCastPositionRef.current;
+      applyingRef.current = true;
+      setCastApplying(true);
       try {
-        await owned(() => castSeek(sec));
+        const info = await owned(() => castReload({ positionSec: position, ...params }));
+        castStartTargetRef.current = position;
+        castSeekConfirmedRef.current = false;
+        everPlayedRef.current = false;
+        idleTicksRef.current = 0;
+        setCastTrouble(null);
+        if (info?.summary) setCastSummary(info.summary);
+        return info;
       } catch (error) {
         setCastError(String(error));
-        return;
+        return null;
+      } finally {
+        applyingRef.current = false;
+        setCastApplying(false);
       }
-      lastCastPositionRef.current = sec;
-      castStartTargetRef.current = sec;
-      castSeekConfirmedRef.current = true;
     },
     [audio, owned],
   );
@@ -469,6 +593,17 @@ export function useCastSession(
     castPositionSec: audioRouting ? audioState.position : castPositionSec,
     burnSubsOnTv,
     setBurnSubsOnTv,
+    castAudioChoice,
+    setCastAudioChoice,
+    castSubtitleChoice,
+    setCastSubtitleChoice,
+    castSubtitleFile,
+    setCastSubtitleFile,
+    castApplying,
+    castTrouble,
+    castStats,
+    castSummary,
+    reloadCast,
     openCastMenu,
     closeCastMenu,
     pickCastDevice,

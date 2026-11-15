@@ -2,9 +2,18 @@ import { useCallback, useEffect, useState, type RefObject } from "react";
 import {
   guessContentType,
   type CastDeviceInfo,
+  type CastOptions,
   type CastSubInfo,
   type CastSubStyle,
 } from "@/lib/cast";
+import {
+  castOptionsFor,
+  getCastPreferences,
+  rememberCastDevice,
+  type CastSubtitleLook,
+} from "@/lib/cast/cast-preferences";
+import { fitTracksToCastSource } from "@/lib/cast/cast-source";
+import type { RememberedDevice } from "@/lib/cast/device-settings";
 import { useDebridClients } from "@/lib/debrid/registry";
 import { t } from "@/lib/i18n";
 import type { PlayerBridge, PlayerSnapshot, TrackInfo } from "@/lib/player/bridge";
@@ -32,8 +41,15 @@ function subFormatFromTrack(track: TrackInfo): CastSubInfo["format"] {
   return "srt";
 }
 
-function buildCastSub(tracks: TrackInfo[]): CastSubInfo | null {
-  const selected = tracks.find((t) => t.selected);
+function subFormatFromPath(path: string): CastSubInfo["format"] {
+  const lower = path.toLowerCase();
+  if (lower.endsWith(".ass") || lower.endsWith(".ssa")) return "ass";
+  if (lower.endsWith(".vtt")) return "vtt";
+  return "srt";
+}
+
+function buildCastSub(tracks: TrackInfo[], chosen?: TrackInfo): CastSubInfo | null {
+  const selected = chosen ?? tracks.find((t) => t.selected);
   if (!selected) return null;
   if (selected.external) {
     if (!selected.externalFilename) return null;
@@ -49,14 +65,71 @@ function buildCastSub(tracks: TrackInfo[]): CastSubInfo | null {
   return { kind: "embedded", src_index: embeddedIndex, off: false };
 }
 
-function buildCastSubStyle(s: Settings): CastSubStyle {
+/** 100% is a comfortable TV size on libass's 288-line canvas; the default 150% matches the old look. */
+const CAST_SUB_BASE_SIZE = 18;
+
+function buildCastSubStyle(s: Settings, look: CastSubtitleLook): CastSubStyle {
   return {
-    font_size: s.subFontSize,
-    font_color: s.subFontColor,
+    font_size: Math.max(8, Math.round((CAST_SUB_BASE_SIZE * look.sizePercent) / 100)),
+    font_color: look.color || s.subFontColor,
     border_color: s.subBorderColor,
     border_size: s.subBorderSize,
-    margin_y: s.subMarginY,
+    margin_y: s.subMarginY + look.lift,
     align_x: s.subAlignX,
+    background: look.background,
+  };
+}
+
+/** The cast menu's own choices; "auto" follows the player. */
+export type CastMediaChoices = {
+  audioChoice: string;
+  subtitleChoice: string;
+  subtitleFile: string | null;
+  burnSubs: boolean;
+};
+
+/** Subtitle, audio track and settings for the TV, from the cast menu's choices and the device. */
+export function resolveCastMedia(
+  snap: PlayerSnapshot,
+  choices: CastMediaChoices,
+  settings: Settings,
+  device: RememberedDevice | null,
+): {
+  subtitle: CastSubInfo | null;
+  subStyle: CastSubStyle | null;
+  audioTrackOrdinal: number | undefined;
+  options: CastOptions;
+} {
+  const prefs = getCastPreferences();
+  let subtitle: CastSubInfo | null = null;
+  if (choices.burnSubs && choices.subtitleChoice !== "off") {
+    if (choices.subtitleChoice === "file") {
+      subtitle = choices.subtitleFile
+        ? {
+            kind: "external",
+            url: choices.subtitleFile,
+            format: subFormatFromPath(choices.subtitleFile),
+            off: false,
+          }
+        : null;
+    } else if (choices.subtitleChoice === "auto") {
+      subtitle = buildCastSub(snap.subtitleTracks);
+    } else {
+      const track = snap.subtitleTracks.find((t) => t.id === choices.subtitleChoice);
+      subtitle = track ? buildCastSub(snap.subtitleTracks, track) : null;
+    }
+  }
+  const embedded = snap.audioTracks.filter((t) => !t.external);
+  const audioTrack =
+    choices.audioChoice === "auto"
+      ? snap.audioTracks.find((t) => t.selected)
+      : snap.audioTracks.find((t) => t.id === choices.audioChoice);
+  const ordinal = audioTrack && !audioTrack.external ? embedded.indexOf(audioTrack) : -1;
+  return {
+    subtitle,
+    subStyle: subtitle ? buildCastSubStyle(settings, prefs.look) : null,
+    audioTrackOrdinal: ordinal >= 0 ? ordinal : undefined,
+    options: castOptionsFor(device, prefs),
   };
 }
 
@@ -104,7 +177,7 @@ export function useCastPick(params: {
   snapRef: RefObject<PlayerSnapshot>;
   bridgeRef: RefObject<PlayerBridge | null>;
   settings: Settings;
-  burnSubsOnTv: boolean;
+  castChoices: CastMediaChoices;
   closeCastMenu: () => void;
   pickCastDevice: CastSession["pickCastDevice"];
   setCastErrorInfo: CastSession["setCastErrorInfo"];
@@ -115,13 +188,15 @@ export function useCastPick(params: {
     snapRef,
     bridgeRef,
     settings,
-    burnSubsOnTv,
+    castChoices,
     closeCastMenu,
     pickCastDevice,
     setCastErrorInfo,
   } = params;
   const [castIncompatError, setCastIncompatError] = useState<string | null>(null);
   const [castTranscoding, setCastTranscoding] = useState(false);
+  // Whether the TV plays a compatible alternative instead of the player's file.
+  const [castSourceSwapped, setCastSourceSwapped] = useState(false);
 
   useEffect(() => {
     if (!castIncompatError) return;
@@ -227,10 +302,33 @@ export function useCastPick(params: {
         );
       }
       const isLiveIptv = src.meta.id?.startsWith("iptv:") ?? false;
-      const burnSub = burnSubsOnTv ? buildCastSub(snap.subtitleTracks) : null;
-      const forceTranscode = resolved.kind === "transcode" || isLiveIptv || burnSub != null;
-      // Remuxing a compatible file (to burn in subtitles, say) is not a re-encode: only a device
-      // the source does not suit, or live TV, gets the safe 1080p H.264 stereo profile.
+      // From here the device's own settings apply, and the panel shows them.
+      rememberCastDevice(device);
+      const swapped = resolved.kind === "swapped";
+      setCastSourceSwapped(swapped);
+      const media = fitTracksToCastSource(
+        resolveCastMedia(snap, castChoices, settings, device),
+        swapped,
+      );
+      const audioTrackOrdinal = media.audioTrackOrdinal;
+      const burnSub = media.subtitle;
+      // A copied stream plays its first audio track untouched, so another track or any audio
+      // processing needs the conversion.
+      const o = media.options;
+      const audioWork =
+        (audioTrackOrdinal ?? 0) > 0 ||
+        o.volumeBoost > 0 ||
+        o.nightMode ||
+        o.dialogueBoost ||
+        o.audioDelayMs !== 0;
+      const forceTranscode =
+        resolved.kind === "transcode" ||
+        isLiveIptv ||
+        burnSub != null ||
+        audioWork ||
+        o.forceConversion;
+      // Remuxing a compatible file is not a re-encode; only a device the source does not suit
+      // forces the safe profile.
       const profile =
         resolved.kind === "transcode"
           ? resolved.profile
@@ -252,7 +350,9 @@ export function useCastPick(params: {
           transcode: forceTranscode,
           profile,
           subtitle: burnSub,
-          subStyle: burnSub ? buildCastSubStyle(settings) : null,
+          subStyle: burnSub ? media.subStyle : null,
+          audioTrackOrdinal,
+          options: media.options,
         },
         () => bridgeRef.current?.pause("cast"),
       );
@@ -263,7 +363,7 @@ export function useCastPick(params: {
       snapRef,
       bridgeRef,
       settings,
-      burnSubsOnTv,
+      castChoices,
       closeCastMenu,
       pickCastDevice,
       setCastErrorInfo,
@@ -275,6 +375,7 @@ export function useCastPick(params: {
     setCastIncompatError,
     castTranscoding,
     setCastTranscoding,
+    castSourceSwapped,
     onPickDevice,
   };
 }
