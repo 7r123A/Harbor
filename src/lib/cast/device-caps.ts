@@ -202,13 +202,18 @@ const CAPS_AIRPLAY_GENERIC: DeviceCaps = {
   containerMkv: false,
 };
 
-export function getDeviceCaps(device: CastDeviceInfo): DeviceCaps {
+const CAPS_AIRPLAY_APPLE_TV_HD: DeviceCaps = { ...CAPS_AIRPLAY_GENERIC, label: "Apple TV (1080p)" };
+
+export function getDeviceCaps(device: Pick<CastDeviceInfo, "kind" | "name" | "model">): DeviceCaps {
   const model = (device.model ?? "").toLowerCase();
   const name = device.name.toLowerCase();
   const blob = `${model} ${name}`;
 
   if (device.kind === "roku") return CAPS_ROKU_4K;
   if (device.kind === "airplay") {
+    // AppleTV2,x to AppleTV5,x stop at 1080p H.264, and TV boxes with AirPlay claim to be the 3.
+    const generation = Number(/appletv(\d+),/.exec(model)?.[1] ?? 0);
+    if (generation > 0 && generation < 6) return CAPS_AIRPLAY_APPLE_TV_HD;
     if (/apple\s*tv|appletv/.test(blob)) return CAPS_AIRPLAY_APPLE_TV;
     if (/homepod/.test(blob))
       return { ...CAPS_AIRPLAY_GENERIC, label: "HomePod", maxResolution: 1080 };

@@ -9,6 +9,7 @@ mod ytmusic;
 mod binary_lookup;
 mod cast_hls;
 mod cast_subs;
+mod cast_transcode;
 #[cfg(desktop)]
 mod context_review;
 mod crash_report;

@@ -247,26 +247,29 @@ pub async fn probe_codecs(url: &str, headers: &HashMap<String, String>) -> Probe
     };
     let mut cmd = std::process::Command::new(&ffprobe);
     cmd.arg("-v").arg("error");
-    let mut has_ua = false;
-    if let Some((_, ua)) = headers
-        .iter()
-        .find(|(k, _)| k.to_lowercase() == "user-agent")
-    {
-        cmd.arg("-user_agent").arg(ua);
-        has_ua = true;
-    }
-    if !has_ua {
-        cmd.arg("-user_agent").arg(default_ua());
-    }
-    let mut header_blob = String::new();
-    for (k, v) in headers {
-        if k.to_lowercase() == "user-agent" {
-            continue;
+    // HTTP options make FFmpeg refuse a local file outright.
+    if crate::cast_transcode::is_http(url) {
+        let mut has_ua = false;
+        if let Some((_, ua)) = headers
+            .iter()
+            .find(|(k, _)| k.to_lowercase() == "user-agent")
+        {
+            cmd.arg("-user_agent").arg(ua);
+            has_ua = true;
         }
-        header_blob.push_str(&format!("{}: {}\r\n", k, v));
-    }
-    if !header_blob.is_empty() {
-        cmd.arg("-headers").arg(header_blob);
+        if !has_ua {
+            cmd.arg("-user_agent").arg(default_ua());
+        }
+        let mut header_blob = String::new();
+        for (k, v) in headers {
+            if k.to_lowercase() == "user-agent" {
+                continue;
+            }
+            header_blob.push_str(&format!("{}: {}\r\n", k, v));
+        }
+        if !header_blob.is_empty() {
+            cmd.arg("-headers").arg(header_blob);
+        }
     }
     cmd.arg("-analyzeduration")
         .arg("8M")
@@ -363,6 +366,10 @@ fn push_http_input(
     url: &str,
     headers: &HashMap<String, String>,
 ) {
+    if !crate::cast_transcode::is_http(url) {
+        cmd.arg("-i").arg(url);
+        return;
+    }
     let mut has_ua = false;
     if let Some((_, ua)) = headers
         .iter()
@@ -441,10 +448,14 @@ pub async fn handle_transcode(
             .arg("-flags")
             .arg("low_delay");
     }
-    push_reconnect_args(&mut cmd);
+    if crate::cast_transcode::is_http(url) {
+        push_reconnect_args(&mut cmd);
+    }
     push_http_input(&mut cmd, url, headers);
     if let Some(audio_url) = audio_url {
-        push_reconnect_args(&mut cmd);
+        if crate::cast_transcode::is_http(audio_url) {
+            push_reconnect_args(&mut cmd);
+        }
         push_http_input(&mut cmd, audio_url, headers);
     }
 
