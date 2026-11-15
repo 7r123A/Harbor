@@ -80,7 +80,7 @@ type ResumeSession = {
   ready: boolean;
   position: number;
   lastSaved: number;
-  refractCompleted?: boolean;
+  refractViewing: { completed: boolean };
 };
 
 function getNuvioOwnerId(): string | undefined {
@@ -128,9 +128,14 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
   // Cleanup must retain the outgoing source, duration and position together.
   // A new episode can render before the bridge publishes its loading reset.
   const sourceIdentity = playerLoadIdentity(src, src.url, season, episode);
+  // Share completion across source retries; retain the outgoing viewing during cleanup.
+  const refractViewing = useMemo(
+    () => ({ completed: false }),
+    [ownerId, src.meta.id, season, episode],
+  );
   const session = useMemo<ResumeSession>(
-    () => ({ latest: null, ready: false, position: 0, lastSaved: 0, ownerId }),
-    [sourceIdentity, ownerId],
+    () => ({ latest: null, ready: false, position: 0, lastSaved: 0, ownerId, refractViewing }),
+    [sourceIdentity, ownerId, refractViewing],
   );
   const activeSessionRef = useRef(session);
   activeSessionRef.current = session;
@@ -290,7 +295,7 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
     const nativeNumbering = ANIME_CLOUD_ID.test(id) || !!s.episode?.kitsuStreamId;
     const mapped = refractMappedEpisodes(s.episode ? [s.episode] : []);
     if (
-      !current.refractCompleted &&
+      !current.refractViewing.completed &&
       !!parseRefractHistoryId(externalId ?? id, refractKind) &&
       (refractKind === "movie" || !nativeNumbering || (!!externalId && !!mapped)) &&
       activeScopedProfileId() === (current.ownerId ?? "default") &&
@@ -298,7 +303,7 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
       refractEnabled() &&
       (finished || refractPlaybackReached(pos, sn.durationSec))
     ) {
-      current.refractCompleted = true;
+      current.refractViewing.completed = true;
       recordRefractWatch(
         {
           id,
