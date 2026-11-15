@@ -1,5 +1,5 @@
 import { Cast, ChevronDown, Loader2, Square, Subtitles, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { discoverCastDevices, type CastDeviceInfo } from "@/lib/cast";
 import { updateCastPreferences, useCastPreferences } from "@/lib/cast/cast-preferences";
 import { isRtl, useT, useUiLanguage } from "@/lib/i18n";
@@ -42,6 +42,12 @@ export function CastMenu({
   const [scanCount, setScanCount] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
   const expanded = Boolean(panel) && prefs.panelOpen;
+
+  // The menu always opens on the device list; the settings unfold only when asked for. Done
+  // before paint so the full panel never flashes open.
+  useLayoutEffect(() => {
+    if (open) updateCastPreferences({ panelOpen: false });
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
