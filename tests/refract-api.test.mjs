@@ -281,3 +281,47 @@ test("rapid watchlist toggles preserve write order for the same identity", async
     globalThis.window = original;
   }
 });
+
+test("watchlist toggles preserve write order across TMDB to IMDb enrichment", async () => {
+  let finishAdd;
+  let markStarted;
+  const started = new Promise((resolve) => {
+    markStarted = resolve;
+  });
+  const h = harness((_url, init) => {
+    if (init.method === "GET")
+      return new Response(
+        JSON.stringify({
+          data: [{ type: "show", ids: { refract: "fixture-show" } }],
+        }),
+      );
+    if (init.method === "PUT") {
+      markStarted();
+      return new Promise((resolve) => {
+        finishAdd = resolve;
+      });
+    }
+    return new Response(null, { status: 204 });
+  });
+  const original = globalThis.window;
+  globalThis.window = new EventTarget();
+  try {
+    const title = { id: "tmdb:tv:100", type: "series" };
+    const add = h.client.syncRefractWatchlist("rfk_fixture", title, true, () => {});
+    await started;
+    const remove = h.client.syncRefractWatchlist("rfk_fixture", { ...title, imdbId: "tt100" }, false, () => {});
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(
+      h.calls.map(({ init }) => init.method),
+      ["GET", "PUT"],
+    );
+    finishAdd(new Response("{}", { status: 201 }));
+    await Promise.all([add, remove]);
+    assert.deepEqual(
+      h.calls.map(({ init }) => init.method),
+      ["GET", "PUT", "GET", "DELETE"],
+    );
+  } finally {
+    globalThis.window = original;
+  }
+});
