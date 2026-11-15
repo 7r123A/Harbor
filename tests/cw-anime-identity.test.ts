@@ -400,6 +400,98 @@ test("Magic Repo Man CW resolves AniList/MAL identity without Kitsu and keeps bo
     ["mal:62922", "anilist:202250"]);
 });
 
+test("Magic Repo Man IMDb/MAL identity merges only after exact episode proof, keeping playback priority", async () => {
+  const nativeAliases = new Map<string, string>();
+  const addon = {
+    id: "kitsu:50993", type: "series", name: "Kashita Maryoku",
+    videos: [{
+      id: "kitsu:50993:7", title: "Episode 7",
+      season: 1, episode: 7, imdb_id: "tt43650419",
+      imdbSeason: 1, imdbEpisode: 7,
+    }],
+  };
+  const identity = loadIdentityHarness(undefined, {
+    "@/lib/anime-cw-ids": {
+      getAnimeCwId: (id: string) => nativeAliases.get(id) ?? null,
+      getAnimeCanonicalId: () => null,
+      getAnilistMalAlias: () => null,
+      recordAnilistMalAlias: () => {},
+      recordAnimeCwId: (id: string, kitsu: string) => { nativeAliases.set(id, kitsu); },
+      notifyAnimeCwIds: () => {},
+    },
+    "@/lib/providers/anime-entry": {
+      resolveAnimeEntry: async () => ({ kitsuId: 50993 }),
+    },
+    "@/lib/providers/anime-kitsu-addon": {
+      animeKitsuMeta: async (id: string) => id === "mal:62922" ? addon : null,
+    },
+    "@/lib/anime-tracker-entry": {
+      resolveTrackerAnimeEntry: async () => null,
+    },
+  });
+  const simkl = {
+    _id: "mal:62922", type: "series", external: "simkl",
+    name: "Kashita Maryoku wa Revo Barai",
+    state: { season: 1, episode: 7, lastWatched: "2026-11-13T12:00:00Z" },
+  };
+  const local = {
+    _id: "tt43650419", type: "series", isAnime: true,
+    name: "Magic Repo Man: Dumped by My Party",
+    state: {
+      season: 1, episode: 7, video_id: "tt43650419:1:7",
+      lastWatched: "2026-11-14T12:00:00Z",
+    },
+  };
+  assert.equal(identity.dedupeAnimeCw([simkl, local]).length, 2);
+  await identity.warmCwAnimeIdentities([simkl, local]);
+  assert.equal(identity.provenCwAnimeIdentity(local), "kitsu:50993");
+  for (const rows of [[simkl, local], [local, simkl]]) {
+    const merged = identity.dedupeAnimeCw(rows);
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0]._id, "tt43650419", "most recently played entry wins");
+    assert.deepEqual(
+      new Set(merged[0].cwMembers?.map((member) => member._id)),
+      new Set(["tt43650419", "mal:62922"]),
+      "source checkpoints remain separate and available",
+    );
+  }
+  const newSimkl = {
+    ...simkl,
+    state: { ...simkl.state, lastWatched: "2026-11-15T12:00:00Z" },
+  };
+  assert.equal(identity.dedupeAnimeCw([local, newSimkl])[0]._id, "mal:62922");
+});
+
+test("IMDb/MAL bridge does not infer identities from titles or shared series IDs", async () => {
+  const identity = loadIdentityHarness(undefined, {
+    "@/lib/providers/anime-entry": { resolveAnimeEntry: async () => null },
+    "@/lib/providers/anime-kitsu-addon": {
+      animeKitsuMeta: async () => ({
+        id: "kitsu:50993", type: "series",
+        videos: [{
+          id: "kitsu:50993:7", title: "Episode 7",
+          season: 1, episode: 7,
+          imdb_id: "tt43650419", imdbSeason: 1, imdbEpisode: 7,
+        }],
+      }),
+    },
+    "@/lib/anime-tracker-entry": { resolveTrackerAnimeEntry: async () => null },
+  });
+  const simkl = { _id: "mal:62922", name: "Magic Repo Man", type: "series" };
+  for (const catalog of [
+    { _id: "tt43650419", state: { season: 1, episode: 8 } },
+    { _id: "tt43650419", state: { season: 0, episode: 0 } },
+    { _id: "tt12345678", state: { season: 1, episode: 7 } },
+  ]) {
+    const other = {
+      ...catalog, name: "Magic Repo Man", type: "series", isAnime: true,
+    };
+    await identity.warmCwAnimeIdentities([simkl, other]);
+    assert.equal(identity.dedupeAnimeCw([simkl, other]).length, 2);
+    assert.equal(identity.provenCwAnimeIdentity(other), null);
+  }
+});
+
 test("an AniList mapping cannot merge an unrelated MAL show", async () => {
   let calls = 0;
   const links = new Map<string, string>();
