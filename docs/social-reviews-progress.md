@@ -14,7 +14,7 @@ Statuses: Not started · In progress · Implemented, not verified · Verified co
 | # | Task | Status | Notes |
 | --- | --- | --- | --- |
 | 1.1 | Stop avatars colliding with New/awards | Verified complete | avatars left the poster area entirely; the top badge strip is untouched |
-| 1.2 | Move avatars below poster **and** below the title, compact `+N` row | Verified complete | `pick-card.tsx`: row sits after the title block, `+N` handled by the badge component |
+| 1.2 | Move avatars below poster **and** below the title, compact `+N` row | Verified complete | row is 15px tall with 0.5 gaps, 14px avatars and a 1px ring, sitting `mt-0.5` under the title so it belongs to the card |
 | 1.3 | Grid alignment: reserved avatar row, stable card height | Verified complete | the row is always rendered at `h-[18px]`, so cards with and without friends match |
 | 1.4 | Works with every poster variant/customization/size/ratio | In progress | row is inside `PickCard` below the reused title block, so scale/aspect are inherited; still needs a sweep of the card-size and hide-title settings |
 
@@ -44,7 +44,7 @@ Statuses: Not started · In progress · Implemented, not verified · Verified co
 
 | # | Task | Status | Notes |
 | --- | --- | --- | --- |
-| 4.1 | Add friend disabled/faded when already friends, tooltip "This user is your friend." | Implemented, not verified | uses `friendRowState`, pending shows "Friend request pending" |
+| 4.1 | Add friend disabled/faded when already friends, tooltip "This user is your friend." | Implemented, not verified | `friendRowState` drives it; the faded button is wrapped in a span because a disabled button swallows its own tooltip |
 | 4.2 | Subtle friend icon next to the name | Implemented, not verified | same `friendship` state as the button |
 
 ## Backend files
