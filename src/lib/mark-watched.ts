@@ -12,6 +12,7 @@ import { setMovieWatchedLocal } from "@/lib/movie-watched";
 import { recordManualWatchedMeta, setManualWatchedMany } from "@/lib/manual-watched";
 import { setWatchedFlag } from "@/lib/watched-flag";
 import { recordRefractWatch, recordWatchEvent } from "@/lib/watch-events";
+import { getRefractKey } from "@/lib/refract/client";
 import { readActiveStremioAuthKey } from "@/lib/auth";
 import { cloudWriteId } from "@/lib/stremio";
 import { markMovieWatchedStremio } from "@/lib/stremio-watched-sync";
@@ -170,13 +171,19 @@ export async function markMetaWatched(
   });
   const ownerProfile = activeProfileId();
   const ownerSession = getTraktSession();
+  const ownerRefractKey = getRefractKey();
   const resolvedImdb = resolveSeriesImdb(meta, imdbId);
   const eps = await releasedEpisodes(meta, resolvedImdb);
   if (activeProfileId() !== ownerProfile) return;
   if (eps.length > 0) {
     setManualWatchedMany(meta.id, eps, true);
     // The legacy bulk action lacks verified anime episode mappings.
-    if (!/^(kitsu|mal|anilist|anidb):/.test(meta.id) && meta.type !== "anime")
+    if (
+      ownerRefractKey !== null &&
+      getRefractKey() === ownerRefractKey &&
+      !/^(kitsu|mal|anilist|anidb):/.test(meta.id) &&
+      meta.type !== "anime"
+    )
       recordRefractWatch(
         { id: meta.id, type: "series", name: meta.name, poster: meta.poster, at: Date.now() },
         {
