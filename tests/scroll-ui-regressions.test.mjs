@@ -75,13 +75,16 @@ test("Back to Top checks a final scroll event inside its throttle window", () =>
 test("scroll memory saves the outgoing anchor before navigation parks the layer", () => {
   const source = readSource("src/lib/view.tsx");
   const start = source.indexOf("function anchorOffsetIn(");
-  const end = source.indexOf("\n}", source.indexOf("}, [active, key, ref, rememberScroll", start));
+  const end = source.indexOf("\n}", source.indexOf("export function useScrollMemory", start));
   assert.ok(start >= 0 && end > start);
   const listeners = new Map();
   const timers = new Map();
   const savers = new Set();
   const snapshots = new Map();
   let parked = false;
+  let hasAnchor = true;
+  let anchorTop = 1000;
+  const windowListeners = new Map();
   let reads = 0;
   let heightReads = 0;
   let onResize;
@@ -91,9 +94,11 @@ test("scroll memory saves the outgoing anchor before navigation parks the layer"
   const anchor = {
     dataset: { scrollAnchor: "row-3" },
     getClientRects: () => [{}],
-    getBoundingClientRect: () => ({ top: 1000 - position, height: 300 }),
+    getBoundingClientRect: () => ({ top: anchorTop - position, height: 300 }),
   };
   const scroller = {
+    style: { overflowAnchor: "" },
+    firstElementChild: { nextElementSibling: {} },
     get scrollTop() {
       reads++;
       return position;
@@ -108,7 +113,7 @@ test("scroll memory saves the outgoing anchor before navigation parks the layer"
     scrollHeight: 6000,
     closest: () => (parked ? {} : null),
     querySelectorAll: () => [anchor],
-    querySelector: () => anchor,
+    querySelector: () => (hasAnchor ? anchor : null),
     getBoundingClientRect: () => ({ top: 0 }),
     addEventListener: (event, handler) => listeners.set(event, handler),
     removeEventListener: (event) => listeners.delete(event),
@@ -138,10 +143,15 @@ test("scroll memory saves the outgoing anchor before navigation parks the layer"
           onResize = callback;
         }
         observe() {}
+        unobserve() {}
         disconnect() {}
       },
       CSS: { escape: (value) => value },
-      window: { setTimeout: (task) => (timers.set(++nextId, task), nextId) },
+      window: {
+        setTimeout: (task, delay) => (timers.set(++nextId, { task, delay }), nextId),
+        addEventListener: (event, handler) => windowListeners.set(event, handler),
+        removeEventListener: (event) => windowListeners.delete(event),
+      },
       clearTimeout: (id) => timers.delete(id),
     },
   );
@@ -173,5 +183,54 @@ test("scroll memory saves the outgoing anchor before navigation parks the layer"
   assert.equal(heightReads, 0, "a saved top position also skips layout during setup");
   onResize();
   assert.equal(position, 0);
+  cleanup();
+
+  snapshots.set("discover", { anchor: "row-3", fallback: 820, delta: 4 });
+  hasAnchor = false;
+  useScrollMemory("discover", ref, true, false, { followLayout: true });
+  assert.equal(position, 0, "a missing section must not restore to raw pixels");
+  assert.equal(scroller.style.overflowAnchor, "none");
+  hasAnchor = true;
+  onResize();
+  assert.equal(position, 1004);
+  anchorTop = 1480;
+  onResize();
+  assert.equal(position, 1484, "late content above the target must preserve its viewport offset");
+  const [settle] = [...timers].find(([, entry]) => entry.delay === 450);
+  anchorTop = 1490;
+  const { task } = timers.get(settle);
+  timers.delete(settle);
+  task();
+  assert.equal(position, 1494);
+  assert.equal(scroller.style.overflowAnchor, "");
+  assert.equal(windowListeners.size, 0);
+  cleanup();
+
+  position = 0;
+  hasAnchor = false;
+  useScrollMemory("discover", ref, true, false, { followLayout: true });
+  listeners.get("wheel")();
+  position = 500;
+  hasAnchor = true;
+  onResize();
+  assert.equal(position, 500, "user scrolling must cancel the pending restore");
+  assert.equal(scroller.style.overflowAnchor, "");
+  assert.equal(timers.size, 0);
+  cleanup();
+
+  position = 0;
+  hasAnchor = false;
+  useScrollMemory("discover", ref, true, true, { followLayout: true });
+  assert.equal(scroller.style.opacity, "0");
+  assert.ok(
+    [...timers.values()].every((entry) => entry.delay !== 220),
+    "pending detail anchors must not reveal the top of the page",
+  );
+  const [deadline, timeout] = [...timers].find(([, entry]) => entry.delay === 2200);
+  timers.delete(deadline);
+  timeout.task();
+  assert.equal(position, 500, "a section that never returns uses the last saved offset");
+  assert.equal(scroller.style.opacity, "1");
+  assert.equal(scroller.style.overflowAnchor, "");
   cleanup();
 });

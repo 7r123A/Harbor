@@ -760,7 +760,7 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
           onSelect={tvdbPanel.panel ? onTvdbSelect : onPickerSelect}
         />
       )}
-      <div className="flex flex-col gap-4">
+      <div data-scroll-anchor="detail-episodes" className="flex flex-col gap-4">
         <div className="flex items-start justify-between gap-4">
           <h3 className="shrink-0 pt-1 text-[22px] font-medium tracking-tight text-ink">
             {isOneOff ? t("Movie") : t("Episodes")}

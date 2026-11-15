@@ -441,7 +441,9 @@ function DetailContent({
   const { toggle: toggleFavorite } = useMediaFavorites();
   const isFav = useIsFavorite(meta.id, [detail?.imdbId]);
   const inSession = roomSnapshot.state === "joined" && roomSnapshot.participants.length >= 2;
-  useScrollMemory(`meta:${meta.id}`, scrollRef, settings.resumeDetailScroll, true);
+  useScrollMemory(`meta:${meta.id}`, scrollRef, settings.resumeDetailScroll, true, {
+    followLayout: true,
+  });
 
   useEffect(() => {
     if (!meta.id.startsWith("simkl:")) return;
@@ -2663,7 +2665,7 @@ function DetailContent({
       ref={scrollRef}
       className="harbor-detail-enter absolute inset-0 z-30 overflow-y-auto bg-canvas"
     >
-      <section className="relative">
+      <section className="relative" data-scroll-anchor="detail-hero">
         <div
           data-tauri-drag-region
           data-tv-hero-zone
@@ -3066,6 +3068,7 @@ function DetailContent({
       <div {...contentDrag} className="flex flex-col gap-16 px-12 pb-24 pt-14">
         {(hasSynopsis || hasHeroAside) && (
           <div
+            data-scroll-anchor="detail-overview"
             className={`grid min-w-0 grid-cols-1 items-start gap-8 xl:gap-10 ${heroGridColumns}`}
           >
             {hasSynopsis && <Synopsis text={overview} stableHeight={stableSeasonSynopsis} />}

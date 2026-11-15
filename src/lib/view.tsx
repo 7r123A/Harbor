@@ -1795,13 +1795,14 @@ function pickAnchor(el: HTMLElement): { key: string; delta: number } | null {
   return closest;
 }
 
-function targetForSnap(el: HTMLElement, snap: ScrollSnapshot): number | null {
+function targetForSnap(el: HTMLElement, snap: ScrollSnapshot, allowFallback = true): number | null {
   if (snap.anchor) {
     const sel = `[data-scroll-anchor="${CSS.escape(snap.anchor)}"]`;
     const anchorEl = el.querySelector<HTMLElement>(sel);
     if (anchorEl?.getClientRects().length) {
       return Math.max(0, anchorOffsetIn(el, anchorEl) + snap.delta);
     }
+    if (!allowFallback) return null;
   }
   return snap.fallback >= 0 ? snap.fallback : null;
 }
@@ -1811,6 +1812,7 @@ export function useScrollMemory(
   ref: RefObject<HTMLElement | null>,
   active: boolean = true,
   hideUntilRestored: boolean = false,
+  { followLayout = false }: { followLayout?: boolean } = {},
 ) {
   const { rememberScroll, recallScroll, registerScrollSave } = useView();
   const { settings } = useSettings();
@@ -1838,6 +1840,11 @@ export function useScrollMemory(
     // A fresh page or a saved top position needs no layout read during the commit.
     const initialHeight = initialSnap && !startsAtTop ? el.clientHeight : undefined;
     let restoring = initialSnap != null;
+    let following = followLayout && restoring && !startsAtTop;
+    const previousOverflowAnchor = following ? el.style.overflowAnchor : "";
+    let followSettleId: number | undefined;
+    let followDeadline: number | undefined;
+    const observedContent = following ? el.firstElementChild?.nextElementSibling : null;
     let settleId: number | null = null;
     let saveTimer: number | null = null;
     let revealId: number | null = null;
@@ -1886,6 +1893,27 @@ export function useScrollMemory(
       }, 30000);
     };
 
+    const stopFollowing = () => {
+      if (!following) return;
+      following = false;
+      clearTimeout(followSettleId);
+      clearTimeout(followDeadline);
+      if (observedContent) ro.unobserve(observedContent);
+      el.style.overflowAnchor = previousOverflowAnchor;
+      el.removeEventListener("wheel", cancelFollow);
+      el.removeEventListener("pointerdown", cancelFollow);
+      el.removeEventListener("touchstart", cancelFollow);
+      window.removeEventListener("keydown", cancelFollow);
+    };
+
+    const cancelFollow = () => {
+      stopFollowing();
+      restoring = false;
+      cancelSettle();
+      cancelRetry();
+      reveal();
+    };
+
     const tryRestore = (clamp = false, height?: number, measuredTarget?: number | null) => {
       if (!restoring) return;
       const snap = recallScroll(key);
@@ -1912,8 +1940,10 @@ export function useScrollMemory(
         }
         return;
       }
-      const target = measuredTarget === undefined ? targetForSnap(el, snap) : measuredTarget;
+      const target =
+        measuredTarget === undefined ? targetForSnap(el, snap, !following) : measuredTarget;
       if (target === null) {
+        if (following) return;
         restoring = false;
         cancelSettle();
         cancelRetry();
@@ -1922,7 +1952,18 @@ export function useScrollMemory(
       }
       const max = target === 0 ? 0 : el.scrollHeight - viewportHeight;
       if (max < target - 4 && !clamp) return;
-      el.scrollTop = Math.min(target, max);
+      const offset = Math.min(target, max);
+      if (following) {
+        if (Math.abs(el.scrollTop - offset) > 0.5) el.scrollTop = offset;
+        reveal();
+        clearTimeout(followSettleId);
+        followSettleId = window.setTimeout(() => {
+          stopFollowing();
+          tryRestore(true);
+        }, 450);
+        return;
+      }
+      el.scrollTop = offset;
       restoring = false;
       cancelSettle();
       cancelRetry();
@@ -1991,19 +2032,33 @@ export function useScrollMemory(
     // before the scroll timer or comes from keyboard, controller, or app code.
     const unregisterScrollSave = registerScrollSave(flushSave);
 
-    if (initialSnap) {
-      armSettle();
-      if (wantsHide) revealId = window.setTimeout(reveal, 220);
-      if (!startsAtTop) tryRestore(false, initialHeight, initialTarget);
-    }
-
     const ro = new ResizeObserver(onResize);
     ro.observe(el);
     if (el.firstElementChild) ro.observe(el.firstElementChild);
-    el.addEventListener("scroll", onScroll, { passive: true });
+    if (following) {
+      // Let sections replace their loading placeholders without WebView picking
+      // a different scroll anchor. Release the viewport on input or after layout settles.
+      el.style.overflowAnchor = "none";
+      if (observedContent) ro.observe(observedContent);
+      followDeadline = window.setTimeout(() => {
+        stopFollowing();
+        tryRestore(true);
+      }, 2200);
+      el.addEventListener("wheel", cancelFollow, { passive: true });
+      el.addEventListener("pointerdown", cancelFollow, { passive: true });
+      el.addEventListener("touchstart", cancelFollow, { passive: true });
+      window.addEventListener("keydown", cancelFollow);
+    }
+    if (initialSnap) {
+      armSettle();
+      if (wantsHide && !following) revealId = window.setTimeout(reveal, 220);
+      if (!startsAtTop) tryRestore(false, initialHeight, following ? undefined : initialTarget);
+    }
 
+    el.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       flushSave();
+      stopFollowing();
       cancelSave();
       cancelSettle();
       cancelRetry();
@@ -2013,7 +2068,16 @@ export function useScrollMemory(
       ro.disconnect();
       el.removeEventListener("scroll", onScroll);
     };
-  }, [active, key, ref, rememberScroll, recallScroll, registerScrollSave, hideUntilRestored]);
+  }, [
+    active,
+    key,
+    ref,
+    rememberScroll,
+    recallScroll,
+    registerScrollSave,
+    hideUntilRestored,
+    followLayout,
+  ]);
 }
 
 export { frameKey };

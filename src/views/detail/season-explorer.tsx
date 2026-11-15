@@ -530,7 +530,11 @@ export function SeasonExplorer({
   const posterFor = (item: PickerItem) =>
     item.seasonNumber == null ? undefined : artwork.get(item.seasonNumber)?.poster || item.poster;
   return (
-    <section aria-labelledby={titleId} className="flex min-w-0 flex-col gap-3">
+    <section
+      aria-labelledby={titleId}
+      data-scroll-anchor="detail-seasons"
+      className="flex min-w-0 flex-col gap-3"
+    >
       <h3 id={titleId} className="text-[22px] font-medium tracking-tight text-ink">
         {t("Seasons")}
       </h3>
