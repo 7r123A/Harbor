@@ -407,6 +407,31 @@ const tr: Record<string, string> = {
   "{sent} sent · {pending} pending · {failed} unmatched":
     "{sent} gönderildi · {pending} bekliyor · {failed} eşleşmedi",
   "Unmatched items": "Eşleşmeyen öğeler",
+  "Refract queue full; unable to save another watch":
+    "Refract kuyruğu dolu; yeni izleme kaydı kaydedilemiyor",
+  "No verified IMDb/TMDB/TVDB identity": "Doğrulanmış IMDb/TMDB/TVDB kimliği yok",
+  "Movie not found in Refract": "Film Refract'ta bulunamadı",
+  "Episode not found; verify season numbering":
+    "Bölüm bulunamadı; sezon numaralandırmasını kontrol et",
+  "Last watched item sent successfully": "Son izleme kaydı başarıyla gönderildi",
+  "Unknown error": "Bilinmeyen hata",
+  "Some items could not be matched or sent": "Bazı öğeler eşleştirilemedi veya gönderilemedi",
+  "Refract denied access; check key and permissions":
+    "Refract erişimi reddetti; anahtarı ve izinleri kontrol et",
+  "Network error; retry scheduled": "Ağ hatası; yeniden deneme planlandı",
+  "No verified IMDb/TMDB/TVDB identity is available for this title.":
+    "Bu içerik için doğrulanmış IMDb/TMDB/TVDB kimliği yok.",
+  "Refract could not uniquely identify this title.":
+    "Refract bu içeriği kesin olarak tanımlayamadı.",
+  "Refract preserved an existing library entry or viewing history.":
+    "Refract mevcut kitaplık kaydını veya izleme geçmişini korudu.",
+  "Added to Refract Plan to Watch.": "Refract izlenecekler listesine eklendi.",
+  "Removed from Refract Plan to Watch.": "Refract izlenecekler listesinden çıkarıldı.",
+  "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
+    "Refract izleme listesi library:write izni gerektirir. Bu izne sahip bir anahtarla yeniden bağlan.",
+  "Refract could not confirm the watchlist change. Try again.":
+    "Refract izleme listesi değişikliğini doğrulayamadı. Tekrar dene.",
+  "Refract HTTP {status}": "Refract HTTP {status}",
 };
 
 export default tr;
