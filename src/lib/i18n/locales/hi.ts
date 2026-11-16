@@ -393,6 +393,31 @@ const hi: Record<string, string> = {
   "{sent} sent · {pending} pending · {failed} unmatched":
     "भेजे गए: {sent} · लंबित: {pending} · मेल नहीं मिला: {failed}",
   "Unmatched items": "बिना मेल वाले आइटम",
+  "Refract queue full; unable to save another watch":
+    "Refract की कतार भर गई है; दूसरा देखने का रिकॉर्ड सहेजा नहीं जा सकता",
+  "No verified IMDb/TMDB/TVDB identity": "कोई सत्यापित IMDb/TMDB/TVDB पहचान उपलब्ध नहीं है",
+  "Movie not found in Refract": "Refract में फ़िल्म नहीं मिली",
+  "Episode not found; verify season numbering": "एपिसोड नहीं मिला; सीज़न की संख्या जाँचें",
+  "Last watched item sent successfully": "देखने का पिछला रिकॉर्ड सफलतापूर्वक भेजा गया",
+  "Unknown error": "अज्ञात त्रुटि",
+  "Some items could not be matched or sent":
+    "कुछ आइटम का मिलान नहीं हो सका या उन्हें भेजा नहीं जा सका",
+  "Refract denied access; check key and permissions":
+    "Refract ने पहुँच अस्वीकार कर दी; कुंजी और अनुमतियाँ जाँचें",
+  "Network error; retry scheduled": "नेटवर्क त्रुटि; फिर से कोशिश निर्धारित है",
+  "No verified IMDb/TMDB/TVDB identity is available for this title.":
+    "इस शीर्षक के लिए कोई सत्यापित IMDb/TMDB/TVDB पहचान उपलब्ध नहीं है।",
+  "Refract could not uniquely identify this title.":
+    "Refract इस शीर्षक की विशिष्ट पहचान नहीं कर सका।",
+  "Refract preserved an existing library entry or viewing history.":
+    "Refract ने मौजूदा लाइब्रेरी एंट्री या देखने का इतिहास सुरक्षित रखा।",
+  "Added to Refract Plan to Watch.": "Refract की देखने की योजना में जोड़ा गया।",
+  "Removed from Refract Plan to Watch.": "Refract की देखने की योजना से हटाया गया।",
+  "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
+    "Refract वॉचलिस्ट के लिए library:write अनुमति आवश्यक है। इस अनुमति वाली कुंजी से फिर कनेक्ट करें।",
+  "Refract could not confirm the watchlist change. Try again.":
+    "Refract वॉचलिस्ट में बदलाव की पुष्टि नहीं कर सका। फिर कोशिश करें।",
+  "Refract HTTP {status}": "Refract HTTP {status}",
 };
 
 export default hi;
