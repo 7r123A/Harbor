@@ -91,21 +91,31 @@ function CustomRow({
 }: {
   source: MangaSource;
   flash: boolean;
-  onRemove: () => void;
+  onRemove: () => void | Promise<void>;
 }) {
   const t = useT();
   const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState(false);
   const [editing, setEditing] = useState(false);
-  const remove = () => {
+  const remove = async () => {
+    if (removing) return;
+    setRemoveError(false);
     setRemoving(true);
-    window.setTimeout(onRemove, 240);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 240));
+    try {
+      await onRemove();
+    } catch {
+      // Do not leave a failed removal hidden behind the exit animation.
+      setRemoving(false);
+      setRemoveError(true);
+    }
   };
   const editable = source.kind === "html" || source.kind === "suwayomi" || source.kind === "local";
   const Icon = source.kind === "local" ? FolderOpen : source.kind === "suwayomi" ? Server : Plug;
   return (
     <div
       className={`overflow-hidden transition-all duration-300 ${
-        removing ? "max-h-0 scale-95 opacity-0" : editing ? "max-h-[900px]" : "max-h-28"
+        removing ? "max-h-0 scale-95 opacity-0" : editing || removeError ? "max-h-[900px]" : "max-h-28"
       }`}
     >
       <div
@@ -139,13 +149,19 @@ function CustomRow({
           )}
           <button
             type="button"
-            onClick={remove}
+            onClick={() => void remove()}
+            disabled={removing}
             aria-label={t("Remove {name}", { name: source.name })}
             className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-raised text-ink-subtle ring-1 ring-edge-soft transition-all hover:text-danger active:scale-95 motion-reduce:active:scale-100"
           >
             <Trash2 size={18} strokeWidth={2} />
           </button>
         </div>
+        {removeError && (
+          <p role="alert" className="px-5 pb-3 text-[13px] text-danger">
+            {t("Could not remove source")}
+          </p>
+        )}
         {editing && (
           <div className="harbor-rise border-t border-edge-soft p-5">
             <SourceEditor source={source} onDone={() => setEditing(false)} />
