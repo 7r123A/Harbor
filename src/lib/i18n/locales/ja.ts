@@ -446,6 +446,27 @@ const ja: Record<string, string> = {
   "{sent} sent · {pending} pending · {failed} unmatched":
     "送信済み {sent} 件 · 保留中 {pending} 件 · 照合不可 {failed} 件",
   "Unmatched items": "照合できなかった項目",
+  "Refract queue full; unable to save another watch": "Refract のキューがいっぱいです。これ以上視聴記録を保存できません",
+  "No verified IMDb/TMDB/TVDB identity": "確認済みの IMDb/TMDB/TVDB ID がありません",
+  "Movie not found in Refract": "Refract で映画が見つかりません",
+  "Episode not found; verify season numbering": "エピソードが見つかりません。シーズン番号を確認してください",
+  "Last watched item sent successfully": "最後の視聴記録を送信しました",
+  "Unknown error": "不明なエラー",
+  "Some items could not be matched or sent": "一部の項目を照合または送信できませんでした",
+  "Refract denied access; check key and permissions": "Refract がアクセスを拒否しました。キーと権限を確認してください",
+  "Network error; retry scheduled": "ネットワークエラー。再試行が予約されました",
+  "No verified IMDb/TMDB/TVDB identity is available for this title.":
+    "この作品には確認済みの IMDb/TMDB/TVDB ID がありません。",
+  "Refract could not uniquely identify this title.": "Refract はこの作品を一意に特定できませんでした。",
+  "Refract preserved an existing library entry or viewing history.":
+    "Refract は既存のライブラリ項目または視聴履歴を保持しました。",
+  "Added to Refract Plan to Watch.": "Refract の視聴予定に追加しました。",
+  "Removed from Refract Plan to Watch.": "Refract の視聴予定から削除しました。",
+  "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
+    "Refract のウォッチリストには library:write が必要です。この権限のあるキーで再接続してください。",
+  "Refract could not confirm the watchlist change. Try again.":
+    "Refract はウォッチリストの変更を確認できませんでした。再試行してください。",
+  "Refract HTTP {status}": "Refract HTTP {status}",
 };
 
 export default ja;
