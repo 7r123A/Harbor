@@ -296,3 +296,58 @@ test("Refract waits for verified anime identity and episode mapping", () => {
   h.tick();
   assert.equal(h.refractWatches.length, 1);
 });
+
+test("Refract logs a viewing once across source switches and retries", () => {
+  const h = resumeAutosaveHarness();
+  h.enableRefract(180);
+  const p = playbackParams();
+  const play = (params: ReturnType<typeof playbackParams>, positionSec: number) => {
+    h.render(params);
+    h.render({
+      ...params,
+      snap: { ...params.snap, status: "playing", positionSec, durationSec: 3600 },
+    });
+    h.clock(positionSec);
+    h.tick();
+  };
+
+  play(p, 180);
+  assert.equal(h.refractWatches.length, 1);
+  const switched = { ...p, src: { ...p.src, url: "https://media.test/alternate.mkv" } };
+  play(switched, 2400);
+  assert.equal(h.refractWatches.length, 1);
+  const retried = { ...switched, src: { ...switched.src, attempt: 1 } };
+  play(retried, 2500);
+  h.unmount();
+  assert.equal(h.refractWatches.length, 1);
+  assert.equal(h.writes.at(-1)?.[1], 2500000);
+});
+
+test("Refract starts a new viewing on episode changes and a fresh player mount", () => {
+  const h = resumeAutosaveHarness();
+  h.enableRefract(180);
+  const play = (harness: ReturnType<typeof resumeAutosaveHarness>, season: number, episode: number) => {
+    const p = playbackParams(season, episode);
+    harness.render(p);
+    harness.render({
+      ...p,
+      snap: { ...p.snap, status: "playing", positionSec: 180, durationSec: 3600 },
+    });
+    harness.clock(180);
+    harness.tick();
+  };
+
+  play(h, 1, 1);
+  play(h, 1, 2);
+  assert.deepEqual(
+    h.refractWatches.map(([event]) => [event.season, event.episode]),
+    [[1, 1], [1, 2]],
+  );
+  h.unmount();
+  const reopened = resumeAutosaveHarness();
+  reopened.enableRefract(180);
+  play(reopened, 1, 1);
+  assert.equal(reopened.refractWatches.length, 1);
+  assert.equal(reopened.refractWatches[0][0].episode, 1);
+  reopened.unmount();
+});
