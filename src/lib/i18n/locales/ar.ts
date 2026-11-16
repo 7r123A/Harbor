@@ -451,6 +451,30 @@ const ar: Record<string, string> = {
   "{sent} sent · {pending} pending · {failed} unmatched":
     "تم الإرسال: {sent} · معلق: {pending} · غير مطابق: {failed}",
   "Unmatched items": "عناصر غير مطابقة",
+  "Refract queue full; unable to save another watch":
+    "قائمة انتظار Refract ممتلئة؛ تعذر حفظ مشاهدة أخرى",
+  "No verified IMDb/TMDB/TVDB identity": "لا يوجد معرّف IMDb/TMDB/TVDB موثّق",
+  "Movie not found in Refract": "لم يتم العثور على الفيلم في Refract",
+  "Episode not found; verify season numbering": "لم يتم العثور على الحلقة؛ تحقق من ترقيم المواسم",
+  "Last watched item sent successfully": "تم إرسال آخر سجل مشاهدة بنجاح",
+  "Unknown error": "خطأ غير معروف",
+  "Some items could not be matched or sent": "تعذرت مطابقة بعض العناصر أو إرسالها",
+  "Refract denied access; check key and permissions":
+    "رفض Refract الوصول؛ تحقق من المفتاح والأذونات",
+  "Network error; retry scheduled": "خطأ في الشبكة؛ تمت جدولة إعادة المحاولة",
+  "No verified IMDb/TMDB/TVDB identity is available for this title.":
+    "لا يوجد معرّف IMDb/TMDB/TVDB موثّق لهذا العنوان.",
+  "Refract could not uniquely identify this title.":
+    "تعذر على Refract تحديد هذا العنوان بشكل فريد.",
+  "Refract preserved an existing library entry or viewing history.":
+    "احتفظ Refract بعنصر موجود في المكتبة أو سجل المشاهدة.",
+  "Added to Refract Plan to Watch.": "تمت الإضافة إلى قائمة المشاهدة لاحقًا في Refract.",
+  "Removed from Refract Plan to Watch.": "تمت الإزالة من قائمة المشاهدة لاحقًا في Refract.",
+  "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
+    "تتطلب قائمة المشاهدة في Refract إذن library:write. أعد الاتصال بمفتاح يملك هذا الإذن.",
+  "Refract could not confirm the watchlist change. Try again.":
+    "تعذر على Refract تأكيد تغيير قائمة المشاهدة. حاول مجددًا.",
+  "Refract HTTP {status}": "Refract HTTP {status}",
 };
 
 export default ar;
