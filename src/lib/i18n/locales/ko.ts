@@ -405,6 +405,27 @@ const ko: Record<string, string> = {
   "{sent} sent · {pending} pending · {failed} unmatched":
     "전송 완료 {sent}개 · 대기 중 {pending}개 · 일치 항목 없음 {failed}개",
   "Unmatched items": "일치하는 항목을 찾지 못한 콘텐츠",
+  "Refract queue full; unable to save another watch": "Refract 대기열이 가득 차 추가 시청 기록을 저장할 수 없습니다",
+  "No verified IMDb/TMDB/TVDB identity": "확인된 IMDb/TMDB/TVDB ID가 없습니다",
+  "Movie not found in Refract": "Refract에서 영화를 찾을 수 없습니다",
+  "Episode not found; verify season numbering": "에피소드를 찾을 수 없습니다. 시즌 번호를 확인하세요",
+  "Last watched item sent successfully": "최근 시청 기록을 전송했습니다",
+  "Unknown error": "알 수 없는 오류",
+  "Some items could not be matched or sent": "일부 항목을 일치시키거나 전송하지 못했습니다",
+  "Refract denied access; check key and permissions": "Refract가 접근을 거부했습니다. 키와 권한을 확인하세요",
+  "Network error; retry scheduled": "네트워크 오류. 재시도가 예약되었습니다",
+  "No verified IMDb/TMDB/TVDB identity is available for this title.":
+    "이 작품에 확인된 IMDb/TMDB/TVDB ID가 없습니다.",
+  "Refract could not uniquely identify this title.": "Refract가 이 작품을 고유하게 식별하지 못했습니다.",
+  "Refract preserved an existing library entry or viewing history.":
+    "Refract가 기존 라이브러리 항목 또는 시청 기록을 보존했습니다.",
+  "Added to Refract Plan to Watch.": "Refract 시청 예정 목록에 추가했습니다.",
+  "Removed from Refract Plan to Watch.": "Refract 시청 예정 목록에서 제거했습니다.",
+  "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
+    "Refract 시청 목록에는 library:write 권한이 필요합니다. 해당 권한이 있는 키로 다시 연결하세요.",
+  "Refract could not confirm the watchlist change. Try again.":
+    "Refract가 시청 목록 변경을 확인하지 못했습니다. 다시 시도하세요.",
+  "Refract HTTP {status}": "Refract HTTP {status}",
 };
 
 export default ko;
