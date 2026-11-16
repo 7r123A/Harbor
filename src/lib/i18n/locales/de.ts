@@ -452,6 +452,32 @@ const de: Record<string, string> = {
   "{sent} sent · {pending} pending · {failed} unmatched":
     "{sent} gesendet · {pending} ausstehend · {failed} ohne Zuordnung",
   "Unmatched items": "Einträge ohne Zuordnung",
+  "Refract queue full; unable to save another watch":
+    "Refract-Warteschlange voll; eine weitere Wiedergabe kann nicht gespeichert werden",
+  "No verified IMDb/TMDB/TVDB identity": "Keine verifizierte IMDb/TMDB/TVDB-ID",
+  "Movie not found in Refract": "Film in Refract nicht gefunden",
+  "Episode not found; verify season numbering":
+    "Folge nicht gefunden; prüfe die Staffelnummerierung",
+  "Last watched item sent successfully": "Letzte Wiedergabe erfolgreich gesendet",
+  "Unknown error": "Unbekannter Fehler",
+  "Some items could not be matched or sent":
+    "Einige Einträge konnten nicht zugeordnet oder gesendet werden",
+  "Refract denied access; check key and permissions":
+    "Refract hat den Zugriff verweigert; prüfe Schlüssel und Berechtigungen",
+  "Network error; retry scheduled": "Netzwerkfehler; erneuter Versuch geplant",
+  "No verified IMDb/TMDB/TVDB identity is available for this title.":
+    "Für diesen Titel ist keine verifizierte IMDb/TMDB/TVDB-ID verfügbar.",
+  "Refract could not uniquely identify this title.":
+    "Refract konnte diesen Titel nicht eindeutig identifizieren.",
+  "Refract preserved an existing library entry or viewing history.":
+    "Refract hat einen vorhandenen Bibliothekseintrag oder Wiedergabeverlauf beibehalten.",
+  "Added to Refract Plan to Watch.": "Zur Refract-Merkliste hinzugefügt.",
+  "Removed from Refract Plan to Watch.": "Aus der Refract-Merkliste entfernt.",
+  "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
+    "Die Refract-Merkliste erfordert library:write. Verbinde einen Schlüssel mit dieser Berechtigung.",
+  "Refract could not confirm the watchlist change. Try again.":
+    "Refract konnte die Änderung der Merkliste nicht bestätigen. Versuche es erneut.",
+  "Refract HTTP {status}": "Refract HTTP {status}",
 };
 
 export default de;
