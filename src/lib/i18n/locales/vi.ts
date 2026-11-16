@@ -447,6 +447,31 @@ const vi: Record<string, string> = {
   "{sent} sent · {pending} pending · {failed} unmatched":
     "Đã gửi: {sent} · Đang chờ: {pending} · Không khớp: {failed}",
   "Unmatched items": "Các mục không khớp",
+  "Refract queue full; unable to save another watch":
+    "Hàng đợi Refract đã đầy; không thể lưu thêm lượt xem",
+  "No verified IMDb/TMDB/TVDB identity": "Không có ID IMDb/TMDB/TVDB đã xác minh",
+  "Movie not found in Refract": "Không tìm thấy phim trong Refract",
+  "Episode not found; verify season numbering":
+    "Không tìm thấy tập phim; hãy kiểm tra cách đánh số mùa",
+  "Last watched item sent successfully": "Đã gửi thành công lượt xem gần nhất",
+  "Unknown error": "Lỗi không xác định",
+  "Some items could not be matched or sent": "Không thể đối chiếu hoặc gửi một số mục",
+  "Refract denied access; check key and permissions":
+    "Refract từ chối truy cập; hãy kiểm tra khóa và quyền",
+  "Network error; retry scheduled": "Lỗi mạng; đã lên lịch thử lại",
+  "No verified IMDb/TMDB/TVDB identity is available for this title.":
+    "Không có ID IMDb/TMDB/TVDB đã xác minh cho nội dung này.",
+  "Refract could not uniquely identify this title.":
+    "Refract không thể xác định duy nhất nội dung này.",
+  "Refract preserved an existing library entry or viewing history.":
+    "Refract đã giữ nguyên mục thư viện hoặc lịch sử xem hiện có.",
+  "Added to Refract Plan to Watch.": "Đã thêm vào danh sách dự định xem của Refract.",
+  "Removed from Refract Plan to Watch.": "Đã xóa khỏi danh sách dự định xem của Refract.",
+  "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
+    "Danh sách muốn xem của Refract cần quyền library:write. Hãy kết nối lại bằng khóa có quyền này.",
+  "Refract could not confirm the watchlist change. Try again.":
+    "Refract không thể xác nhận thay đổi danh sách muốn xem. Hãy thử lại.",
+  "Refract HTTP {status}": "Refract HTTP {status}",
 };
 
 export default vi;
