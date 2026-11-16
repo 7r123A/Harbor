@@ -174,6 +174,12 @@ export function SpotifySoloistSetup({
             {" "}Switches on next track.
           </p>
         )}
+        {status?.preferredEngine === "soloist" && (
+          <p className="mt-2 text-[12px] leading-5 text-ink-muted">
+            Harbor uses Soloist's single-track mode for local playback so Harbor's queue stays in
+            control. This playback instance won't appear as a separate Spotify Connect device.
+          </p>
+        )}
         {engineMessage && <p className="mt-2 text-[12px] leading-5 text-ink-muted" role="status">{engineMessage}</p>}
         {engineError && <p className="mt-2 text-[12px] leading-5 text-danger" role="alert">{engineError}</p>}
       </section>
@@ -222,7 +228,7 @@ export function SpotifySoloistSetup({
               ) : (
                 <button type="button" disabled={busy || !status?.keyConfigured || !status.executablePath} className={BUTTON}
                   onClick={() => void act(startSoloist)}>
-                  Start Soloist
+                  Start pairing mode
                 </button>
               )}
               <button type="button" disabled={busy} className={BUTTON} onClick={() => void act(refresh)}>
@@ -231,10 +237,13 @@ export function SpotifySoloistSetup({
             </div>
             <p role="status" aria-live="polite" className="mt-1 flex items-center gap-2 text-[12px] leading-5 text-ink-muted">
               <span aria-hidden="true" className={status?.running && status.loggedIn ? "size-1.5 shrink-0 rounded-full bg-accent" : "size-1.5 shrink-0 rounded-full bg-ink-subtle"} />
-              {status?.activeInHarbor ? "Harbor is using Soloist" : !status ? "Checking Soloist..." : !status.running ? "Not running" :
+              {status?.activeInHarbor ? "Harbor is using Soloist" : !status ? "Checking Soloist..." :
+                !status.running && status.preferredEngine === "soloist" && status.keyConfigured && status.executablePath
+                  ? "Idle — starts automatically when Harbor plays a song" :
+                !status.running ? "Not running" :
                 !status.apiReady ? "Starting / local API unavailable" :
-                  status.loggedIn ? `Paired - ${status.deviceName || "Harbor Soloist"}` :
-                    "Running - open Spotify Connect to finish pairing"}
+                status.loggedIn ? `Paired - ${status.deviceName || "Harbor Soloist"}` :
+                  "Running - open Spotify Connect to finish pairing"}
             </p>
             {status?.error && <p className="text-[12px] text-ink-muted">{status.error}</p>}
             {status?.visualizerError && (
