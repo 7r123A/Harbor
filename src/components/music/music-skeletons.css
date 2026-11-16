@@ -107,7 +107,7 @@
 
 .music-library-playlist-card.is-skeleton {
   pointer-events: none;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .music-skeleton-cover-square {
   width: 100%;

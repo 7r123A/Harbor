@@ -424,7 +424,7 @@
 }
 .games-mods-installed :is(button):disabled {
   opacity: 0.45;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .games-mods-installed button:focus-visible {
   outline: 2px solid var(--color-ink);
@@ -832,7 +832,7 @@
 }
 .games-mod-dialog button:disabled {
   opacity: 0.35;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .games-mod-dialog :is(button, select, a):focus-visible,
 .games-mods select:focus-visible {

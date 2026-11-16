@@ -34,7 +34,7 @@
   cursor: var(--harbor-cursor-pointer, pointer);
 }
 .games-cloud-dialog button:disabled {
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
   opacity: 0.4;
 }
 .games-cloud-dialog :is(button, input):focus-visible {

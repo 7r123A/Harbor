@@ -451,7 +451,7 @@
   font-size: 13.5px;
   color: var(--color-ink-subtle);
   background: var(--color-canvas);
-  cursor: var(--harbor-cursor-pointer, pointer);
+  cursor: pointer;
   transition:
     background 150ms ease-in-out,
     color 150ms ease-in-out;

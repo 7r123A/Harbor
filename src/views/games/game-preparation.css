@@ -108,7 +108,7 @@
 }
 .games-preparation-options :disabled {
   opacity: 0.5;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .games-preparation-summary {
   display: flex;

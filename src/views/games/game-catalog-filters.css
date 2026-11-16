@@ -126,7 +126,7 @@
   color: inherit;
 }
 .games-filter-row:disabled {
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
   color: var(--color-ink-muted);
   background: none;
 }

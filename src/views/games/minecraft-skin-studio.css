@@ -429,7 +429,7 @@
 }
 .mc-skin-studio button:disabled {
   opacity: 0.35;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .mc-skin-studio :is(button, input, select):focus-visible {
   outline: 2px solid var(--color-ink);

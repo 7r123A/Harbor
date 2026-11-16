@@ -88,7 +88,7 @@
 }
 .game-picker button:disabled {
   opacity: 0.45;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .game-picker button:focus-visible,
 .game-picker input:focus-visible,

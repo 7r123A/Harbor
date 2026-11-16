@@ -85,7 +85,7 @@
 .music-audio-settings button:disabled,
 .music-audio-settings input:disabled {
   opacity: 0.45;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .music-audio-settings :is(button, select, input):focus-visible {
   outline: 2px solid var(--color-accent);
@@ -349,7 +349,7 @@
   margin-block: 20px;
 }
 .music-lab-import summary {
-  cursor: var(--harbor-cursor-pointer, pointer);
+  cursor: pointer;
   min-height: 44px;
   padding-block: 12px;
   font-weight: 600;

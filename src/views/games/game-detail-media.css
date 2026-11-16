@@ -159,7 +159,7 @@
   background: #fff;
 }
 .games-player-seek input:disabled {
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
   opacity: 0.4;
 }
 .games-player-volume {
@@ -368,7 +368,7 @@
 }
 .games-gallery-strip > .games-gallery-page:disabled {
   opacity: 0.18;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
   background: transparent;
 }
 .games-gallery-window {

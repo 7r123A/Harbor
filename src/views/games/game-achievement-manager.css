@@ -261,7 +261,7 @@
 }
 .games-achievement-manager button:disabled {
   opacity: 0.45;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .games-achievement-manager button:focus-visible,
 .gam-protected:focus-visible {

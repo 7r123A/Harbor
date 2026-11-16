@@ -1,7 +1,13 @@
 @media (any-pointer: fine) {
-  :root[data-harbor-cursor]:not([data-big-picture="true"], [data-middle-click-scroll]) {
+  :root[data-harbor-cursor]:where(:not([data-big-picture="true"], [data-middle-click-scroll])) {
     --harbor-cursor-default: var(--harbor-cursor-image), default;
     --harbor-cursor-pointer: var(--harbor-cursor-image), pointer;
+
+    /* Disclosures in lazy-loaded stylesheets set an unlayered pointer.
+       Leave explicitly assigned cursor utilities to the usual cascade. */
+    & summary:where(:not([class*="cursor-"])) {
+      cursor: var(--harbor-cursor-pointer, pointer);
+    }
   }
 
   @layer base {

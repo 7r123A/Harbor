@@ -180,7 +180,7 @@
 }
 .games-cleanup button:disabled {
   opacity: 0.45;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .games-cleanup svg {
   flex-shrink: 0;

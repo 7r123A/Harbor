@@ -74,7 +74,7 @@
 .sh-icon:disabled,
 .sh-text-button:disabled {
   opacity: 0.4;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .sports-hub button:focus-visible,
 .sh-setup-body button:focus-visible,
@@ -3096,7 +3096,7 @@
   align-items: center;
   gap: 16px;
   padding: 24px;
-  cursor: var(--harbor-cursor-pointer, pointer);
+  cursor: pointer;
   list-style: none;
 }
 .sh-fight-card > summary > span:first-child {

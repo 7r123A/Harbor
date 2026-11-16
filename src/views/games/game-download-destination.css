@@ -118,7 +118,7 @@
 }
 .games-destination-dialog button:disabled {
   opacity: 0.45;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 @media (max-width: 480px) {
   .games-destination-dialog header {

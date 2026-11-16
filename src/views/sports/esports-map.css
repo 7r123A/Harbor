@@ -11,7 +11,7 @@
   align-items: center;
   list-style: none;
   padding: 22px;
-  cursor: var(--harbor-cursor-pointer, pointer);
+  cursor: pointer;
 }
 .sh-esmap > summary::-webkit-details-marker {
   display: none;
@@ -39,7 +39,7 @@
 }
 .sh-esmap button:disabled {
   opacity: 0.4;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .sh-esmap :is(button, summary):focus-visible {
   outline: 2px solid var(--color-ink, #fff);

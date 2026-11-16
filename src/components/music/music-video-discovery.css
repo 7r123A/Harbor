@@ -224,14 +224,14 @@
 }
 .music-video-rail-controls button:disabled {
   opacity: 0.35;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .music-video-rail-controls button:disabled:hover {
   background: none;
 }
 .music-video-discovery form button:disabled {
   opacity: 0.4;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .music-video-discovery form button:disabled:hover {
   background: none;

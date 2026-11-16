@@ -75,7 +75,7 @@
   display: flex;
   align-items: center;
   gap: 18px;
-  cursor: var(--harbor-cursor-pointer, pointer);
+  cursor: pointer;
   list-style: none;
   padding: 18px 12px;
   border-radius: 6px;

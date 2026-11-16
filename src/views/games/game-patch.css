@@ -26,7 +26,7 @@
 }
 .games-patch button:disabled {
   opacity: 0.4;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .games-patch :is(button, summary):focus-visible {
   outline: 2px solid var(--color-accent);
@@ -170,7 +170,7 @@
   color: var(--color-ink-muted);
 }
 .games-patch summary {
-  cursor: var(--harbor-cursor-pointer, pointer);
+  cursor: pointer;
   padding-block: 7px;
 }
 .games-patch details > div {

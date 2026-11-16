@@ -27,7 +27,7 @@
   align-items: center;
   gap: 15px;
   padding: 18px;
-  cursor: var(--harbor-cursor-pointer, pointer);
+  cursor: pointer;
 }
 .games-source-release > summary::-webkit-details-marker {
   display: none;
@@ -729,7 +729,7 @@
 }
 .games-source-file .games-button:disabled {
   opacity: 0.45;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 @media (max-width: 600px) {
   .games-source-file > .games-source-file-identity {

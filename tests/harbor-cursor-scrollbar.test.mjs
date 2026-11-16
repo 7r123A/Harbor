@@ -11,18 +11,20 @@ import { Cdp } from "../scripts/harbor-diag.mjs";
 
 const chromium = process.env.HARBOR_SCROLLBAR_CHROME;
 const appCss = new URL("../src/index.css", import.meta.url);
+const disclosureCss = new URL("../src/components/music/music-artist-overview.css", import.meta.url);
 const pageZoom = 1.6;
 const title = "Harbor scrollbar regression";
 
 // Opt in with HARBOR_SCROLLBAR_CHROME pointing at a Windows Chromium executable.
 // CDP exercises CSS and scroll input in an isolated page. Read the actual Windows cursor separately.
 test(
-  "the Settings rail keeps its scrollbar geometry and drag behavior with the anchor",
+  "the Harbor anchor keeps native disclosure and Settings scrollbar behavior",
   {
     skip: process.platform !== "win32" || !chromium,
     timeout: 20_000,
   },
-  async ({ signal }) => {
+  async (context) => {
+    const { signal } = context;
     const profile = await mkdtemp(join(tmpdir(), "harbor-scrollbar-"));
     let browser;
     let exited;
@@ -33,6 +35,7 @@ test(
       const styles = new Map([
         ["/app.css", await readFile(appCss, "utf8")],
         ["/harbor-cursor.css", await readFile(new URL("harbor-cursor.css", appCss), "utf8")],
+        ["/disclosure.css", await readFile(disclosureCss, "utf8")],
       ]);
       const cursor = await readFile(new URL("assets/harbor-cursor.png", appCss));
       server.on("request", (req, res) => {
@@ -47,14 +50,33 @@ test(
           res.end(`<!doctype html><html data-os="windows" style="--harbor-cursor-image:url('/anchor.png') 9 1">
           <title>${title}</title>
           <link rel="stylesheet" href="/app.css">
+          <link rel="stylesheet" href="/disclosure.css">
           <style>
+            @layer utilities {
+              .cursor-grab {cursor: grab}
+              .cursor-pointer {cursor: var(--harbor-cursor-pointer, pointer)}
+            }
             body {margin: 0; --color-edge: #889099}
             .fixture {margin: 70px; width: 210px; height: 230px; display: flex; flex-direction: column}
             .spacer {flex: none; height: 900px}
+            .explicit-default {cursor: default}
+            .explicit-none {cursor: none}
           </style>
-          <div class="fixture" style="--hset-ui-scale:${pageZoom}">
-            <div class="hset-rail-nav" tabindex="0"><div class="spacer"></div></div>
-          </div>`);
+          <div class="fixture">
+            <div class="hset-rail-nav"><div class="spacer"></div></div>
+          </div>
+          <details class="music-buy-links"><summary id="late">Late CSS</summary>Contents</details>
+          <details><summary id="plain">Plain</summary>Contents</details>
+          <details><summary id="utility" class="cursor-grab"><span id="grabChild">Drag</span></summary></details>
+          <details><summary id="inline" style="cursor: wait">Wait</summary></details>
+          <details><summary id="pointerUtility" class="cursor-pointer">Pointer utility</summary></details>
+          <button id="button">Enabled</button>
+          <button id="disabled" class="explicit-default" disabled>Disabled</button>
+          <a id="link" href="#plain">Link</a>
+          <span id="roleButton" role="button">Role button</span>
+          <span id="roleDisabled" role="button" aria-disabled="true" class="explicit-default">Unavailable</span>
+          <input id="input" value="Text">
+          <div class="explicit-none"><span id="hidden">Hidden</span></div>`);
         } else {
           res.writeHead(404).end();
         }
@@ -134,76 +156,141 @@ test(
       await evaluate(
         "new Promise(resolve => document.readyState === 'complete' ? resolve() : window.addEventListener('load', resolve, { once: true }))",
       );
+      await context.test("native summaries inherit the anchor past late module CSS", async () => {
+        const cursors = () =>
+          evaluate(`Object.fromEntries([...document.querySelectorAll('[id]')].map(
+            element => [element.id, getComputedStyle(element).cursor]
+          ).concat([['body', getComputedStyle(document.body).cursor]]))`);
+        const off = await cursors();
+        assert.equal(off.late, "pointer");
+        assert.equal(off.button, "pointer");
+        assert.equal(off.body, "default");
+        await evaluate('document.documentElement.setAttribute("data-harbor-cursor", "")');
+        const on = await cursors();
+        for (const id of ["late", "plain", "pointerUtility", "button", "link", "roleButton"]) {
+          assert.match(on[id], /anchor\.png.*9 1, pointer$/, id);
+        }
+        assert.match(on.body, /anchor\.png.*9 1, default$/);
+        assert.equal(on.utility, "grab");
+        assert.equal(on.grabChild, "grab");
+        assert.equal(on.inline, "wait");
+        assert.equal(on.disabled, "default");
+        assert.equal(on.roleDisabled, "default");
+        assert.equal(on.input, "text");
+        assert.equal(on.hidden, "none");
+        await evaluate('document.getElementById("late").focus()');
+        await send("Input.dispatchKeyEvent", {
+          type: "keyDown",
+          key: "Enter",
+          code: "Enter",
+          text: "\r",
+          windowsVirtualKeyCode: 13,
+        });
+        await send("Input.dispatchKeyEvent", {
+          type: "keyUp",
+          key: "Enter",
+          code: "Enter",
+          windowsVirtualKeyCode: 13,
+        });
+        assert.equal(await evaluate('document.getElementById("late").parentElement.open'), true);
+        await evaluate('document.documentElement.removeAttribute("data-harbor-cursor")');
+        assert.deepEqual(await cursors(), off);
+      });
       const measure = () =>
         evaluate(`(() => {
       const rail = document.querySelector(".hset-rail-nav");
       const rect = rail.getBoundingClientRect();
       const content = rail.firstElementChild.getBoundingClientRect();
-      const style = getComputedStyle(rail);
-      const thumb = getComputedStyle(rail, "::-webkit-scrollbar-thumb");
+      const gutter = rect.width - content.width;
       return {
         dpr: devicePixelRatio,
-        width: (rect.width - content.width) * devicePixelRatio,
-        standardWidth: style.scrollbarWidth,
-        standardColor: style.scrollbarColor,
-        cursor: thumb.cursor,
+        width: gutter * devicePixelRatio,
+        standardWidth: getComputedStyle(rail).scrollbarWidth,
         x: content.left - rect.left > .1
           ? (rect.left + content.left) / 2
           : (content.right + rect.right) / 2,
-        y: rect.top + rect.height / 8,
+        thumbY: rect.top + rect.height / 8,
+        arrowY: rect.bottom - gutter / 2,
+        pageHeight: rail.clientHeight,
         lane: content.left - rect.left > .1 ? "left" : "right",
       };
     })()`);
+      const reset = () => evaluate('document.querySelector(".hset-rail-nav").scrollTop = 0');
+      const scrollOffset = () =>
+        evaluate(`new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => {
+          resolve(document.querySelector(".hset-rail-nav").scrollTop);
+        })))`);
       for (const direction of ["ltr", "rtl"]) {
         await evaluate(`document.documentElement.dir = "${direction}";
-        document.documentElement.removeAttribute("data-harbor-cursor");
-        document.querySelector(".hset-rail-nav").scrollTop = 0`);
+        document.documentElement.removeAttribute("data-harbor-cursor")`);
         const native = await measure();
         assert.ok(Math.abs(native.dpr - pageZoom) < 0.01, "fixture uses browser zoom 160%");
         assert.equal(native.standardWidth, "thin");
         assert.equal(native.lane, direction === "ltr" ? "right" : "left");
         assert.ok(native.width > 0);
-        await evaluate('document.documentElement.setAttribute("data-harbor-cursor", "")');
-        const custom = await measure();
-        assert.equal(custom.standardWidth, "auto");
-        assert.equal(custom.standardColor, "auto");
-        assert.equal(custom.lane, native.lane);
-        assert.match(custom.cursor, /anchor\.png.*9 1, default$/);
-        assert.ok(
-          Math.abs(custom.width - native.width) <= 1,
-          `${direction} scrollbar gutter changed`,
-        );
-        const { x, y } = custom;
-        await evaluate(
-          "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-        );
-        await send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
-        await send("Input.dispatchMouseEvent", {
-          type: "mousePressed",
-          x,
-          y,
-          button: "left",
-          buttons: 1,
-          clickCount: 1,
-        });
-        await send("Input.dispatchMouseEvent", {
-          type: "mouseMoved",
-          x,
-          y: y + 45,
-          button: "left",
-          buttons: 1,
-        });
-        await send("Input.dispatchMouseEvent", {
-          type: "mouseReleased",
-          x,
-          y: y + 45,
-          button: "left",
-          clickCount: 1,
-        });
-        const offset = await evaluate(
-          'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(document.querySelector(".hset-rail-nav").scrollTop))))',
-        );
-        assert.ok(offset > 0, `${direction} scrollbar thumb did not scroll`);
+        for (const mode of ["off", "on", "forced colors"]) {
+          const description = `${direction}, ${mode}`;
+          const forcedColors = mode === "forced colors";
+          await evaluate(
+            `document.documentElement.toggleAttribute("data-harbor-cursor", ${mode !== "off"})`,
+          );
+          await send("Emulation.setEmulatedMedia", {
+            features: forcedColors ? [{ name: "forced-colors", value: "active" }] : [],
+          });
+          assert.equal(
+            await evaluate('matchMedia("(forced-colors: active)").matches'),
+            forcedColors,
+          );
+          await reset();
+          assert.deepEqual(await measure(), native, `${description}: scrollbar geometry`);
+          const { x, thumbY, arrowY, pageHeight } = native;
+          const move = (y, buttons) =>
+            send("Input.dispatchMouseEvent", {
+              type: "mouseMoved",
+              x,
+              y,
+              buttons,
+              button: buttons ? "left" : "none",
+            });
+          const press = (y) =>
+            send("Input.dispatchMouseEvent", {
+              type: "mousePressed",
+              x,
+              y,
+              button: "left",
+              buttons: 1,
+              clickCount: 1,
+            });
+          const release = (y) =>
+            send("Input.dispatchMouseEvent", {
+              type: "mouseReleased",
+              x,
+              y,
+              button: "left",
+              clickCount: 1,
+            });
+
+          await scrollOffset();
+          await move(thumbY, 0);
+          await press(thumbY);
+          await move(thumbY + 45, 1);
+          await release(thumbY + 45);
+          assert.ok((await scrollOffset()) > 0, `${description}: scrollbar thumb did not scroll`);
+
+          await reset();
+          await scrollOffset();
+          // The native decrement/increment buttons occupy the ends of the lane.
+          await move(arrowY, 0);
+          await press(arrowY);
+          await release(arrowY);
+          await delay(250, undefined, { signal });
+          const step = await scrollOffset();
+          assert.ok(
+            step > 0 && step < pageHeight / 2,
+            `${description}: expected one scrollbar arrow step, got ${step}`,
+          );
+        }
+        await send("Emulation.setEmulatedMedia", { features: [] });
       }
       await withinTimeout(Promise.race([cdp.send("Browser.close"), exited]));
       await withinTimeout(exited);

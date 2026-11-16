@@ -15,7 +15,7 @@
 }
 .sh-player-stat-table summary {
   padding: 16px;
-  cursor: var(--harbor-cursor-pointer, pointer);
+  cursor: pointer;
   font-size: 14px;
   font-weight: 600;
 }

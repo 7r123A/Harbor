@@ -36,7 +36,7 @@
 }
 .games-torrent-dialog button:disabled {
   opacity: 0.45;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .games-torrent-dialog .games-button {
   font-size: 14px;
@@ -385,7 +385,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  cursor: var(--harbor-cursor-pointer, pointer);
+  cursor: pointer;
   width: fit-content;
   padding: 3px 0;
   list-style: none;

@@ -454,7 +454,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  cursor: var(--harbor-cursor-pointer, pointer);
+  cursor: pointer;
   list-style: none;
 }
 .hot-selection p {

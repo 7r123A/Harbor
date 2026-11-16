@@ -191,7 +191,7 @@
 }
 .ebook-source-button:disabled {
   opacity: 0.5;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .ebook-source-back {
   background: transparent;

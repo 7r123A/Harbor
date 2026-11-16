@@ -35,7 +35,7 @@
 }
 .games-shortcut:disabled {
   opacity: 1 !important;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .games-shortcut > span {
   flex: 1;

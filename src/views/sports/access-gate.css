@@ -52,7 +52,7 @@
   color: var(--color-ink-muted);
 }
 .sports-usage-details summary {
-  cursor: var(--harbor-cursor-pointer, pointer);
+  cursor: pointer;
   min-height: 44px;
   align-content: center;
   color: var(--color-ink);

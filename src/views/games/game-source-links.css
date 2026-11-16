@@ -148,7 +148,7 @@
 }
 .games-source-link-dialog button:disabled {
   opacity: 0.45;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .games-source-link-dialog button:focus-visible {
   outline: 2px solid var(--color-ink);

@@ -95,7 +95,7 @@
 }
 .games-selection-bar button:disabled {
   opacity: 0.4;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 @keyframes games-selection-reveal {
   from {

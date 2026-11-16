@@ -5459,7 +5459,7 @@ html[data-theme-card="crunch"][dir="rtl"] .harbor-profile-dropdown {
 
 .hset-btn:disabled {
   opacity: 0.45;
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 
 .hset-btn-primary {
@@ -7022,6 +7022,7 @@ button.hset-rail-me:hover,
   overflow-y: auto;
   overflow-anchor: none;
   overscroll-behavior-y: contain;
+  /* Keep the native scrollbar, including step buttons and system contrast behavior. */
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
@@ -7029,37 +7030,6 @@ button.hset-rail-me:hover,
 .hset-rail-nav:hover,
 .hset-rail-nav:focus-within {
   scrollbar-color: var(--color-edge) transparent;
-}
-
-@supports selector(::-webkit-scrollbar) {
-  @media (any-pointer: fine) and (forced-colors: none) {
-    /* WebView2 ignores inherited cursors on native scrollbars. Use its CSS scrollbar
-       while the anchor is active, keeping the thin gutter independent of page zoom. */
-    :root[data-os="windows"][data-harbor-cursor]:not(
-        [data-big-picture="true"],
-        [data-middle-click-scroll]
-      )
-      .hset-rail-nav {
-      scrollbar-width: auto;
-      scrollbar-color: auto;
-
-      &::-webkit-scrollbar {
-        width: calc(10.5px / var(--hset-ui-scale, 1));
-        background: transparent;
-      }
-
-      &::-webkit-scrollbar-thumb {
-        border: calc(2px / var(--hset-ui-scale, 1)) solid transparent;
-        border-radius: 999px;
-        background: transparent;
-        background-clip: padding-box;
-      }
-
-      &:is(:hover, :focus-within)::-webkit-scrollbar-thumb {
-        background-color: var(--color-edge);
-      }
-    }
-  }
 }
 
 .hset-source-options {

@@ -845,7 +845,7 @@
   align-items: center;
   gap: 12px;
   padding: 17px 0;
-  cursor: var(--harbor-cursor-pointer, pointer);
+  cursor: pointer;
   list-style: none;
 }
 .games-detail-languages > summary > span {
