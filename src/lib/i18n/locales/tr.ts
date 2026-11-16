@@ -376,6 +376,37 @@ const tr: Record<string, string> = {
   ...reviews,
   ...queueBasket,
   ...liveWeb,
+  "Refract sync": "Refract eşitlemesi",
+  "Sync watched history and Harbor watchlist changes with Refract.":
+    "İzleme geçmişini ve Harbor izleme listesi değişikliklerini Refract ile eşitle.",
+  "Refract personal API key": "Refract kişisel API anahtarı",
+  "Verifying...": "Doğrulanıyor…",
+  "Connect Refract": "Refract'ı bağla",
+  "Refract key saved in Harbor's secret store":
+    "Refract anahtarı Harbor'ın güvenli deposuna kaydedildi",
+  "Sync watched history and watchlist": "İzleme geçmişini ve izleme listesini eşitle",
+  "Send watched history and watchlist changes from Harbor to Refract. Only the primary Harbor profile is synced.":
+    "İzleme geçmişini ve izleme listesi değişikliklerini Harbor'dan Refract'a gönder. Yalnızca Harbor'ın ana profili eşitlenir.",
+  "Retry pending watches": "Bekleyen izleme kayıtlarını yeniden gönder",
+  "Disconnect Refract": "Refract bağlantısını kes",
+  "Connected to Refract ({identity}). Watched history sync is enabled.":
+    "Refract'a ({identity}) bağlanıldı. İzleme geçmişi eşitlemesi etkin.",
+  "Could not verify the key via Refract /v1/me. Check permissions and connectivity.":
+    "Anahtar Refract /v1/me üzerinden doğrulanamadı. İzinleri ve bağlantıyı kontrol et.",
+  "Disconnected from Refract.": "Refract bağlantısı kesildi.",
+  "Create a personal API key in Refract with profile:read, library:read, library:write and history:write. Never share or commit the key.":
+    "Refract'ta profile:read, library:read, library:write ve history:write izinlerine sahip kişisel bir API anahtarı oluştur. Anahtarı asla paylaşma veya bir commit'e ekleme.",
+  "Automatic watch threshold": "Otomatik izleme kaydı eşiği",
+  "After {count} minutes": "{count} dakika sonra",
+  "{count}% (default)": "%{count} (varsayılan)",
+  "Log a movie or episode in Refract when playback reaches the selected time or percentage. Seeking past it also qualifies. Early logging counts as watched in Refract, not partially watched. Harbor's own completion threshold is unchanged.":
+    "Oynatma seçilen süreye veya yüzdeye ulaştığında filmi ya da bölümü Refract'a kaydet. Eşiğin ilerisine atlamak da geçerlidir. Erken kayıt, içeriği kısmen izlenmiş değil, izlenmiş olarak işaretler. Harbor'ın kendi tamamlanma eşiği değişmez.",
+  "Harbor → Refract Plan to Watch": "Harbor → Refract: izlenecekler",
+  "New watchlist additions and removals are sent automatically while sync is enabled. Requires library:write; reconnect with an updated key if needed. Existing Refract history and other library statuses are preserved.":
+    "Eşitleme etkin olduğunda izleme listesine yapılan eklemeler ve çıkarmalar otomatik gönderilir. library:write izni gerekir; gerekirse güncel bir anahtarla yeniden bağlan. Mevcut Refract geçmişi ve diğer kitaplık durumları korunur.",
+  "{sent} sent · {pending} pending · {failed} unmatched":
+    "{sent} gönderildi · {pending} bekliyor · {failed} eşleşmedi",
+  "Unmatched items": "Eşleşmeyen öğeler",
 };
 
 export default tr;
