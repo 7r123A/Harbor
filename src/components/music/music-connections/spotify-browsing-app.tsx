@@ -80,7 +80,7 @@ export function SpotifyBrowsingApp({ onDone }: { onDone: () => void }) {
           <span className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-ink">
             {t("music.spotifySetup.pairManual")}
             <span className="rounded-full bg-elevated px-2 py-0.5 text-[10px] font-medium text-ink-muted">
-              {t("music.spotifySetup.browseOptional")}
+              {t("music.spotifySetup.browseRecommended")}
             </span>
           </span>
           <span className="mt-1 block text-[12px] leading-5 text-ink-muted">
@@ -89,9 +89,9 @@ export function SpotifyBrowsingApp({ onDone }: { onDone: () => void }) {
           <span
             role="status"
             aria-live="polite"
-            className={`mt-2 flex items-center gap-2 text-[12px] font-medium ${status?.ownAppBrowsing ? "text-accent" : "text-ink-muted"}`}
+            className={`mt-2 flex items-center gap-2 text-[12px] font-medium ${status?.ownAppBrowsing ? "text-ink" : "text-ink-muted"}`}
           >
-            {status?.ownAppBrowsing && !busy && <Check size={14} aria-hidden="true" />}
+            {status?.ownAppBrowsing && !busy && <Check size={14} aria-hidden="true" className="text-ink-muted" />}
             {t("music.spotify.browsingLabel")}:{" "}
             {busy
               ? t("music.connect.connecting")

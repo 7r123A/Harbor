@@ -37,7 +37,7 @@ export function SpotifyDevicePairing({
   const timer = useRef<number | null>(null);
   const listening = useRef(false);
   const titleClass = "text-[13px] font-semibold leading-6 text-ink";
-  const bodyClass = "mt-1 text-[13px] leading-5 text-ink-muted";
+  const bodyClass = "mt-1 text-[12px] leading-5 text-ink-muted";
 
   useEffect(
     () => () => {
@@ -107,7 +107,7 @@ export function SpotifyDevicePairing({
       <p className={titleClass}>{t("music.spotifySetup.pairTitle")}</p>
       <p className={bodyClass}>{t("music.spotifySetup.pairBody")}</p>
       {prompt ? (
-        <div className="mt-3 grid gap-3 rounded-lg border border-edge bg-canvas/40 px-4 py-3">
+        <div className="mt-3 grid gap-3 rounded-lg border border-edge-soft bg-canvas/30 px-4 py-3">
           <div className="flex flex-wrap items-end gap-3">
             <div className="min-w-0">
               <span className="block font-mono text-[10px] uppercase tracking-[0.12em] text-ink-subtle">
@@ -125,7 +125,7 @@ export function SpotifyDevicePairing({
               onClick={() =>
                 void copyText(prompt.userCode).then((ok) => setCopyState(ok ? "copied" : "failed"))
               }
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-edge px-4 text-[12px] font-medium text-ink hover:bg-elevated"
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-edge px-4 text-[12px] font-medium text-ink transition-colors hover:bg-elevated focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               {copyState === "copied" ? (
                 <Check size={17} aria-hidden="true" />
@@ -146,7 +146,7 @@ export function SpotifyDevicePairing({
             <button
               type="button"
               onClick={() => void openUrl(pairUrl)}
-              className="inline-flex min-h-11 items-center gap-2 rounded-full bg-ink px-5 text-[12px] font-semibold text-canvas"
+              className="inline-flex min-h-11 items-center gap-2 rounded-full bg-ink px-5 text-[12px] font-semibold text-canvas transition-opacity hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               {t("music.spotifySetup.pairOpen")}
               <ExternalLink size={15} aria-hidden="true" />
@@ -154,7 +154,7 @@ export function SpotifyDevicePairing({
             <button
               type="button"
               onClick={cancel}
-              className="inline-flex min-h-11 items-center rounded-full border border-edge px-4 text-[12px] font-medium text-ink hover:bg-elevated"
+              className="inline-flex min-h-11 items-center rounded-full border border-edge px-4 text-[12px] font-medium text-ink transition-colors hover:bg-elevated focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               {t("common.cancel")}
             </button>
@@ -170,7 +170,7 @@ export function SpotifyDevicePairing({
           type="button"
           onClick={start}
           disabled={disabled || busy}
-          className="mt-3 inline-flex h-11 min-w-28 items-center justify-center gap-2 rounded-full bg-ink px-5 text-[12px] font-semibold text-canvas disabled:opacity-40"
+          className="mt-3 inline-flex h-11 min-w-28 items-center justify-center gap-2 rounded-full bg-ink px-5 text-[12px] font-semibold text-canvas transition-opacity hover:opacity-90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40"
         >
           {busy ? t("music.connect.connecting") : t("music.spotifySetup.pairAction")}
         </button>

@@ -720,7 +720,7 @@ const music: Record<string, string> = {
   "music.spotifySetup.pairBody":
     "Play Spotify directly in Harbor with Premium. Enter the pairing code at spotify.com/pair and approve it. No Developer app or Client ID is required.",
   "music.spotifySetup.intro":
-    "Pair Spotify to stream music in Harbor. Spotify Premium is required. Browsing with your own Developer app is optional.",
+    "Pair Spotify to stream music in Harbor. Spotify Premium is required. A separate Developer app is recommended for browsing.",
   "music.spotifySetup.browseOptional": "Optional",
   "music.spotify.browsingLabel": "Browsing",
   "music.spotify.browsingOwnApp": "Own app authorized",
@@ -740,7 +740,7 @@ const music: Record<string, string> = {
   "music.spotifySetup.pairManual": "Advanced Spotify browsing",
   "music.spotifySetup.browseRecommended": "Recommended",
   "music.spotifySetup.browseBody":
-    "Optional: authorize your own Spotify Developer app for a separate browsing quota. This does not enable local playback.",
+    "Authorize your own Spotify Developer app for a separate browsing quota. Recommended for browsing, not required for playback.",
   "music.spotifyBrowse.title": "Browsing shares Spotify's rate limit",
   "music.spotifyBrowse.body":
     "Playback is paired and working. Browsing currently shares librespot's Spotify quota, which saturates often — sign in with your own Spotify app to give browsing its own quota. Playback stays paired.",

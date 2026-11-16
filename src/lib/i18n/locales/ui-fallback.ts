@@ -2923,7 +2923,7 @@ const uiFallback: Record<string, string> = {
   "music.spotify.browsingLabel": "Browsing",
   "music.spotifySetup.browseOptional": "Optional",
   "music.spotifySetup.intro":
-    "Pair Spotify to stream music in Harbor. Spotify Premium is required. Browsing with your own Developer app is optional.",
+    "Pair Spotify to stream music in Harbor. Spotify Premium is required. A separate Developer app is recommended for browsing.",
   "music.spotifySetup.repair": "Re-pair this device",
   "music.videos.closeMini": "Close mini player",
   "music.videos.mini": "Mini player",
