@@ -40,6 +40,8 @@ type Store = {
 const STORE_KEY = "harbor.refract.sync.v1";
 const EVENT = "harbor:refract-sync-changed";
 const DEDUP_MS = 15 * 60 * 1000;
+const MAX_PENDING = 2500;
+const QUEUE_FULL = "Refract queue full; unable to save another watch";
 let running = false;
 let started = false;
 
@@ -100,12 +102,29 @@ export function resetRefractSync(): void {
 function keyOf(job: Job): string {
   return `${job.type}|${job.sourceId}|${job.season ?? ""}|${job.episode ?? ""}`;
 }
-function append(s: Store, job: Job): void {
-  const key = keyOf(job);
-  if (Date.now() - (s.recent[key] || 0) < DEDUP_MS) return;
-  if (s.pending.some((x) => keyOf(x) === key)) return;
-  if (s.pending.length < 2500) s.pending.push(job);
-  else s.message = "Refract queue full; unable to save another watch";
+function appendBatch(s: Store, jobs: Job[]): void {
+  const pendingKeys = new Set(s.pending.map(keyOf));
+  const now = Date.now();
+  const fresh = jobs.filter((job) => {
+    const key = keyOf(job);
+    if (now - (s.recent[key] || 0) < DEDUP_MS || pendingKeys.has(key)) return false;
+    pendingKeys.add(key);
+    return true;
+  });
+  if (fresh.length === 0) return;
+  // Never accept only a prefix of a bulk history action.
+  if (s.pending.length + fresh.length > MAX_PENDING) {
+    const { sourceId, season, episode } = fresh[0];
+    s.failed.push({
+      sourceId,
+      season: jobs.length === 1 ? season : undefined,
+      episode: jobs.length === 1 ? episode : undefined,
+      reason: QUEUE_FULL,
+    });
+    s.message = QUEUE_FULL;
+    return;
+  }
+  s.pending.push(...fresh);
 }
 export function enqueueRefractWatch(event: WatchEvent, hint: RefractHint = {}): void {
   // A single personal key must never accidentally receive another Harbor profile's watches.
@@ -130,7 +149,8 @@ export function enqueueRefractWatch(event: WatchEvent, hint: RefractHint = {}): 
     attempts: 0,
     nextAt: Date.now(),
   });
-  if (event.type === "movie") append(s, make("movie"));
+  const jobs: Job[] = [];
+  if (event.type === "movie") jobs.push(make("movie"));
   else {
     const episodes = hint.episodes?.length
       ? hint.episodes
@@ -144,9 +164,10 @@ export function enqueueRefractWatch(event: WatchEvent, hint: RefractHint = {}): 
         Number.isInteger(ep.episode) &&
         ep.episode >= 1
       )
-        append(s, make("episode", ep.season, ep.episode));
+        jobs.push(make("episode", ep.season, ep.episode));
     }
   }
+  appendBatch(s, jobs);
   if (save(s)) void flushRefractSync();
 }
 class Unmatched extends Error {}
