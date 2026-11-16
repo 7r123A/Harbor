@@ -430,6 +430,38 @@ const ru: Record<string, string> = {
   ...reviews,
   ...queueBasket,
   ...liveWeb,
+  "Refract sync": "Синхронизация с Refract",
+  "Sync watched history and Harbor watchlist changes with Refract.":
+    "Синхронизируйте историю просмотров и изменения списка «Хочу посмотреть» в Harbor с Refract.",
+  "Refract personal API key": "Личный API-ключ Refract",
+  "Verifying...": "Проверка…",
+  "Connect Refract": "Подключить Refract",
+  "Refract key saved in Harbor's secret store":
+    "Ключ Refract сохранён в защищённом хранилище Harbor",
+  "Sync watched history and watchlist":
+    "Синхронизировать историю просмотров и список просмотра",
+  "Send watched history and watchlist changes from Harbor to Refract. Only the primary Harbor profile is synced.":
+    "Отправляйте историю просмотров и изменения списка просмотра из Harbor в Refract. Синхронизируется только основной профиль Harbor.",
+  "Retry pending watches": "Повторить отправку ожидающих записей о просмотрах",
+  "Disconnect Refract": "Отключить Refract",
+  "Connected to Refract ({identity}). Watched history sync is enabled.":
+    "Подключено к Refract ({identity}). Синхронизация истории просмотров включена.",
+  "Could not verify the key via Refract /v1/me. Check permissions and connectivity.":
+    "Не удалось проверить ключ через Refract /v1/me. Проверьте разрешения и подключение.",
+  "Disconnected from Refract.": "Refract отключён.",
+  "Create a personal API key in Refract with profile:read, library:read, library:write and history:write. Never share or commit the key.":
+    "Создайте личный API-ключ в Refract с разрешениями profile:read, library:read, library:write и history:write. Никогда не делитесь ключом и не добавляйте его в коммиты.",
+  "Automatic watch threshold": "Порог автоматической записи просмотра",
+  "After {count} minutes": "Через {count} мин.",
+  "{count}% (default)": "{count}% (по умолчанию)",
+  "Log a movie or episode in Refract when playback reaches the selected time or percentage. Seeking past it also qualifies. Early logging counts as watched in Refract, not partially watched. Harbor's own completion threshold is unchanged.":
+    "Записывайте фильм или эпизод в Refract, когда воспроизведение достигнет выбранного времени или процента. Перемотка за порог также учитывается. Ранняя запись отмечает контент как просмотренный, а не частично просмотренный. Порог завершения просмотра в Harbor не изменяется.",
+  "Harbor → Refract Plan to Watch": "Harbor → Refract: хочу посмотреть",
+  "New watchlist additions and removals are sent automatically while sync is enabled. Requires library:write; reconnect with an updated key if needed. Existing Refract history and other library statuses are preserved.":
+    "Добавление и удаление элементов списка просмотра отправляется автоматически, пока синхронизация включена. Требуется разрешение library:write; при необходимости подключитесь заново с обновлённым ключом. Существующая история Refract и другие статусы библиотеки сохраняются.",
+  "{sent} sent · {pending} pending · {failed} unmatched":
+    "Отправлено: {sent} · Ожидает: {pending} · Не сопоставлено: {failed}",
+  "Unmatched items": "Несопоставленные элементы",
 };
 
 export default ru;
