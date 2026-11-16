@@ -12,7 +12,9 @@ import {
   type FlipCtor,
   type FlipInstance,
 } from "./flipbook";
-import { IMAGE_FALLBACK_HEADERS, measureAspect } from "./reader-utils";
+import { IMAGE_FALLBACK_HEADERS, measureAspect, resolveReaderImageHeaders } from "./reader-utils";
+import { safeFetchBytes } from "@/lib/safe-fetch";
+import { isSuwayomiServerUrl } from "@/lib/manga/sources/suwayomi/auth-registry";
 
 const BASE = "/flipbook";
 const NAME = "harborBook";
@@ -179,6 +181,16 @@ export function BookFlip({
   soundOn.current = soundEnabled;
   const headersRef = useRef(pageHeaders);
   headersRef.current = pageHeaders;
+  const hostHeadersRef = useRef<Map<string, Record<string, string>>>(new Map());
+  const hostHeaders = new Map<string, Record<string, string>>();
+  for (const [url, headers] of Object.entries(pageHeaders ?? {})) {
+    const host = hostOf(url);
+    const referer = Object.entries(headers).find(([name]) => name.toLowerCase() === "referer")?.[1];
+    if (host && referer) {
+      hostHeaders.set(host, { ...IMAGE_FALLBACK_HEADERS, Referer: referer });
+    }
+  }
+  hostHeadersRef.current = hostHeaders;
   const instRef = useRef<FlipInstance | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const panRef = useRef({ x: 0, y: 0 });
@@ -263,18 +275,25 @@ export function BookFlip({
         if (h) hosts.add(h);
       }
     }
-    const httpMod =
-      hosts.size || (headersRef.current && Object.keys(headersRef.current).length > 0)
-        ? import("@tauri-apps/plugin-http")
-        : null;
-    if (httpMod) {
+    const useNativeImages = hosts.size > 0;
+    if (useNativeImages) {
       window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
         const u = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
         const host = hostOf(u);
-        const headers =
-          headersRef.current?.[u] ?? (host && hosts.has(host) ? IMAGE_FALLBACK_HEADERS : undefined);
-        if (headers) {
-          return httpMod.then((m) => (m.fetch as unknown as typeof fetch)(u, { headers }));
+        const supplied =
+          headersRef.current?.[u] ??
+          (host ? hostHeadersRef.current.get(host) : undefined) ??
+          (host && hosts.has(host) ? IMAGE_FALLBACK_HEADERS : undefined);
+        if (supplied) {
+          const headers = resolveReaderImageHeaders(u, supplied);
+          return safeFetchBytes(
+            u,
+            { ...init, headers },
+            30_000,
+            32 * 1024 * 1024,
+            isSuwayomiServerUrl(u),
+            true,
+          );
         }
         return origFetch(input, init);
       }) as typeof fetch;
@@ -290,6 +309,31 @@ export function BookFlip({
     };
     window.addEventListener("r3d-pagechange", onPage);
     void (async () => {
+      // The flipbook treats an initial 403 as a permanent failed texture even
+      // when the reader verifies the image host a moment later. Complete that
+      // verification before the flipbook starts its own concurrent page fetches.
+      const firstPage = pages[Math.min(Math.max(resumePage, 0), pages.length - 1)];
+      if (isTauri && firstPage) {
+        const pageHost = hostOf(firstPage).toLowerCase();
+        if (pageHost === "batcave.biz" || pageHost.endsWith(".batcave.biz")) {
+          const supplied =
+            headersRef.current?.[firstPage] ??
+            hostHeadersRef.current.get(pageHost) ??
+            IMAGE_FALLBACK_HEADERS;
+          const response = await safeFetchBytes(
+            firstPage,
+            { headers: resolveReaderImageHeaders(firstPage, supplied) },
+            30_000,
+            32 * 1024 * 1024,
+            false,
+            true,
+          );
+          if (!response.ok) {
+            throw new Error(`Unable to load starting chapter image: HTTP ${response.status}`);
+          }
+          if (cancelled) return;
+        }
+      }
       const aspect = await sampledAspect(pages);
       await loadFlipbook();
       if (cancelled || !ref.current) return;
@@ -305,6 +349,10 @@ export function BookFlip({
       inst = new Ctor(ref.current, {
         name: instanceName,
         pages: pages.map((src) => ({ src })),
+        // Harbor's Tauri/WebView origin can be http:. The vendor defaults to
+        // matchProtocol=true and silently rewrites https: chapter URLs to http:,
+        // defeating verified image recovery and breaking signed image CDNs.
+        matchProtocol: false,
         viewMode: "webgl",
         singlePageMode,
         singlePageModeIfMobile: true,
@@ -453,7 +501,7 @@ export function BookFlip({
     return () => {
       cancelled = true;
       instRef.current = null;
-      if (httpMod) window.fetch = origFetch;
+      if (useNativeImages) window.fetch = origFetch;
       window.onpopstate = origOnPopState;
       window.removeEventListener("r3d-pagechange", onPage);
       disposeFlipbook(inst);

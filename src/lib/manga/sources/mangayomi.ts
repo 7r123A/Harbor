@@ -1,5 +1,5 @@
 import type { MangaProvider } from "@/lib/manga/types";
-import { PluginWorker } from "@/lib/manga/plugins/worker-host";
+import { PluginWorker, INTERACTIVE_PLUGIN_TIMEOUT_MS } from "@/lib/manga/plugins/worker-host";
 import type { InstalledPlugin } from "@/lib/manga/plugins/types";
 import { toSummaries, toSummary, toChapters, toStrings, toTags } from "@/lib/manga/plugins/adapter";
 import { buildMangayomiSource } from "./mangayomi/prelude";
@@ -30,7 +30,10 @@ function workerFor(record: MangayomiSourceRecord, background = false): PluginWor
   const key = `${background ? "background:" : ""}${record.id}`;
   const existing = workers.get(key);
   if (existing) return existing;
-  const w = new PluginWorker(asPlugin(record), { httpPolicy: { background } });
+  const w = new PluginWorker(asPlugin(record), {
+    httpPolicy: { background },
+    callTimeoutMs: background ? undefined : INTERACTIVE_PLUGIN_TIMEOUT_MS,
+  });
   workers.set(key, w);
   return w;
 }
@@ -43,6 +46,7 @@ export function makeMangayomiProvider(
   const provider: MangaProvider = {
     id: record.id,
     name: record.name,
+    requestTimeoutMs: background ? undefined : INTERACTIVE_PLUGIN_TIMEOUT_MS + 5_000,
     popular: (offset, tagId) => w.call("popular", [offset, tagId], 20_000).then(toSummaries),
     search: (query, offset, tagId) =>
       w.call("search", [query, offset, tagId], 20_000).then(toSummaries),

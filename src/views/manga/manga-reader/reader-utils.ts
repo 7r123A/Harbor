@@ -1,15 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isSuwayomiServerUrl } from "@/lib/manga/sources/suwayomi/auth-registry";
 import { readImageResponse } from "@/lib/context-image-policy";
+import { IMAGE_FALLBACK_HEADERS, resolveReaderImageHeaders } from "./image-request-headers";
+export { IMAGE_FALLBACK_HEADERS, resolveReaderImageHeaders } from "./image-request-headers";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 const MEASURE_TIMEOUT_MS = 8000;
-
-export const IMAGE_FALLBACK_HEADERS: Record<string, string> = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-};
 
 type HarborFetchResponse = {
   status: number;
@@ -35,10 +32,12 @@ export async function fetchImageObjectUrl(
     args: {
       url,
       method: "GET",
-      headers,
+      headers: resolveReaderImageHeaders(url, headers),
       responseType: "base64",
       timeoutMs,
       allowLocalNetwork: isSuwayomiServerUrl(url),
+      maxResponseBytes: 32 * 1024 * 1024,
+      allowImageChallenge: true,
     },
   });
   if (!resp.ok) throw new Error(`status ${resp.status}`);

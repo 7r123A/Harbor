@@ -74,6 +74,7 @@ mod cast_server;
 mod cf_relay;
 #[cfg(desktop)]
 mod cf_solver;
+mod source_challenge;
 #[cfg(desktop)]
 mod desktop_notify;
 #[cfg(desktop)]
