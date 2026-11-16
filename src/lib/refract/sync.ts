@@ -86,6 +86,7 @@ export function refractStatus() {
     synced: s.synced,
     failed: s.failed.length,
     message: s.message,
+    failureDetails: s.failed.slice(-4),
     failures: s.failed
       .slice(-4)
       .map(
