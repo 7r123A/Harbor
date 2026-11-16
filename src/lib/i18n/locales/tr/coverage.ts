@@ -923,6 +923,11 @@ const coverage: Record<string, string> = {
   "Increase the subtitle text size.": "Altyazı metin boyutunu büyütür.",
   "Audio: {name}": "Ses: {name}",
   "Subtitle size: {size}": "Altyazı boyutu: {size}",
+  "Save to library": "Kütüphaneye kaydet",
+  "In library": "Kütüphanede",
+  "In your library": "Kütüphanenizde",
+  'Right-click any title in Harbor or hit "Save to library" on its detail page to add it here.':
+    'Harbor\'da herhangi bir başlığa sağ tıklayın veya buraya eklemek için ayrıntı sayfasındaki "Kütüphaneye kaydet" düğmesine basın.',
 };
 
 export default coverage;

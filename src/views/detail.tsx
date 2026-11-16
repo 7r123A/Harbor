@@ -2848,7 +2848,7 @@ function DetailContent({
                         activeIcon={<Check size={18} strokeWidth={2.4} />}
                         inactiveIcon={<Plus size={18} strokeWidth={2} />}
                       />
-                      {inWatchlist ? t("In Watchlist") : t("Add to Watchlist")}
+                      {inWatchlist ? t("In library") : t("Save to library")}
                     </button>
                   </HoverTooltip>
                 )}

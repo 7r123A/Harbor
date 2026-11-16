@@ -190,7 +190,7 @@ export function HeroActionOverflow({
                       <Bookmark size={14} strokeWidth={2} />
                     )
                   }
-                  label={inWatchlist ? t("In Watchlist") : t("Add to Watchlist")}
+                  label={inWatchlist ? t("In library") : t("Save to library")}
                   active={inWatchlist}
                   onClick={() => {
                     onToggleWatchlist?.();

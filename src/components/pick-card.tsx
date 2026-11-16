@@ -662,8 +662,8 @@ const PosterCard = memo(function PosterCard({
           {inWatchlist && settings.watchlistBadge !== "off" && (
             <span
               className={`pointer-events-none absolute flex h-6 w-6 items-center justify-center rounded-full bg-canvas/95 text-ink ring-1 ring-edge-soft/70 ${watchlistPos}`}
-              title={t("In your watchlist")}
-              aria-label={t("In watchlist")}
+              title={t("In your library")}
+              aria-label={t("In library")}
             >
               <Bookmark size={11} strokeWidth={2.6} fill="currentColor" />
             </span>

@@ -36,6 +36,9 @@ import {
   subscribeWatchlist,
   type LocalEntry as SavedEntry,
 } from "@/lib/watchlist";
+import { useMovieWatchedIds } from "@/lib/movie-watched";
+import { useWatchedFlagIds } from "@/lib/watched-flag";
+import { collectStremioWatchedIds, isMergedWatchlistCardWatched } from "@/lib/watchlist-watched";
 import { useCustomLists } from "@/lib/custom-lists";
 import { useMediaFavorites } from "@/lib/media-favorites";
 import { useCharacterFavorites } from "@/lib/character-favorites";
@@ -317,6 +320,8 @@ export function useBpLibraryFeed(
   const nuvio = useNuvioItems(stremioTab, reload);
   const trakt = useTraktItems(stremioTab || tab === "trakt", reload);
   const saved = useSavedEntries();
+  const movieWatched = useMovieWatchedIds();
+  const watchedFlags = useWatchedFlagIds();
   const files = useLocalLibrary();
   const lists = useCustomLists();
   const favorites = useMediaFavorites();
@@ -329,8 +334,13 @@ export function useBpLibraryFeed(
     () => stremio.items.filter((i) => usable(i) && !(hideAnime && isAnimeCwItem(i))),
     [stremio.items, hideAnime],
   );
+  const stremioWatched = useMemo(() => collectStremioWatchedIds(keep), [keep]);
 
   const feed = useMemo<BpLibFeed>(() => {
+    // Marking a title watched must refresh the Watchlist view even when the
+    // cached library payload has not been refetched yet.
+    void movieWatched;
+    void watchedFlags;
     if (tab === "library" || tab === "watchlist") {
       const merged = mergeWatchlist(
         saved,
@@ -338,8 +348,12 @@ export function useBpLibraryFeed(
         trakt.watchlist,
         isNuvio ? nuvio.items : undefined,
       );
+      const visible =
+        tab === "watchlist"
+          ? merged.filter((card) => !isMergedWatchlistCardWatched(card, saved, stremioWatched))
+          : merged;
       return {
-        entries: merged.map((m) => ({ key: m.key, meta: m.meta, date: m.date })),
+        entries: visible.map((m) => ({ key: m.key, meta: m.meta, date: m.date })),
         status: isNuvio ? worst(nuvio.status, trakt.status) : worst(stremio.status, trakt.status),
         groups: [],
       };
@@ -443,6 +457,9 @@ export function useBpLibraryFeed(
     nuvio.status,
     isNuvio,
     settings.libraryBookmarkedOnly,
+    stremioWatched,
+    movieWatched,
+    watchedFlags,
   ]);
 
   const signedIn = (isNuvio ? nuvio.signedIn : stremio.signedIn) || trakt.connected;

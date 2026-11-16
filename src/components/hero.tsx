@@ -477,7 +477,7 @@ export const Hero = memo(function Hero({
                 ) : (
                   <Plus size={18} strokeWidth={2} />
                 )}
-                {inWatchlist ? t("In Watchlist") : t("Add to Watchlist")}
+                {inWatchlist ? t("In library") : t("Save to library")}
               </button>
             )}
           </div>

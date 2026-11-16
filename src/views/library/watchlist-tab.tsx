@@ -37,6 +37,9 @@ import {
 } from "@/lib/nuvio/nuvio-library";
 import { useT } from "@/lib/i18n";
 import { useSessionState } from "@/lib/session-state";
+import { useMovieWatchedIds } from "@/lib/movie-watched";
+import { useWatchedFlagIds } from "@/lib/watched-flag";
+import { collectStremioWatchedIds, isMergedWatchlistCardWatched } from "@/lib/watchlist-watched";
 import {
   applyFilter,
   countByType,
@@ -80,6 +83,11 @@ export function WatchlistTab({
   const [trakt, setTrakt] = useState<TraktItem[]>([]);
   const [localEntries, setLocalEntries] = useState<LocalEntry[]>(() => readLocalEntries());
   const [traktStatus, setTraktStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  // Stremio items are filtered before the merge; keep the full watched id set
+  // so a local entry merged under a watched Stremio item cannot survive.
+  const [stremioWatched, setStremioWatched] = useState<Set<string>>(() => new Set());
+  const movieWatched = useMovieWatchedIds();
+  const watchedFlags = useWatchedFlagIds();
   // Bumped on every removal. Fetch completions capture the value at start and
   // revalidate instead of applying when a removal landed mid-flight, so a
   // stale response can never resurrect a just-removed card for a beat.
@@ -121,6 +129,7 @@ export function WatchlistTab({
           })
           .catch(() => {});
       };
+      setStremioWatched((prev) => (prev.size === 0 ? prev : new Set()));
       loadNuvio();
 
       const onChange = () => {
@@ -151,6 +160,7 @@ export function WatchlistTab({
             return;
           }
           setRawCount(items.filter((i) => !i.removed).length);
+          setStremioWatched(collectStremioWatchedIds(items));
           setStremio(filterLibrary(items, settings.libraryBookmarkedOnly, mode));
           setStremioAggregate(items.filter((i) => !i.removed && !i.temp).map((i) => i._id));
         })
@@ -375,10 +385,21 @@ export function WatchlistTab({
     };
   }, [traktConnected, refreshSeq]);
 
-  const merged = useMemo(
-    () => mergeWatchlist(localEntries, stremio, trakt, isNuvio ? nuvioItems : undefined),
-    [localEntries, stremio, trakt, isNuvio, nuvioItems],
-  );
+  const merged = useMemo(() => {
+    const list = mergeWatchlist(localEntries, stremio, trakt, isNuvio ? nuvioItems : undefined);
+    if (mode !== "watchlist") return list;
+    return list.filter((card) => !isMergedWatchlistCardWatched(card, localEntries, stremioWatched));
+  }, [
+    localEntries,
+    stremio,
+    trakt,
+    isNuvio,
+    nuvioItems,
+    mode,
+    stremioWatched,
+    movieWatched,
+    watchedFlags,
+  ]);
 
   const [type, setType] = useSessionState<TypeKey>(`library.${mode}.type`, "all");
   const [query, setQuery] = useSessionState<string>(`library.${mode}.query`, "");
@@ -413,7 +434,6 @@ export function WatchlistTab({
         traktStatus === "loading" ? tr("Syncing Trakt…") : tr("{n} on Trakt", { n: trakt.length }),
       );
     else parts.push(tr("Connect Trakt in Settings to sync"));
-    parts.push(tr("{n} saved on this device", { n: localEntries.length }));
     if (isNuvio && rawCount > 0) {
       parts.push(tr("{n} in your Nuvio library", { n: rawCount }));
     } else if (authKey && rawCount > 0) {
