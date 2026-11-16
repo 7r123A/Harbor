@@ -124,6 +124,12 @@ async fn authenticate(socket: &mut Socket) -> Result<(), String> {
 }
 /// Reuse a private native control connection instead of establishing a new
 /// WebSocket for every volume-slider update. All commands remain ordered.
+// A new local play must never race the pause that hands a finished Soloist
+// track back to Harbor's queue.
+fn playback_handoff() -> &'static tokio::sync::Mutex<()> {
+    static GATE: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    GATE.get_or_init(|| tokio::sync::Mutex::new(()))
+}
 fn control() -> &'static tokio::sync::Mutex<Option<Socket>> {
     static SOCKET: OnceLock<tokio::sync::Mutex<Option<Socket>>> = OnceLock::new();
     SOCKET.get_or_init(|| tokio::sync::Mutex::new(None))
@@ -264,8 +270,17 @@ fn track_transition(current: &Current, event: &Value) -> TrackTransition {
             return TrackTransition::Ignore;
         }
     }
-    // A new playable took over, or an explicit track_changed cleared the
-    // current playable. Neither proves the previous track reached its end.
+    // Soloist can autoplay its next Spotify track without ever emitting idle.
+    // When the previous Harbor track actually reached its end, advance
+    // Harbor's own queue rather than treating Spotify's new URI as a takeover.
+    // Mid-track remote skips remain external actions, not queue advancement.
+    if !current.paused
+        && current.duration > 0.0
+        && event["item"]["uri"].as_str().is_some()
+        && position(current) >= current.duration - 1.5
+    {
+        return TrackTransition::NaturalEnd;
+    }
     if starting {
         TrackTransition::Ignore
     } else {
@@ -397,17 +412,46 @@ fn process(app: &AppHandle, generation: u64, event: &Value) {
                 property(app, &track, "pause", json!(true));
             }
             Action::End(track, started_at, listened) => {
-                emit(app, &track, "end-file", json!({"reason":"eof"}));
-                if crate::music::engine::should_scrobble(listened, track.duration_seconds as f64) {
-                    let app = app.clone();
-                    tokio::spawn(async move {
+                let app = app.clone();
+                tokio::spawn(async move {
+                    let handoff = playback_handoff().lock().await;
+                    if watch().lock().generation != generation {
+                        return;
+                    }
+                    // Spotify may already be playing an unrelated autoplay
+                    // track. Silence it BEFORE Harbor receives EOF and starts
+                    // the next song from its own queue.
+                    let mut force_stopped = false;
+                    if command(&app, "pause", json!({})).await.is_err() {
+                        reset_control().await;
+                        if command(&app, "pause", json!({})).await.is_err() {
+                            // Failing closed is safer than leaving Soloist
+                            // playing independently of Harbor's queue.
+                            if let Err(error) = super::terminate_managed() {
+                                emit(&app, &track, "player-failure", json!({"reason":error}));
+                                return;
+                            }
+                            force_stopped = true;
+                        }
+                    }
+                    // A user-initiated stop invalidates this handoff. Only
+                    // our own verified force-stop may still emit Harbor EOF.
+                    if watch().lock().generation != generation && !force_stopped {
+                        return;
+                    }
+                    drop(handoff);
+                    emit(&app, &track, "end-file", json!({"reason":"eof"}));
+                    if crate::music::engine::should_scrobble(
+                        listened,
+                        track.duration_seconds as f64,
+                    ) {
                         if let Ok(true) =
                             crate::music::commands::scrobble_track(&app, &track, started_at).await
                         {
                             let _ = app.emit("music://lastfm", json!({"status":"scrobbled"}));
                         }
-                    });
-                }
+                    }
+                });
             }
         }
     }
@@ -527,6 +571,7 @@ fn percent(volume: f64) -> u8 {
     (volume.clamp(0.0, 1.0) * 100.0).round() as u8
 }
 pub async fn play(app: &AppHandle, track: MusicTrack, volume: f64) -> Result<(), String> {
+    let _handoff = playback_handoff().lock().await;
     let uri = track
         .source_id
         .as_deref()
@@ -606,6 +651,8 @@ pub async fn stop(app: &AppHandle, resume: bool) -> Result<(), String> {
         }
         return Ok(());
     }
+    // Finish any pending end-of-track handoff before stopping the daemon.
+    let _handoff = playback_handoff().lock().await;
     // If another Spotify client has taken over, closing Harbor must not
     // pause the new song or deactivate a device that Harbor no longer owns.
     let owned = owns_output();
@@ -747,14 +794,33 @@ mod tests {
             TrackTransition::Displaced
         );
 
-        // Even a manual skip at 179.9 seconds is not proof of completion.
+        // A mid-song remote skip does not advance Harbor's queue.
+        let mut not_finished = test_current();
+        not_finished.anchor_ms = 170_000.0;
+        not_finished.timestamp_ms = now_ms();
+        not_finished.speed = 0.0;
+        assert_eq!(
+            track_transition(&not_finished, &switched),
+            TrackTransition::Displaced
+        );
+        // Soloist may start autoplay with track_changed, skipping idle.
         let mut near_end = test_current();
         near_end.anchor_ms = 179_900.0;
         near_end.timestamp_ms = now_ms();
         near_end.speed = 0.0;
         assert_eq!(
             track_transition(&near_end, &switched),
-            TrackTransition::Displaced
+            TrackTransition::NaturalEnd
+        );
+        assert_eq!(
+            track_transition(
+                &near_end,
+                &json!({
+                    "type":"playback_state", "status":"playing", "is_active":true,
+                    "item":{"uri":"spotify:track:autoplay"}
+                })
+            ),
+            TrackTransition::NaturalEnd
         );
         assert_eq!(
             track_transition(

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { confirmAction } from "@/lib/confirm-action";
+import { spotifyPlaybackTarget } from "@/lib/music/spotify-devices";
 import { openUrl } from "@/lib/window";
 import { ChevronDown } from "@/components/icons/music-icons";
 import {
@@ -46,6 +48,8 @@ export function SpotifySoloistSetup({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [engineMessage, setEngineMessage] = useState("");
+  const [engineError, setEngineError] = useState("");
 
   const refresh = useCallback(async () => {
     const next = await soloistStatus();
@@ -65,13 +69,14 @@ export function SpotifySoloistSetup({
     return () => { mounted = false; };
   }, []);
 
+  // Keep the notice accurate when the next track really starts on the selected
+  // engine, including when Soloist is not running yet.
   useEffect(() => {
-    if (!status?.running) return;
     const timer = window.setInterval(() => {
       void refresh().catch(() => {});
-    }, 3000);
+    }, 4000);
     return () => window.clearInterval(timer);
-  }, [refresh, status?.running]);
+  }, [refresh]);
 
   const act = async (action: () => Promise<unknown>, message = "") => {
     setBusy(true);
@@ -83,6 +88,36 @@ export function SpotifySoloistSetup({
       setSuccess(message);
     } catch (cause) {
       setError(reason(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const selectEngine = async (engine: SoloistStatus["preferredEngine"]) => {
+    if (busy || !status) return;
+    setBusy(true);
+    setEngineError("");
+    try {
+      const remote = await spotifyPlaybackTarget();
+      if (!remote && status.preferredEngine === engine) return;
+      if (remote) {
+        const accepted = await confirmAction({
+          title: "Switch Spotify playback output",
+          message: "Switching to local playback may pause music on the selected Spotify Connect device. Continue?",
+          confirmLabel: "Switch to this device",
+        });
+        if (!accepted) return;
+      }
+      // The backend re-checks the selected device. A stale confirmation
+      // cannot silently interrupt a different Spotify Connect target.
+      await setSoloistPreference(engine, remote ?? undefined);
+      await refresh();
+      setEngineMessage(remote
+        ? "Output switched to this device. Playback on the previous Spotify device may have paused."
+        : "");
+      window.dispatchEvent(new Event("harbor:spotify-playback-target-changed"));
+    } catch (cause) {
+      setEngineError(reason(cause));
     } finally {
       setBusy(false);
     }
@@ -107,7 +142,7 @@ export function SpotifySoloistSetup({
       <section className="border-t border-edge-soft bg-elevated/25 px-5 py-4">
         <h4 className="text-[13px] font-semibold leading-6 text-ink">Spotify playback engine</h4>
         <p className="mt-1 max-w-3xl text-[12px] leading-5 text-ink-muted">
-          Choose which local Spotify engine plays the next song. Selecting either engine also switches the playback target back to this device, so an old Spotify Connect target cannot override your choice. You can select a remote device separately afterwards. Your librespot connection remains saved.
+          Choose how Harbor plays Spotify on this device. Changes take effect on the next track. If a remote Spotify Connect device is selected, Harbor asks before changing its output. Your Librespot pairing is retained.
         </p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {(["soloist", "librespot"] as const).map((engine) => (
@@ -115,10 +150,7 @@ export function SpotifySoloistSetup({
               key={engine}
               type="button"
               disabled={busy || !status}
-              onClick={() => void act(async () => {
-                await setSoloistPreference(engine);
-                window.dispatchEvent(new Event("harbor:spotify-playback-target-changed"));
-              })}
+              onClick={() => void selectEngine(engine)}
               aria-pressed={status?.preferredEngine === engine}
               className={`min-h-11 rounded-lg border px-3 py-2.5 text-left text-[13px] transition-colors duration-200 ease-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40 ${
                 status?.preferredEngine === engine ? "border-edge bg-elevated font-semibold text-ink" : "border-edge-soft bg-canvas/30 text-ink-muted hover:border-edge hover:bg-elevated/60 hover:text-ink"
@@ -135,6 +167,15 @@ export function SpotifySoloistSetup({
             </button>
           ))}
         </div>
+        {status?.activePlaybackLive && status.activePlaybackEngine &&
+          status.activePlaybackEngine !== status.preferredEngine && (
+          <p className="mt-3 text-[12px] leading-5 text-ink-muted" role="status" aria-live="polite">
+            Currently playing through {status.activePlaybackEngine === "soloist" ? "Soloist" : "Librespot"}.
+            {" "}Switches on next track.
+          </p>
+        )}
+        {engineMessage && <p className="mt-2 text-[12px] leading-5 text-ink-muted" role="status">{engineMessage}</p>}
+        {engineError && <p className="mt-2 text-[12px] leading-5 text-danger" role="alert">{engineError}</p>}
       </section>
       {status?.preferredEngine === "soloist" && (
       <section className="border-t border-edge-soft bg-elevated/25 px-5 py-4">
