@@ -73,7 +73,9 @@ export function RefractPanel() {
       setConnected(true);
       setEnabled(true);
       setInput("");
-      setMessage(t("Connected to Refract ({identity}). Watched history sync is enabled.", { identity }));
+      setMessage(
+        t("Connected to Refract ({identity}). Watched history sync is enabled.", { identity }),
+      );
       startRefractSync();
     } catch {
       if (!isCurrent()) return;
@@ -171,7 +173,9 @@ export function RefractPanel() {
                 <option key={value} value={value}>
                   {typeof value === "string"
                     ? t("After {count} minutes", { count: Number.parseInt(value, 10) })
-                    : value === 70 ? t("{count}% (default)", { count: value }) : `${value}%`}
+                    : value === 70
+                      ? t("{count}% (default)", { count: value })
+                      : `${value}%`}
                 </option>
               ))}
             </select>
@@ -186,21 +190,35 @@ export function RefractPanel() {
             </p>
             {watchlist && (
               <p role="status" className={ROW_DESC}>
-                {watchlist}
+                {t(watchlist)}
               </p>
             )}
           </div>
           <p className={ROW_DESC}>
-            {t("{sent} sent · {pending} pending · {failed} unmatched", { sent: status.synced, pending: status.pending, failed: status.failed })}
-            {status.message ? ` · ${status.message}` : ""}
+            {t("{sent} sent · {pending} pending · {failed} unmatched", {
+              sent: status.synced,
+              pending: status.pending,
+              failed: status.failed,
+            })}
+            {status.message ? ` · ${t(status.message)}` : ""}
           </p>
           {status.failures.length > 0 && (
             <details className="text-[13px] text-ink-muted">
               <summary>{t("Unmatched items")}</summary>
               <ul className="mt-2 list-disc space-y-1 pl-5">
-                {status.failures.map((reason, i) => (
-                  <li key={i}>{reason}</li>
-                ))}
+                {status.failureDetails.map((failure, i) => {
+                  const http = /^Refract HTTP (\d+)$/.exec(failure.reason);
+                  const reason = http
+                    ? t("Refract HTTP {status}", { status: http[1] })
+                    : t(failure.reason);
+                  const episode =
+                    failure.season != null ? ` S${failure.season}E${failure.episode}` : "";
+                  return (
+                    <li key={i}>
+                      {failure.sourceId}{episode}: {reason}
+                    </li>
+                  );
+                })}
               </ul>
             </details>
           )}
