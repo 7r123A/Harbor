@@ -193,3 +193,62 @@ test("disabling sync during a lookup preserves the queued watch without sending 
     h.cleanup();
   }
 });
+
+test("replacing the Refract account discards offline retries before connecting the new key", async () => {
+  const h = harness();
+  try {
+    h.setOffline(true);
+    h.sync.enqueueRefractWatch(movieEvent());
+    await tick();
+    assert.equal(h.sync.refractStatus().pending, 1);
+    assert.equal(h.calls.length, 0);
+
+    // Mirror the connection lifecycle: clear the previous account's queue before saving the key.
+    h.sync.resetRefractSync();
+    h.setKey("rfk_replacement_fixture");
+    h.setOffline(false);
+    h.sync.retryRefractSync();
+    await tick();
+    assert.equal(h.calls.length, 0);
+    assert.equal(h.sync.refractStatus().pending, 0);
+
+    h.sync.enqueueRefractWatch(movieEvent("tmdb:movie:56"));
+    await tick();
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.calls[0].args[0], "rfk_replacement_fixture");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("an in-flight lookup for the previous Refract account cannot write to its replacement", async () => {
+  const h = harness();
+  try {
+    let finish;
+    h.setLookup(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    h.sync.enqueueRefractWatch(movieEvent());
+    assert.equal(h.sync.refractStatus().pending, 1);
+
+    h.sync.resetRefractSync();
+    h.setKey("rfk_replacement_fixture");
+    finish([{ ids: { refract: "old-account-movie" } }]);
+    await tick();
+    assert.equal(h.calls.length, 0);
+    assert.equal(h.sync.refractStatus().pending, 0);
+    assert.equal(h.sync.refractStatus().synced, 0);
+
+    h.setLookup(async () => [{ ids: { refract: "replacement-movie" } }]);
+    h.sync.enqueueRefractWatch(movieEvent("tmdb:movie:56"));
+    await tick();
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.calls[0].args[0], "rfk_replacement_fixture");
+    assert.equal(h.calls[0].args[1], "replacement-movie");
+  } finally {
+    h.cleanup();
+  }
+});
