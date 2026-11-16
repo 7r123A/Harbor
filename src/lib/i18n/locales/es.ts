@@ -454,6 +454,32 @@ const es: Record<string, string> = {
     "{sent} enviados · {pending} pendientes · {failed} sin coincidencia",
   "Unmatched items":
     "Elementos sin coincidencia",
+  "Refract queue full; unable to save another watch":
+    "Cola de Refract llena; no se puede guardar otro visionado",
+  "No verified IMDb/TMDB/TVDB identity": "No hay un identificador IMDb/TMDB/TVDB verificado",
+  "Movie not found in Refract": "Película no encontrada en Refract",
+  "Episode not found; verify season numbering":
+    "Episodio no encontrado; comprueba la numeración de las temporadas",
+  "Last watched item sent successfully": "Último visionado enviado correctamente",
+  "Unknown error": "Error desconocido",
+  "Some items could not be matched or sent":
+    "No se pudieron identificar o enviar algunos elementos",
+  "Refract denied access; check key and permissions":
+    "Refract denegó el acceso; comprueba la clave y los permisos",
+  "Network error; retry scheduled": "Error de red; reintento programado",
+  "No verified IMDb/TMDB/TVDB identity is available for this title.":
+    "No hay un identificador IMDb/TMDB/TVDB verificado para este título.",
+  "Refract could not uniquely identify this title.":
+    "Refract no pudo identificar este título de forma inequívoca.",
+  "Refract preserved an existing library entry or viewing history.":
+    "Refract conservó una entrada existente de la biblioteca o del historial de visionado.",
+  "Added to Refract Plan to Watch.": "Añadido a Pendientes de ver en Refract.",
+  "Removed from Refract Plan to Watch.": "Eliminado de Pendientes de ver en Refract.",
+  "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
+    "La lista de Refract requiere library:write. Vuelve a conectar con una clave que tenga este permiso.",
+  "Refract could not confirm the watchlist change. Try again.":
+    "Refract no pudo confirmar el cambio en la lista. Inténtalo de nuevo.",
+  "Refract HTTP {status}": "Refract HTTP {status}",
 };
 
 export default es;
