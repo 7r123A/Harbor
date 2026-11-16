@@ -184,7 +184,12 @@ async function push(key: string, job: Job): Promise<void> {
     job.episode,
     job.numbering,
   );
-  if (getRefractKey() !== key || !refractEnabled() || !activeProfileIsPrimary())
+  if (
+    getRefractKey() !== key ||
+    !refractEnabled() ||
+    !activeProfileIsPrimary() ||
+    !read().pending.some((pending) => pending.id === job.id)
+  )
     throw new Superseded("Refract sync stopped before write");
   if (job.type === "movie") {
     const movie = found.find((x) => x.ids?.refract != null)?.ids?.refract;
@@ -224,6 +229,8 @@ export async function flushRefractSync(): Promise<void> {
         await push(key, job);
         if (getRefractKey() !== key) break;
         const current = read();
+        // A disconnect/reconnect with the same key can reset the queue during the write.
+        if (!current.pending.some((x) => x.id === job.id)) continue;
         current.pending = current.pending.filter((x) => x.id !== job.id);
         current.recent[keyOf(job)] = Date.now();
         current.synced++;
