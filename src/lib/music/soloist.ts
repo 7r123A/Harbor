@@ -5,6 +5,8 @@ export type SoloistStatus = {
   executablePath: string | null;
   keyConfigured: boolean;
   activeInHarbor: boolean;
+  activePlaybackEngine: "soloist" | "librespot" | null;
+  activePlaybackLive: boolean;
   running: boolean;
   apiReady: boolean;
   loggedIn: boolean;
@@ -23,8 +25,11 @@ export function configureSoloist(executablePath?: string, apiKey?: string): Prom
   });
 }
 
-export function setSoloistPreference(engine: SoloistStatus["preferredEngine"]): Promise<void> {
-  return invoke("music_soloist_set_engine", { engine });
+export function setSoloistPreference(
+  engine: SoloistStatus["preferredEngine"],
+  remoteDeviceConfirmation?: string,
+): Promise<void> {
+  return invoke("music_soloist_set_engine", { engine, remoteDeviceConfirmation: remoteDeviceConfirmation ?? null });
 }
 
 export function startSoloist(): Promise<SoloistStatus> {

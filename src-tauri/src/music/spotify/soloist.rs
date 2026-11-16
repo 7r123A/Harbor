@@ -26,6 +26,8 @@ pub struct SoloistStatus {
     pub executable_path: Option<String>,
     pub key_configured: bool,
     pub active_in_harbor: bool,
+    pub active_playback_engine: Option<&'static str>,
+    pub active_playback_live: bool,
     pub running: bool,
     pub api_ready: bool,
     pub logged_in: bool,
@@ -155,11 +157,24 @@ async fn auth_state(url: &str) -> Result<(bool, Option<String>), String> {
 #[tauri::command]
 pub async fn music_soloist_status(app: AppHandle) -> Result<SoloistStatus, String> {
     let active = running();
+    let music = app.state::<crate::music::MusicState>();
+    let (active_playback_engine, active_playback_live) = match music.active_engine() {
+        crate::music::ACTIVE_SOLOIST => (
+            Some("soloist"),
+            playback::snapshot().is_some_and(|playback| playback.live),
+        ),
+        crate::music::ACTIVE_SPOTIFY => {
+            (Some("librespot"), music.spotify.playback_state().await.live)
+        }
+        _ => (None, false),
+    };
     let mut status = SoloistStatus {
         preferred_engine: engine(&app),
         executable_path: executable(&app).map(|path| path.to_string_lossy().into_owned()),
         key_configured: keystore::read(&app, KEY).is_some(),
         active_in_harbor: playback::snapshot().is_some_and(|p| p.live),
+        active_playback_engine,
+        active_playback_live,
         running: active,
         api_ready: false,
         logged_in: false,
@@ -205,11 +220,27 @@ pub fn music_soloist_configure(
     Ok(())
 }
 
+// A remote Spotify Connect session may be playing on a different device.
+// Never silently switch its target or pause it without confirming the exact
+// selected device; a stale confirmation cannot authorize a newer selection.
+fn require_remote_confirmation(
+    selected_remote: Option<&str>,
+    confirmed_remote: Option<&str>,
+) -> Result<(), String> {
+    match selected_remote {
+        Some(selected) if Some(selected) != confirmed_remote => {
+            Err("Confirm switching away from the currently selected Spotify Connect device.".into())
+        }
+        _ => Ok(()),
+    }
+}
+
 #[tauri::command]
 pub async fn music_soloist_set_engine(
     app: AppHandle,
     state: tauri::State<'_, crate::music::MusicState>,
     engine: String,
+    remote_device_confirmation: Option<String>,
 ) -> Result<(), String> {
     if engine != "librespot" && engine != "soloist" {
         return Err("Unsupported Spotify playback engine.".into());
@@ -218,7 +249,12 @@ pub async fn music_soloist_set_engine(
     // Previously a persisted remote Connect target silently overrode both
     // options, so a stale/unreachable remote device made both appear broken.
     // A remote target can still be deliberately selected again afterwards.
-    if state.spotify.remote_device().is_some() {
+    let selected_remote = state.spotify.remote_device();
+    require_remote_confirmation(
+        selected_remote.as_deref(),
+        remote_device_confirmation.as_deref(),
+    )?;
+    if selected_remote.is_some() {
         state.spotify.set_remote_device(None).await?;
     }
     keystore::write(&app, ENGINE, Some(&engine))
@@ -334,6 +370,14 @@ mod tests {
         assert_eq!(selected_engine(None), "soloist");
         assert_eq!(selected_engine(Some("soloist")), "soloist");
         assert_eq!(selected_engine(Some("librespot")), "librespot");
+    }
+
+    #[test]
+    fn switching_from_remote_connect_requires_confirmation_of_exact_device() {
+        assert!(require_remote_confirmation(None, None).is_ok());
+        assert!(require_remote_confirmation(Some("living-room"), None).is_err());
+        assert!(require_remote_confirmation(Some("living-room"), Some("bedroom")).is_err());
+        assert!(require_remote_confirmation(Some("living-room"), Some("living-room")).is_ok());
     }
 
     #[test]

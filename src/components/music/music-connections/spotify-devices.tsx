@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import { confirmAction } from "@/lib/confirm-action";
 import { Check, ChevronDown, LoaderCircle, RotateCcw, Speaker } from "@/components/icons/music-icons";
 import { useT } from "@/lib/i18n";
 import { getSpotifyStatus } from "@/lib/music/sources";
+import { soloistStatus } from "@/lib/music/soloist";
 import { SpotifyDevicePairing } from "./spotify-setup";
 import {
   selectableSpotifyDevices,
@@ -81,6 +83,8 @@ export function SpotifyPlaybackTarget() {
   const [localReady, setLocalReady] = useState<boolean | null>(null);
   const [devices, setDevices] = useState<SpotifyDevice[]>([]);
   const [target, setTarget] = useState<string | null>(null);
+  const [legacySoloistTarget, setLegacySoloistTarget] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -89,12 +93,26 @@ export function SpotifyPlaybackTarget() {
     setError("");
     // The local/remote target is a saved preference, not dependent on the
     // Spotify Web API. Still show the correct target if device discovery fails.
-    Promise.allSettled([spotifyDevices(), spotifyPlaybackTarget()])
-      .then(([found, chosen]) => {
-        if (found.status === "fulfilled") setDevices(selectableSpotifyDevices(found.value));
+    Promise.allSettled([spotifyDevices(), spotifyPlaybackTarget(), soloistStatus()])
+      .then(([found, chosen, soloist]) => {
+        // Harbor's own Soloist is a local engine, not a second remote output.
+        // Hide it from Connect choices whenever its setup belongs to Harbor.
+        const managedName =
+          soloist.status === "fulfilled" &&
+          (soloist.value.running || (soloist.value.keyConfigured && !!soloist.value.executablePath))
+            ? "Harbor Soloist"
+            : null;
+        if (found.status === "fulfilled") setDevices(selectableSpotifyDevices(found.value, managedName));
         else setError(describe(found.reason));
-        if (chosen.status === "fulfilled") setTarget(chosen.value);
-        else setError(describe(chosen.reason));
+        if (chosen.status === "fulfilled") {
+          setTarget(chosen.value);
+          const managedSelected =
+            !!managedName && found.status === "fulfilled" &&
+            found.value.some((device) =>
+              device.id === chosen.value &&
+              device.name.trim().toLocaleLowerCase() === managedName.toLocaleLowerCase());
+          setLegacySoloistTarget(managedSelected);
+        } else setError(describe(chosen.reason));
       })
       .finally(() => setLoading(false));
   }, []);
@@ -121,14 +139,29 @@ export function SpotifyPlaybackTarget() {
     };
   }, []);
 
-  const choose = (device: string | null) => {
-    const previous = target;
-    setTarget(device);
+  const choose = async (device: string | null) => {
+    if (switching || device === target) return;
+    setSwitching(true);
     setError("");
-    void setSpotifyPlaybackTarget(device).catch((cause) => {
-      setTarget(previous);
+    try {
+      // Changing away from a remote Connect target intentionally pauses it.
+      // Make the side effect explicit before modifying the native preference.
+      if (target !== null) {
+        const accepted = await confirmAction({
+          title: "Change Spotify playback output",
+          message: "Changing playback output may pause the currently selected Spotify Connect device. The new output will play the next track. Continue?",
+          confirmLabel: "Change output",
+        });
+        if (!accepted) return;
+      }
+      await setSpotifyPlaybackTarget(device);
+      setTarget(device);
+      setLegacySoloistTarget(false);
+    } catch (cause) {
       setError(describe(cause));
-    });
+    } finally {
+      setSwitching(false);
+    }
   };
 
   return (
@@ -139,6 +172,13 @@ export function SpotifyPlaybackTarget() {
             {t("music.spotifyDevices.title")}
           </p>
           <p className="text-[13px] leading-5 text-ink-muted">{t("music.spotifyDevices.body")}</p>
+          {legacySoloistTarget && (
+            <p role="status" className="mt-2 text-[12px] leading-5 text-ink-muted">
+              Harbor Soloist is now controlled through the local engine selector.
+              Select Harbor below to use it directly; switching away from this
+              previously selected remote target may pause the current song.
+            </p>
+          )}
           <p className="mt-1 text-[12px] font-medium text-ink-muted" role="status">
             {t(
               localReady === null
@@ -173,7 +213,8 @@ export function SpotifyPlaybackTarget() {
             type="button"
             className={CHOICE}
             aria-pressed={target === null}
-            onClick={() => choose(null)}
+            disabled={switching}
+            onClick={() => void choose(null)}
           >
             <Speaker size={17} aria-hidden="true" className="shrink-0 text-ink-muted" />
             <span className="min-w-0 flex-1 truncate text-[13px] text-ink">
@@ -190,7 +231,8 @@ export function SpotifyPlaybackTarget() {
               type="button"
               className={CHOICE}
               aria-pressed={target === device.id}
-              onClick={() => choose(device.id)}
+              disabled={switching}
+              onClick={() => void choose(device.id)}
             >
               <Speaker size={17} aria-hidden="true" className="shrink-0 text-ink-muted" />
               <span className="min-w-0 flex-1 truncate text-[13px] text-ink" title={device.name}>
