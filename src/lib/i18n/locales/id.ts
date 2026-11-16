@@ -410,6 +410,30 @@ const id: Record<string, string> = {
   "{sent} sent · {pending} pending · {failed} unmatched":
     "{sent} terkirim · {pending} tertunda · {failed} tidak cocok",
   "Unmatched items": "Item yang tidak cocok",
+  "Refract queue full; unable to save another watch":
+    "Antrean Refract penuh; tontonan tambahan tidak dapat disimpan",
+  "No verified IMDb/TMDB/TVDB identity": "Tidak ada ID IMDb/TMDB/TVDB yang terverifikasi",
+  "Movie not found in Refract": "Film tidak ditemukan di Refract",
+  "Episode not found; verify season numbering": "Episode tidak ditemukan; periksa penomoran musim",
+  "Last watched item sent successfully": "Tontonan terakhir berhasil dikirim",
+  "Unknown error": "Kesalahan tidak diketahui",
+  "Some items could not be matched or sent": "Beberapa item tidak dapat dicocokkan atau dikirim",
+  "Refract denied access; check key and permissions":
+    "Refract menolak akses; periksa kunci dan izin",
+  "Network error; retry scheduled": "Kesalahan jaringan; percobaan ulang dijadwalkan",
+  "No verified IMDb/TMDB/TVDB identity is available for this title.":
+    "Tidak ada ID IMDb/TMDB/TVDB terverifikasi untuk judul ini.",
+  "Refract could not uniquely identify this title.":
+    "Refract tidak dapat mengidentifikasi judul ini secara unik.",
+  "Refract preserved an existing library entry or viewing history.":
+    "Refract mempertahankan entri pustaka atau riwayat tontonan yang sudah ada.",
+  "Added to Refract Plan to Watch.": "Ditambahkan ke rencana tontonan Refract.",
+  "Removed from Refract Plan to Watch.": "Dihapus dari rencana tontonan Refract.",
+  "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
+    "Daftar tontonan Refract memerlukan library:write. Hubungkan kembali dengan kunci yang memiliki izin ini.",
+  "Refract could not confirm the watchlist change. Try again.":
+    "Refract tidak dapat mengonfirmasi perubahan daftar tontonan. Coba lagi.",
+  "Refract HTTP {status}": "Refract HTTP {status}",
 };
 
 export default id;
