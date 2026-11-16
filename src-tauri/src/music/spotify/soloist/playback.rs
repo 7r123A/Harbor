@@ -531,6 +531,7 @@ async fn listen(app: AppHandle, generation: u64) {
     }
 }
 fn cancel() {
+    super::capture::reset();
     let mut guard = watch().lock();
     guard.generation = guard.generation.wrapping_add(1);
     if let Some(task) = guard.task.take() {
@@ -540,6 +541,7 @@ fn cancel() {
     video_paused().store(false, Ordering::SeqCst);
 }
 fn observe(app: AppHandle, track: MusicTrack, uri: String) {
+    super::capture::reset();
     let mut guard = watch().lock();
     guard.generation = guard.generation.wrapping_add(1);
     if let Some(task) = guard.task.take() {
@@ -656,6 +658,7 @@ pub async fn stop(app: &AppHandle, resume: bool) -> Result<(), String> {
     // If another Spotify client has taken over, closing Harbor must not
     // pause the new song or deactivate a device that Harbor no longer owns.
     let owned = owns_output();
+    super::capture::release_process();
     cancel();
     if !owned || !running() {
         return Ok(());

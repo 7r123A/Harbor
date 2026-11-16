@@ -12,6 +12,7 @@ export type SoloistStatus = {
   loggedIn: boolean;
   deviceName: string | null;
   error: string | null;
+  visualizerError: string | null;
 };
 
 export function soloistStatus(): Promise<SoloistStatus> {

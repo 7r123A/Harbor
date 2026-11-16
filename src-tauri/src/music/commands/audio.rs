@@ -48,6 +48,10 @@ pub async fn music_audio_meter_set_enabled(
     state: tauri::State<'_, MusicState>,
     enabled: bool,
 ) -> Result<(), String> {
+    // The visualizer can subscribe before the first Soloist play completes.
+    // Remember interest across engines, and start capturing only while Soloist
+    // is the active engine and snapshots are being requested.
+    super::super::spotify::soloist::capture::set_enabled(enabled);
     if state.active_engine() == ACTIVE_MODULE {
         m3u::module_request_async(serde_json::json!({
             "command":"mpv_meter_set","enabled":enabled
@@ -65,8 +69,6 @@ pub async fn music_audio_meter_set_enabled(
         return Ok(());
     }
     if state.active_engine() == ACTIVE_SOLOIST {
-        // Soloist owns WASAPI/CoreAudio/PipeWire output; its API does not
-        // provide decoded PCM. Do not enable an unrelated mpv meter.
         return Ok(());
     }
     state.engine.set_meter_enabled(enabled).await
@@ -92,7 +94,7 @@ pub async fn music_audio_meter_snapshot(
         return Ok(state.spotify.meter_snapshot().await);
     }
     if state.active_engine() == ACTIVE_SOLOIST {
-        return Ok(None);
+        return Ok(super::super::spotify::soloist::capture::snapshot());
     }
     Ok(state.engine.meter_snapshot().await)
 }

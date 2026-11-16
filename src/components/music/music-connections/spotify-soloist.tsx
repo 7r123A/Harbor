@@ -237,6 +237,11 @@ export function SpotifySoloistSetup({
                     "Running - open Spotify Connect to finish pairing"}
             </p>
             {status?.error && <p className="text-[12px] text-ink-muted">{status.error}</p>}
+            {status?.visualizerError && (
+              <p role="status" className="text-[12px] text-ink-muted">
+                Soloist visualizer unavailable: {status.visualizerError}
+              </p>
+            )}
             {success && <p role="status" className="text-[12px] text-ink-muted">{success}</p>}
             {error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
           </div>
