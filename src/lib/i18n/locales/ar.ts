@@ -420,6 +420,37 @@ const ar: Record<string, string> = {
   ...reviews,
   ...queueBasket,
   ...liveWeb,
+  "Refract sync": "مزامنة Refract",
+  "Sync watched history and Harbor watchlist changes with Refract.":
+    "زامن سجل المشاهدة والتغييرات في قائمة المشاهدة في Harbor مع Refract.",
+  "Refract personal API key": "مفتاح API شخصي لـ Refract",
+  "Verifying...": "جارٍ التحقق…",
+  "Connect Refract": "ربط Refract",
+  "Refract key saved in Harbor's secret store":
+    "تم حفظ مفتاح Refract في مخزن الأسرار في Harbor",
+  "Sync watched history and watchlist": "مزامنة سجل المشاهدة وقائمة المشاهدة",
+  "Send watched history and watchlist changes from Harbor to Refract. Only the primary Harbor profile is synced.":
+    "أرسل سجل المشاهدة والتغييرات في قائمة المشاهدة من Harbor إلى Refract. تتم مزامنة الملف الشخصي الأساسي في Harbor فقط.",
+  "Retry pending watches": "إعادة إرسال سجلات المشاهدة المعلقة",
+  "Disconnect Refract": "قطع اتصال Refract",
+  "Connected to Refract ({identity}). Watched history sync is enabled.":
+    "تم الاتصال بـ Refract ({identity}). تم تفعيل مزامنة سجل المشاهدة.",
+  "Could not verify the key via Refract /v1/me. Check permissions and connectivity.":
+    "تعذر التحقق من المفتاح عبر Refract /v1/me. تحقق من الأذونات والاتصال.",
+  "Disconnected from Refract.": "تم قطع الاتصال بـ Refract.",
+  "Create a personal API key in Refract with profile:read, library:read, library:write and history:write. Never share or commit the key.":
+    "أنشئ مفتاح API شخصيًا في Refract بالأذونات profile:read وlibrary:read وlibrary:write وhistory:write. لا تشارك المفتاح ولا تحفظه في مستودع برمجي.",
+  "Automatic watch threshold": "عتبة تسجيل المشاهدة تلقائيًا",
+  "After {count} minutes": "بعد {count} دقائق",
+  "{count}% (default)": "{count}% (افتراضي)",
+  "Log a movie or episode in Refract when playback reaches the selected time or percentage. Seeking past it also qualifies. Early logging counts as watched in Refract, not partially watched. Harbor's own completion threshold is unchanged.":
+    "سجّل الفيلم أو الحلقة في Refract عندما يصل التشغيل إلى المدة أو النسبة المحددة. يُحتسب أيضًا تجاوز العتبة بالتقديم. يُسجّل المحتوى مبكرًا كمُشاهَد، وليس كمُشاهَد جزئيًا. تبقى عتبة إكمال المشاهدة في Harbor دون تغيير.",
+  "Harbor → Refract Plan to Watch": "Harbor → Refract: مخطط للمشاهدة",
+  "New watchlist additions and removals are sent automatically while sync is enabled. Requires library:write; reconnect with an updated key if needed. Existing Refract history and other library statuses are preserved.":
+    "تُرسل الإضافات والإزالات من قائمة المشاهدة تلقائيًا أثناء تفعيل المزامنة. يتطلب ذلك إذن library:write؛ أعد الاتصال بمفتاح محدّث عند الحاجة. يبقى سجل Refract الحالي وحالات المكتبة الأخرى محفوظة.",
+  "{sent} sent · {pending} pending · {failed} unmatched":
+    "تم الإرسال: {sent} · معلق: {pending} · غير مطابق: {failed}",
+  "Unmatched items": "عناصر غير مطابقة",
 };
 
 export default ar;
