@@ -399,6 +399,25 @@ const zh: Record<string, string> = {
   "{sent} sent · {pending} pending · {failed} unmatched":
     "已发送 {sent} 项 · 待发送 {pending} 项 · 未匹配 {failed} 项",
   "Unmatched items": "未匹配的项目",
+  "Refract queue full; unable to save another watch": "Refract 队列已满，无法保存更多观看记录",
+  "No verified IMDb/TMDB/TVDB identity": "没有经过验证的 IMDb/TMDB/TVDB 标识",
+  "Movie not found in Refract": "在 Refract 中未找到该电影",
+  "Episode not found; verify season numbering": "未找到该剧集，请检查季编号",
+  "Last watched item sent successfully": "最近的观看记录已成功发送",
+  "Unknown error": "未知错误",
+  "Some items could not be matched or sent": "部分条目无法匹配或发送",
+  "Refract denied access; check key and permissions": "Refract 拒绝访问，请检查密钥和权限",
+  "Network error; retry scheduled": "网络错误，已安排重试",
+  "No verified IMDb/TMDB/TVDB identity is available for this title.":
+    "此作品没有经过验证的 IMDb/TMDB/TVDB 标识。",
+  "Refract could not uniquely identify this title.": "Refract 无法唯一识别此作品。",
+  "Refract preserved an existing library entry or viewing history.": "Refract 保留了现有的媒体库条目或观看历史。",
+  "Added to Refract Plan to Watch.": "已添加到 Refract 的计划观看列表。",
+  "Removed from Refract Plan to Watch.": "已从 Refract 的计划观看列表移除。",
+  "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
+    "Refract 观看列表需要 library:write 权限。请使用具有此权限的密钥重新连接。",
+  "Refract could not confirm the watchlist change. Try again.": "Refract 无法确认观看列表的更改，请重试。",
+  "Refract HTTP {status}": "Refract HTTP {status}",
 };
 
 export default zh;
