@@ -152,7 +152,9 @@ export async function tmdbAnimeLogo(
   name: string,
   year: string | undefined,
   kind: "movie" | "tv",
-  opts?: { exact?: boolean; tmdbId?: number },
+  // A mapped id has no search hit to supply the original language, so callers
+  // can pass it to keep the same image-language order as a search result.
+  opts?: { exact?: boolean; tmdbId?: number; originalLang?: string },
 ): Promise<{
   logo?: string;
   backdrop?: string;
@@ -161,7 +163,7 @@ export async function tmdbAnimeLogo(
 } | null> {
   if (!key) return null;
   const match = opts?.tmdbId
-    ? { id: opts.tmdbId, originalLang: undefined }
+    ? { id: opts.tmdbId, originalLang: opts.originalLang }
     : await tmdbAnimeMatch(key, name, year, kind, opts);
   if (!match) return null;
   const { id, originalLang } = match;

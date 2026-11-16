@@ -291,6 +291,42 @@ test("mapped anime films use the textless TMDB backdrop and keep their localized
   assert.equal(fallback.textlessBackdrops, undefined);
 });
 
+test("a mapped anime TV id skips the search and keeps the original image language", async () => {
+  const requested = [];
+  const tmdb = load("src/lib/providers/tmdb/tmdb-anime.ts", {
+    "./tmdb-client": {
+      get: async (_key, path, params) => {
+        requested.push({ path, params });
+        return {
+          backdrops: [
+            { file_path: "/with-title.jpg", iso_639_1: "en", vote_average: 9 },
+            { file_path: "/clean.jpg", iso_639_1: null, vote_average: 6 },
+          ],
+          logos: [{ file_path: "/logo.png", iso_639_1: "ja" }],
+        };
+      },
+    },
+    "./tmdb-images": {
+      pickLogo: (logos) => logos[0]?.file_path,
+      textlessTmdbBackdrops: (backdrops) => backdrops.filter((b) => !b.iso_639_1),
+    },
+    "./tmdb-image-lang": {
+      imageLangParam: (lang) => (lang === "ja" ? "en,ja,null" : "en,null"),
+    },
+  });
+  const art = await tmdb.tmdbAnimeLogo("key", "One Piece", "1999", "tv", {
+    tmdbId: 30984,
+    originalLang: "ja",
+  });
+  assert.equal(art.tmdbId, 30984);
+  assert.equal(art.backdrop, "https://image.tmdb.org/t/p/original/clean.jpg");
+  assert.deepEqual(
+    requested.map((request) => request.path),
+    ["tv/30984/images"],
+  );
+  assert.equal(requested[0].params.include_image_language, "en,ja,null");
+});
+
 test("TVDB proxy caches share requests, isolate order types, expire, and retry failures", async () => {
   let calls = 0;
   let fail = false;
@@ -343,11 +379,14 @@ test("TVDB proxy caches share requests, isolate order types, expire, and retry f
   assert.equal(calls, 5);
 });
 
-function detailFixture() {
+function detailFixture(options = {}) {
   let loads = 0;
   let ratingLoads = 0;
+  let anilistCalls = 0;
   const tvdb = deferred();
   const extras = deferred();
+  const tvdbArt = options.tvdbArt ?? {};
+  const anilistArt = options.anilistArt ?? {};
   const episodes = [
     {
       id: 1,
@@ -358,7 +397,6 @@ function detailFixture() {
       imdbEpisode: 1,
     },
   ];
-  const no = async () => null;
   const f = load("src/lib/providers/anime-detail.ts", {
     "@/lib/providers/harbor-imdb": {
       harborImdbEpisodes: async () => {
@@ -380,7 +418,7 @@ function detailFixture() {
     "@/lib/providers/anime-mapping": {
       animeMappingByKitsu: async () => ({ mappings: { imdb_id: "tt1" } }),
       kitsuToTvdb: async () => 100,
-      kitsuToAnilist: no,
+      kitsuToAnilist: async () => options.anilistId ?? null,
       applyAnidbSeasonWindow: async () => {},
     },
     "@/lib/providers/episode-placeholder": { episodesMissingTitle: () => false },
@@ -388,7 +426,12 @@ function detailFixture() {
     "@/lib/streams/anime-identity-core": { splitFranchiseDisplaySeason: () => null },
     "@/lib/providers/mal-episodes": {},
     "@/lib/anilist/relations": { anilistFranchise: async () => [] },
-    "@/lib/anilist/browse": {},
+    "@/lib/anilist/browse": {
+      anilistArtById: async () => {
+        anilistCalls++;
+        return anilistArt;
+      },
+    },
     "./anime-recommendations": { animeRecommendations: async () => [] },
     "./anime-art-quality": {
       pickAnimeHeroBackdrop: (sources) =>
@@ -402,7 +445,7 @@ function detailFixture() {
       },
     },
     "@/lib/providers/fanart": {},
-    "@/lib/providers/tvdb-proxy": { fetchTvdbArtwork: async () => ({}) },
+    "@/lib/providers/tvdb-proxy": { fetchTvdbArtwork: async () => tvdbArt },
     "@/lib/providers/tvdb": {
       tvdbLangFromIso1: () => "eng",
       tvdbEpisodesByType: () => tvdb.promise,
@@ -422,7 +465,14 @@ function detailFixture() {
     },
     "@/lib/providers/tmdb": {},
   });
-  return { ...f, tvdb, extras, loads: () => loads, ratingLoads: () => ratingLoads };
+  return {
+    ...f,
+    tvdb,
+    extras,
+    loads: () => loads,
+    ratingLoads: () => ratingLoads,
+    anilistCalls: () => anilistCalls,
+  };
 }
 
 test("overview remounts share early callbacks and reuse finalized episode snapshots", async () => {
@@ -472,6 +522,24 @@ test("anime core detail does not wait for TVDB or cast and enrichment cannot mut
   f.extras.resolve([]);
   await result.extrasPromise;
   await work;
+});
+
+test("anime hero art skips the AniList banner when another provider has a backdrop", async () => {
+  const f = detailFixture({
+    tvdbArt: { backgrounds: ["tvdb.jpg"] },
+    anilistId: 1,
+    anilistArt: { banner: "banner.jpg" },
+  });
+  const result = await f.animeDetails({ uiLanguage: "en" }, { id: "kitsu:12", name: "One Piece" });
+  assert.equal(await result.heroBgPromise, "tvdb.jpg");
+  assert.equal(f.anilistCalls(), 0);
+});
+
+test("anime hero art falls back to the AniList banner only when no artwork exists", async () => {
+  const f = detailFixture({ anilistId: 1, anilistArt: { banner: "banner.jpg" } });
+  const result = await f.animeDetails({ uiLanguage: "en" }, { id: "kitsu:12", name: "One Piece" });
+  assert.equal(await result.heroBgPromise, "banner.jpg");
+  assert.equal(f.anilistCalls(), 1);
 });
 
 test("supplementary detail patches preserve usable metadata and unchanged state identity", () => {
