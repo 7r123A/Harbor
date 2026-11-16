@@ -2804,6 +2804,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
  "tokio",
+ "tokio-tungstenite 0.28.0",
  "tokio-util",
  "trash",
  "unrar_sys",

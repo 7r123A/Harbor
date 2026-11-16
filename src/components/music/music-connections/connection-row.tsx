@@ -11,7 +11,8 @@ import {
 } from "@/components/icons/music-icons";
 import { MusicServiceLogo } from "../music-service-logo";
 import { SpotifyBrowsingApp } from "./spotify-browsing-app";
-import { SpotifyPlaybackTarget } from "./spotify-devices";
+import { SpotifyLibrespotPairing, SpotifyPlaybackTarget } from "./spotify-devices";
+import { SpotifySoloistSetup } from "./spotify-soloist";
 import { SpotifyDevicePairing } from "./spotify-setup";
 import { MusicLastFm } from "@/components/music/music-lastfm";
 import { useT } from "@/lib/i18n";
@@ -288,12 +289,19 @@ export function MusicConnectionRow({
 
       {spotifySetup && connection.status === "connected" && (
         <>
-          <SpotifyPlaybackTarget onPaired={onRefresh} />
-          <SpotifyBrowsingApp
-            onDone={() => {
-              onRefresh();
-              window.dispatchEvent(new Event("harbor:spotify-library-changed"));
-            }}
+          <SpotifySoloistSetup
+            renderLibrespotSetup={() => <SpotifyLibrespotPairing onPaired={onRefresh} />}
+            renderAfterSetup={() => (
+              <>
+                <SpotifyBrowsingApp
+                  onDone={() => {
+                    onRefresh();
+                    window.dispatchEvent(new Event("harbor:spotify-library-changed"));
+                  }}
+                />
+                <SpotifyPlaybackTarget />
+              </>
+            )}
           />
         </>
       )}
@@ -303,13 +311,17 @@ export function MusicConnectionRow({
           <p className="mb-4 max-w-2xl text-[13px] leading-5 text-ink-muted">
             {t("music.spotifySetup.intro")}
           </p>
-          <SpotifyDevicePairing
-            disabled={busy !== null}
-            onPaired={() => {
-              setOpen(false);
-              onRefresh();
-              window.dispatchEvent(new Event("harbor:music-library-changed"));
-            }}
+          <SpotifySoloistSetup
+            renderLibrespotSetup={() => (
+              <SpotifyDevicePairing
+                disabled={busy !== null}
+                onPaired={() => {
+                  setOpen(false);
+                  onRefresh();
+                  window.dispatchEvent(new Event("harbor:music-library-changed"));
+                }}
+              />
+            )}
           />
           <div className="-mx-5 mt-5">
             <SpotifyBrowsingApp

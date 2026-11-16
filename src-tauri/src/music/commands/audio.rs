@@ -1,4 +1,4 @@
-use super::super::{audio::MusicAudioSettings, m3u, MusicState, ACTIVE_SPOTIFY, ACTIVE_MODULE, ACTIVE_MODULE_SPOTIFY};
+use super::super::{audio::MusicAudioSettings, m3u, MusicState, ACTIVE_SPOTIFY, ACTIVE_MODULE, ACTIVE_MODULE_SPOTIFY, ACTIVE_SOLOIST};
 
 #[tauri::command]
 pub async fn music_audio_devices(
@@ -64,6 +64,11 @@ pub async fn music_audio_meter_set_enabled(
         state.spotify.set_meter_enabled(enabled).await;
         return Ok(());
     }
+    if state.active_engine() == ACTIVE_SOLOIST {
+        // Soloist owns WASAPI/CoreAudio/PipeWire output; its API does not
+        // provide decoded PCM. Do not enable an unrelated mpv meter.
+        return Ok(());
+    }
     state.engine.set_meter_enabled(enabled).await
 }
 
@@ -85,6 +90,9 @@ pub async fn music_audio_meter_snapshot(
     }
     if state.active_engine() == ACTIVE_SPOTIFY {
         return Ok(state.spotify.meter_snapshot().await);
+    }
+    if state.active_engine() == ACTIVE_SOLOIST {
+        return Ok(None);
     }
     Ok(state.engine.meter_snapshot().await)
 }

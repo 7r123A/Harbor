@@ -1940,6 +1940,16 @@ pub fn run() {
             #[cfg(feature = "music")]
             music::music_spotify_status,
             #[cfg(feature = "music")]
+            music::music_soloist_status,
+            #[cfg(feature = "music")]
+            music::music_soloist_configure,
+            #[cfg(feature = "music")]
+            music::music_soloist_start,
+            #[cfg(feature = "music")]
+            music::music_soloist_stop,
+            #[cfg(feature = "music")]
+            music::music_soloist_set_engine,
+            #[cfg(feature = "music")]
             music::music_spotify_connect,
             #[cfg(feature = "music")]
             music::music_spotify_device_start,

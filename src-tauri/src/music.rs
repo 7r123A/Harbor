@@ -28,6 +28,8 @@ pub use catalog_commands::*;
 pub use commands::*;
 pub use model::*;
 pub use spotify::library::*;
+// Glob-import Tauri's generated command marker modules as well as the handlers.
+pub use spotify::soloist::*;
 
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
@@ -138,6 +140,7 @@ const ACTIVE_STREAM: u8 = 1;
 const ACTIVE_SPOTIFY: u8 = 2;
 const ACTIVE_MODULE: u8 = 3;
 const ACTIVE_MODULE_SPOTIFY: u8 = 4;
+const ACTIVE_SOLOIST: u8 = 5;
 
 pub struct MusicState {
     db: db::MusicDb,
@@ -230,6 +233,7 @@ pub fn shutdown(app: &tauri::AppHandle) {
     };
     state.engine.shutdown();
     state.spotify.shutdown();
+    spotify::soloist::shutdown();
     m3u::shutdown_host();
 }
 
@@ -243,6 +247,7 @@ pub async fn pause_for_video(app: &tauri::AppHandle) -> Result<bool, String> {
     };
     match state.active_engine() {
         ACTIVE_SPOTIFY => state.spotify.pause_for_video().await,
+        ACTIVE_SOLOIST => spotify::soloist::playback::pause_for_video(app).await,
         ACTIVE_STREAM => state.engine.pause_for_video().await,
         ACTIVE_MODULE_SPOTIFY => {
             let status = m3u::module_request_async(serde_json::json!({
