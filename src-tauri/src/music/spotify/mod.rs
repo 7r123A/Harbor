@@ -17,6 +17,7 @@ mod player;
 #[path="player_sidecar.rs"]
 mod player;
 mod session;
+pub mod soloist;
 mod tokens;
 
 pub use device_auth::{DevicePoll, DevicePrompt};
