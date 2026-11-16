@@ -11,6 +11,7 @@ import {
   type CommunitySource,
 } from "./community";
 import { installedPluginsSync, loadInstalledPlugins, subscribePlugins } from "./plugins/store";
+import { uninstallPlugin } from "./plugins/lifecycle";
 import { pluginProvider } from "./plugins/runtime";
 import { loadRepos } from "./plugins/repos";
 import { makeMangayomiProvider, removeMangayomiRecord } from "./sources/mangayomi";
@@ -419,8 +420,18 @@ export function addHtmlSource(config: HtmlSourceConfig): MangaSource | null {
   return src;
 }
 
-export function removeMangaSource(id: string): void {
+export function removeMangaSource(id: string): void | Promise<void> {
   const src = configuredSources().find((s) => s.id === id);
+  if (src?.kind === "plugin") {
+    const wasActive = activeMangaSourceId() === id;
+    const fallback = listMangaSources().find((s) => s.id !== id && s.id !== "all")?.id ?? "";
+    // Plugin sources live in IndexedDB, not the custom-source localStorage list.
+    // Uninstall through the plugin lifecycle so the deletion persists and the
+    // plugin store notifies every view that the installed set has changed.
+    return uninstallPlugin(id).then(() => {
+      if (wasActive) setActiveMangaSource(fallback);
+    });
+  }
   if (src?.kind === "mangayomi") {
     const fallback = listMangaSources().find((s) => s.id !== id && s.id !== "all")?.id ?? "";
     void removeMangayomiRecord(id);
