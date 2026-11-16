@@ -459,6 +459,32 @@ const fr: Record<string, string> = {
     "{sent} envoyés · {pending} en attente · {failed} sans correspondance",
   "Unmatched items":
     "Éléments sans correspondance",
+  "Refract queue full; unable to save another watch":
+    "File d’attente Refract pleine ; impossible d’enregistrer un autre visionnage",
+  "No verified IMDb/TMDB/TVDB identity": "Aucun identifiant IMDb/TMDB/TVDB vérifié",
+  "Movie not found in Refract": "Film introuvable dans Refract",
+  "Episode not found; verify season numbering":
+    "Épisode introuvable ; vérifiez la numérotation des saisons",
+  "Last watched item sent successfully": "Dernier visionnage envoyé avec succès",
+  "Unknown error": "Erreur inconnue",
+  "Some items could not be matched or sent":
+    "Impossible de faire correspondre ou d’envoyer certains éléments",
+  "Refract denied access; check key and permissions":
+    "Accès refusé par Refract ; vérifiez la clé et les autorisations",
+  "Network error; retry scheduled": "Erreur réseau ; nouvelle tentative programmée",
+  "No verified IMDb/TMDB/TVDB identity is available for this title.":
+    "Aucun identifiant IMDb/TMDB/TVDB vérifié pour ce titre.",
+  "Refract could not uniquely identify this title.":
+    "Refract n’a pas pu identifier ce titre de manière univoque.",
+  "Refract preserved an existing library entry or viewing history.":
+    "Refract a conservé une entrée existante de la bibliothèque ou de l’historique de visionnage.",
+  "Added to Refract Plan to Watch.": "Ajouté à la liste À regarder de Refract.",
+  "Removed from Refract Plan to Watch.": "Retiré de la liste À regarder de Refract.",
+  "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
+    "La liste à regarder de Refract nécessite library:write. Reconnectez-vous avec une clé disposant de cette autorisation.",
+  "Refract could not confirm the watchlist change. Try again.":
+    "Refract n’a pas pu confirmer la modification de la liste. Réessayez.",
+  "Refract HTTP {status}": "Refract HTTP {status}",
 };
 
 export default fr;
