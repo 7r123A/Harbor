@@ -455,6 +455,32 @@ const pt: Record<string, string> = {
   "{sent} sent · {pending} pending · {failed} unmatched":
     "{sent} enviados · {pending} pendentes · {failed} sem correspondência",
   "Unmatched items": "Itens sem correspondência",
+  "Refract queue full; unable to save another watch":
+    "Fila do Refract cheia; não foi possível salvar outra visualização",
+  "No verified IMDb/TMDB/TVDB identity": "Nenhum ID IMDb/TMDB/TVDB verificado",
+  "Movie not found in Refract": "Filme não encontrado no Refract",
+  "Episode not found; verify season numbering":
+    "Episódio não encontrado; verifique a numeração das temporadas",
+  "Last watched item sent successfully": "Última visualização enviada com sucesso",
+  "Unknown error": "Erro desconhecido",
+  "Some items could not be matched or sent":
+    "Alguns itens não puderam ser identificados ou enviados",
+  "Refract denied access; check key and permissions":
+    "O Refract negou o acesso; verifique a chave e as permissões",
+  "Network error; retry scheduled": "Erro de rede; nova tentativa agendada",
+  "No verified IMDb/TMDB/TVDB identity is available for this title.":
+    "Não há um ID IMDb/TMDB/TVDB verificado para este título.",
+  "Refract could not uniquely identify this title.":
+    "O Refract não conseguiu identificar este título de forma inequívoca.",
+  "Refract preserved an existing library entry or viewing history.":
+    "O Refract preservou um item existente da biblioteca ou do histórico.",
+  "Added to Refract Plan to Watch.": "Adicionado à lista Quero assistir do Refract.",
+  "Removed from Refract Plan to Watch.": "Removido da lista Quero assistir do Refract.",
+  "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
+    "A lista do Refract exige library:write. Reconecte com uma chave que tenha essa permissão.",
+  "Refract could not confirm the watchlist change. Try again.":
+    "O Refract não conseguiu confirmar a alteração na lista. Tente novamente.",
+  "Refract HTTP {status}": "Refract HTTP {status}",
 };
 
 export default pt;
