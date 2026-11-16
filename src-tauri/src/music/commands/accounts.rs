@@ -104,9 +104,21 @@ pub async fn music_spotify_devices(
 
 #[tauri::command]
 pub async fn music_spotify_set_device(
+    app: tauri::AppHandle,
     state: tauri::State<'_, MusicState>,
     device: Option<String>,
 ) -> Result<(), String> {
+    // The managed Soloist is local playback, even though Spotify Connect also
+    // advertises it. Never persist it as a second, remote playback target.
+    if spotify::soloist::engine(&app) == "soloist" {
+        if let Some(selected) = device.as_deref() {
+            if let Ok(devices) = state.spotify.devices().await {
+                if spotify::soloist::selected_is_managed_soloist(selected, &devices) {
+                    return state.spotify.set_remote_device(None).await;
+                }
+            }
+        }
+    }
     state.spotify.set_remote_device(device).await
 }
 

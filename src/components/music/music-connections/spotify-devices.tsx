@@ -174,9 +174,10 @@ export function SpotifyPlaybackTarget() {
           <p className="text-[13px] leading-5 text-ink-muted">{t("music.spotifyDevices.body")}</p>
           {legacySoloistTarget && (
             <p role="status" className="mt-2 text-[12px] leading-5 text-ink-muted">
-              Harbor Soloist is now controlled through the local engine selector.
-              Select Harbor below to use it directly; switching away from this
-              previously selected remote target may pause the current song.
+              Harbor Soloist was previously saved as a remote device. It's now
+              controlled directly by Harbor's Soloist engine, and the saved
+              selection will be corrected when the next song starts. Select
+              Harbor below to switch sooner (which may pause this song).
             </p>
           )}
           <p className="mt-1 text-[12px] font-medium text-ink-muted" role="status">

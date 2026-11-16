@@ -42,9 +42,7 @@ async fn play_track(
     if track.connector_id.as_deref() == Some("spotify") {
         // An explicitly selected remote Spotify Connect device remains independent
         // of the local engine preference.
-        if spotify::soloist::engine(&app) == "soloist"
-            && state.spotify.remote_device().is_none()
-        {
+        if spotify::soloist::wants_local_output(&app, &state.spotify).await? {
             let _commit = state.play_commit.lock().await;
             if !state.is_current_play_request(request) { return Ok(()); }
             if state.active_engine() == ACTIVE_MODULE {

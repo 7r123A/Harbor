@@ -1,8 +1,10 @@
 //! Spotify Soloist managed process, credentials, connection status and native playback adapter.
 use super::keystore;
+pub mod capture;
 pub mod playback;
 use futures_util::StreamExt;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
@@ -15,6 +17,59 @@ const ENGINE: &str = "harbor.spotify.soloist.v1.engine";
 const DEVICE_NAME: &str = "Harbor Soloist";
 
 static CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+// Avoid repeated device discovery for intentionally selected external speakers.
+static VERIFIED_EXTERNAL: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+fn verified_external() -> &'static Mutex<HashSet<String>> {
+    VERIFIED_EXTERNAL.get_or_init(|| Mutex::new(HashSet::new()))
+}
+pub(crate) fn selected_is_managed_soloist(
+    selected: &str,
+    devices: &[super::devices::SpotifyDevice],
+) -> bool {
+    devices
+        .iter()
+        .any(|device| device.id == selected && device.name.trim().eq_ignore_ascii_case(DEVICE_NAME))
+}
+
+/// A previous Play-on selection could save Harbor's own Soloist as a remote
+/// Connect device. That routes playback through Spotify's remote API instead
+/// of the managed local engine, disabling its native clock and visualizers.
+pub(crate) async fn wants_local_output(
+    app: &AppHandle,
+    spotify: &super::SpotifyState,
+) -> Result<bool, String> {
+    if engine(app) != "soloist" {
+        return Ok(false);
+    }
+    let Some(selected) = spotify.remote_device() else {
+        return Ok(true);
+    };
+    if verified_external()
+        .lock()
+        .is_ok_and(|ids| ids.contains(&selected))
+    {
+        return Ok(false);
+    }
+    let Ok(Ok(devices)) = tokio::time::timeout(Duration::from_secs(3), spotify.devices()).await
+    else {
+        // Discovery failure must not override an intentionally selected speaker.
+        return Ok(false);
+    };
+    if !selected_is_managed_soloist(&selected, &devices) {
+        if devices.iter().any(|device| device.id == selected) {
+            if let Ok(mut ids) = verified_external().lock() {
+                ids.insert(selected);
+            }
+        }
+        return Ok(false);
+    }
+    if spotify.remote_device().as_deref() != Some(selected.as_str()) {
+        // Device selection changed while discovery was in flight.
+        return Ok(spotify.remote_device().is_none());
+    }
+    spotify.set_remote_device(None).await?;
+    Ok(true)
+}
 fn child() -> &'static Mutex<Option<Child>> {
     CHILD.get_or_init(|| Mutex::new(None))
 }
@@ -33,6 +88,7 @@ pub struct SoloistStatus {
     pub logged_in: bool,
     pub device_name: Option<String>,
     pub error: Option<String>,
+    pub visualizer_error: Option<String>,
 }
 
 fn selected_engine(saved: Option<&str>) -> &'static str {
@@ -104,6 +160,18 @@ fn endpoint(data: &Path) -> Option<String> {
         return None;
     }
     Some(format!("ws://127.0.0.1:{port}"))
+}
+
+// Only the process launched by Harbor is eligible for visualizer capture.
+// Never fall back to the Windows system-output mix.
+pub(super) fn managed_pid() -> Option<u32> {
+    let mut guard = child().lock().ok()?;
+    let process = guard.as_mut()?;
+    if matches!(process.try_wait(), Ok(None)) {
+        Some(process.id())
+    } else {
+        None
+    }
 }
 
 fn running() -> bool {
@@ -180,6 +248,7 @@ pub async fn music_soloist_status(app: AppHandle) -> Result<SoloistStatus, Strin
         logged_in: false,
         device_name: None,
         error: None,
+        visualizer_error: capture::error(),
     };
     if active {
         match data_dir(&app).ok().and_then(|folder| endpoint(&folder)) {
@@ -333,6 +402,7 @@ pub async fn music_soloist_start(app: AppHandle) -> Result<SoloistStatus, String
 /// Forcefully release Soloist's audio output when its WebSocket cannot stop it.
 /// Keep the child handle on a failed kill rather than reporting a false stop.
 pub fn terminate_managed() -> Result<(), String> {
+    capture::release_process();
     playback::shutdown();
     let mut slot = child()
         .lock()
@@ -370,6 +440,31 @@ mod tests {
         assert_eq!(selected_engine(None), "soloist");
         assert_eq!(selected_engine(Some("soloist")), "soloist");
         assert_eq!(selected_engine(Some("librespot")), "librespot");
+    }
+
+    #[test]
+    fn legacy_managed_soloist_target_is_not_an_external_speaker() {
+        let devices = vec![
+            super::super::devices::SpotifyDevice {
+                id: "soloist-device".into(),
+                name: "  HARBOR SOLOIST  ".into(),
+                kind: "Computer".into(),
+                active: true,
+                restricted: false,
+                volume_percent: None,
+            },
+            super::super::devices::SpotifyDevice {
+                id: "living-room".into(),
+                name: "Living Room".into(),
+                kind: "Speaker".into(),
+                active: false,
+                restricted: false,
+                volume_percent: None,
+            },
+        ];
+        assert!(selected_is_managed_soloist("soloist-device", &devices));
+        assert!(!selected_is_managed_soloist("living-room", &devices));
+        assert!(!selected_is_managed_soloist("missing-device", &devices));
     }
 
     #[test]
