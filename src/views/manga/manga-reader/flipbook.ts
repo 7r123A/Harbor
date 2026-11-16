@@ -1,5 +1,6 @@
-import { safeFetchBytes } from "@/lib/safe-fetch";
-import { isBatcaveImageUrl, resolveReaderImageHeaders } from "./image-request-headers";
+import { pageHeadersFor } from "@/lib/manga/plugins/adapter";
+import { chapterImageBlob } from "./chapter-image-cache";
+import { isBatcaveImageUrl } from "./image-request-headers";
 
 export type FlipPage = {
   _setAngle?: (deg: number) => void;
@@ -136,21 +137,13 @@ export function guardPageLoaded(): void {
   ) {
     const originalImageFetch = mainProto.fetchAndCacheImage;
     mainProto.fetchAndCacheImage = function (this: FlipMainInstance, url: string): Promise<ImageBitmap> {
-      if (!isBatcaveImageUrl(url)) return originalImageFetch.call(this, url);
+      if (!("__TAURI_INTERNALS__" in window) || !isBatcaveImageUrl(url))
+        return originalImageFetch.call(this, url);
       const cache = (this.imageCache ??= new Map<string, Promise<ImageBitmap>>());
       const existing = cache.get(url);
       if (existing) return existing;
       const pending = (async () => {
-        const response = await safeFetchBytes(
-          url,
-          { headers: resolveReaderImageHeaders(url) },
-          30_000,
-          32 * 1024 * 1024,
-          false,
-          true,
-        );
-        if (!response.ok) throw new Error(`Harbor flipbook image recovery failed: HTTP ${response.status}`);
-        const blob = await response.blob();
+        const blob = await chapterImageBlob(url, pageHeadersFor(url));
         const options = this.options;
         const bitmapOptions: ImageBitmapOptions = {};
         if (options?.bitmapResizeHeight) bitmapOptions.resizeHeight = options.bitmapResizeHeight;

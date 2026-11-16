@@ -12,9 +12,8 @@ import {
   type FlipCtor,
   type FlipInstance,
 } from "./flipbook";
-import { IMAGE_FALLBACK_HEADERS, measureAspect, resolveReaderImageHeaders } from "./reader-utils";
-import { safeFetchBytes } from "@/lib/safe-fetch";
-import { isSuwayomiServerUrl } from "@/lib/manga/sources/suwayomi/auth-registry";
+import { IMAGE_FALLBACK_HEADERS, measureAspect } from "./reader-utils";
+import { chapterImageBlob } from "./chapter-image-cache";
 
 const BASE = "/flipbook";
 const NAME = "harborBook";
@@ -276,6 +275,7 @@ export function BookFlip({
       }
     }
     const useNativeImages = hosts.size > 0;
+    const chapterUrls = new Set(pages);
     if (useNativeImages) {
       window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
         const u = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -284,15 +284,11 @@ export function BookFlip({
           headersRef.current?.[u] ??
           (host ? hostHeadersRef.current.get(host) : undefined) ??
           (host && hosts.has(host) ? IMAGE_FALLBACK_HEADERS : undefined);
-        if (supplied) {
-          const headers = resolveReaderImageHeaders(u, supplied);
-          return safeFetchBytes(
-            u,
-            { ...init, headers },
-            30_000,
-            32 * 1024 * 1024,
-            isSuwayomiServerUrl(u),
-            true,
+        // Only route chapter images through this temporary fetch hook.
+        // Other requests must retain the original Fetch semantics.
+        if (supplied && chapterUrls.has(u) && (!init?.method || init.method.toUpperCase() === "GET")) {
+          return chapterImageBlob(u, supplied).then(
+            (blob) => new Response(blob, { status: 200, headers: { "content-type": blob.type } }),
           );
         }
         return origFetch(input, init);
@@ -320,17 +316,7 @@ export function BookFlip({
             headersRef.current?.[firstPage] ??
             hostHeadersRef.current.get(pageHost) ??
             IMAGE_FALLBACK_HEADERS;
-          const response = await safeFetchBytes(
-            firstPage,
-            { headers: resolveReaderImageHeaders(firstPage, supplied) },
-            30_000,
-            32 * 1024 * 1024,
-            false,
-            true,
-          );
-          if (!response.ok) {
-            throw new Error(`Unable to load starting chapter image: HTTP ${response.status}`);
-          }
+          await chapterImageBlob(firstPage, supplied);
           if (cancelled) return;
         }
       }
