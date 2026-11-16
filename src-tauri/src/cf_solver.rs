@@ -207,6 +207,10 @@ pub fn cf_invalidate(host: &str) {
     cf_cache().lock().unwrap().remove(host);
 }
 
+fn solver_starts_visible(label: &str) -> bool {
+    label != IMAGE_SOLVER_LABEL
+}
+
 /// Must already be on the main thread. Topmost is set before the window is shown
 /// because Windows refuses SetForegroundWindow to a process that does not own the
 /// current foreground window, which left the check sitting behind Harbor.
@@ -973,12 +977,20 @@ fn open_solver(app: &AppHandle, url: &str, label: &'static str) -> Result<(), St
     if let Some(existing) = app.get_webview_window(label) {
         eprintln!("[cf] reusing solver window");
         let target = Url::parse(url).map_err(|error| format!("url: {error}"))?;
+        // Hide an earlier interactive image window before navigating to the
+        // next chapter host; do not flash its old contents over the reader.
+        if !solver_starts_visible(label) {
+            let w = existing.clone();
+            let _ = app.run_on_main_thread(move || { let _ = w.hide(); });
+        }
         // Native navigation still works if the challenge page has disabled scripts.
         existing
             .navigate(target)
             .map_err(|error| format!("solver navigation: {error}"))?;
-        let w = existing.clone();
-        let _ = app.run_on_main_thread(move || raise_window(&w));
+        if solver_starts_visible(label) {
+            let w = existing.clone();
+            let _ = app.run_on_main_thread(move || raise_window(&w));
+        }
         return Ok(());
     }
 
@@ -995,7 +1007,8 @@ fn open_solver(app: &AppHandle, url: &str, label: &'static str) -> Result<(), St
                 .resizable(true)
                 .decorations(true)
                 .shadow(true)
-                .focused(true)
+                .visible(solver_starts_visible(label))
+                .focused(solver_starts_visible(label))
                 .on_page_load(|_, payload| {
                     let phase =
                         if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
@@ -1021,8 +1034,9 @@ fn open_solver(app: &AppHandle, url: &str, label: &'static str) -> Result<(), St
                         }
                     }
                 });
-                raise_window(&window);
-                eprintln!("[cf] solver window built + shown");
+                if solver_starts_visible(label) {
+                    raise_window(&window);
+                }
                 let _ = tx.send(Ok(()));
             }
             Err(e) => {
@@ -1130,9 +1144,9 @@ async fn source_session(
         note_solver_cooldown(host.as_deref().unwrap_or(""));
         return Err("cloudflare solver window missing".into());
     };
-    let window_raised = window.clone();
-    if let Err(error) = app.run_on_main_thread(move || raise_window(&window_raised)) {
-        eprintln!("[cf] could not raise solver window: {error}");
+    if solver_starts_visible(solver_label) {
+        let window_raised = window.clone();
+        let _ = app.run_on_main_thread(move || raise_window(&window_raised));
     }
 
     let target = Url::parse(&url).map_err(|error| format!("url: {error}"))?;
@@ -1142,6 +1156,10 @@ async fn source_session(
     let mut wrong_origin_since: Option<Instant> = None;
     let mut last_stage = String::new();
     let mut last_diagnostic = Instant::now();
+    // Hidden WebViews can stall or encounter a challenge requiring user input.
+    // Keep image recovery silent while it succeeds automatically, but retain
+    // the existing interactive verification as a last resort.
+    let mut image_window_raised = false;
     loop {
         if start.elapsed() >= Duration::from_secs(90) {
             PENDING.lock().unwrap().take();
@@ -1158,8 +1176,23 @@ async fn source_session(
             }
             _ = tokio::time::sleep(Duration::from_millis(800)) => {}
         }
+        if image_referrer.is_some()
+            && !image_window_raised
+            && start.elapsed() >= Duration::from_secs(20)
+        {
+            let window_to_show = window.clone();
+            if app.run_on_main_thread(move || raise_window(&window_to_show)).is_ok() {
+                image_window_raised = true;
+            }
+        }
         match probe_page(&window).await {
             Ok(Some(probe)) => {
+                if image_referrer.is_some() && probe.authentication_required && !image_window_raised {
+                    let window_to_show = window.clone();
+                    if app.run_on_main_thread(move || raise_window(&window_to_show)).is_ok() {
+                        image_window_raised = true;
+                    }
+                }
                 // Image CDN challenges must be entered through a browser navigation
                 // carrying the source Referer. Native navigation to a signed image
                 // is rejected with an unrelated Google 403 on some CDNs.
@@ -1284,6 +1317,12 @@ async fn source_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chapter_image_solver_starts_hidden_but_other_sources_remain_visible() {
+        assert!(!solver_starts_visible(IMAGE_SOLVER_LABEL));
+        assert!(solver_starts_visible(SOLVER_LABEL));
+    }
 
     #[test]
     fn recovered_image_cache_is_scoped_to_url_and_byte_limit() {
