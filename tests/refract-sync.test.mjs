@@ -68,6 +68,9 @@ function harness() {
     setLookup: (v) => {
       client.lookupRefract = v;
     },
+    setMovieWrite: (v) => {
+      client.writeRefractMovie = v;
+    },
     setOffline: (v) => {
       offline = v;
     },
@@ -282,6 +285,71 @@ test("a bulk history action exceeding remaining capacity is rejected without par
     assert.equal(h.sync.refractStatus().failed, 1);
     assert.equal(h.sync.refractStatus().failureDetails[0].sourceId, episodeEvent().id);
     assert.match(h.sync.refractStatus().failureDetails[0].reason, /queue full/);
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("reconnecting with the same key during lookup cannot send a job removed by reset", async () => {
+  const h = harness();
+  try {
+    let finish;
+    h.setLookup(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    h.sync.enqueueRefractWatch(movieEvent());
+    h.sync.resetRefractSync();
+    finish([{ ids: { refract: "old-movie" } }]);
+    await tick();
+    assert.equal(h.calls.length, 0);
+    assert.equal(h.sync.refractStatus().synced, 0);
+    assert.equal(h.sync.refractStatus().pending, 0);
+
+    h.setLookup(async () => [{ ids: { refract: "new-movie" } }]);
+    h.sync.enqueueRefractWatch(movieEvent());
+    await tick();
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.calls[0].args[1], "new-movie");
+  } finally {
+    h.cleanup();
+  }
+});
+
+test("a same-key queue reset ignores late write completion without suppressing a new viewing", async () => {
+  const h = harness();
+  try {
+    let finish;
+    let started;
+    const writing = new Promise((resolve) => {
+      started = resolve;
+    });
+    h.setMovieWrite(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+          started();
+        }),
+    );
+    h.sync.enqueueRefractWatch(movieEvent());
+    await writing;
+    h.sync.resetRefractSync();
+    finish();
+    await tick();
+    const stored = JSON.parse(h.db.get("harbor.refract.sync.v1"));
+    assert.equal(stored.synced, 0);
+    assert.deepEqual(stored.recent, {});
+    assert.equal(stored.pending.length, 0);
+
+    h.setMovieWrite(async (...args) => {
+      h.calls.push({ kind: "movie", args });
+    });
+    h.sync.enqueueRefractWatch(movieEvent());
+    await tick();
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.sync.refractStatus().synced, 1);
   } finally {
     h.cleanup();
   }
