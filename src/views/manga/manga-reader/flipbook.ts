@@ -1,3 +1,6 @@
+import { safeFetchBytes } from "@/lib/safe-fetch";
+import { isBatcaveImageUrl, resolveReaderImageHeaders } from "./image-request-headers";
+
 export type FlipPage = {
   _setAngle?: (deg: number) => void;
   angle?: number;
@@ -37,8 +40,16 @@ export type FlipInstance = {
 
 export type FlipCtor = new (el: HTMLElement, opts: Record<string, unknown>) => FlipInstance;
 
-export type FlipMainInstance = { options?: unknown };
+export type FlipMainInstance = {
+  options?: {
+    bitmapResizeHeight?: number;
+    bitmapResizeQuality?: string;
+  };
+  imageCache?: Map<string, Promise<ImageBitmap>>;
+};
 type FlipMainProto = {
+  fetchAndCacheImage?: (this: FlipMainInstance, url: string) => Promise<ImageBitmap>;
+  __harborChapterImageGuard?: boolean;
   pageLoaded?: (this: FlipMainInstance, ...args: Array<unknown>) => unknown;
   loadPageHTML?: (
     this: FlipMainInstance,
@@ -114,6 +125,54 @@ export function guardPageLoaded(): void {
   if (typeof window === "undefined") return;
   const mainProto = (window as unknown as { FLIPBOOK?: { Main?: { prototype?: FlipMainProto } } })
     .FLIPBOOK?.Main?.prototype;
+  // The vendor uses the global fetch function when each texture loads.
+  // A short-lived window.fetch override cannot reliably protect late
+  // texture requests (page turns, prefetch, StrictMode remounts). Route the
+  // signed Batcave chapter images through Harbor directly at the call site.
+  if (
+    mainProto &&
+    typeof mainProto.fetchAndCacheImage === "function" &&
+    !mainProto.__harborChapterImageGuard
+  ) {
+    const originalImageFetch = mainProto.fetchAndCacheImage;
+    mainProto.fetchAndCacheImage = function (this: FlipMainInstance, url: string): Promise<ImageBitmap> {
+      if (!isBatcaveImageUrl(url)) return originalImageFetch.call(this, url);
+      const cache = (this.imageCache ??= new Map<string, Promise<ImageBitmap>>());
+      const existing = cache.get(url);
+      if (existing) return existing;
+      const pending = (async () => {
+        const response = await safeFetchBytes(
+          url,
+          { headers: resolveReaderImageHeaders(url) },
+          30_000,
+          32 * 1024 * 1024,
+          false,
+          true,
+        );
+        if (!response.ok) throw new Error(`Harbor flipbook image recovery failed: HTTP ${response.status}`);
+        const blob = await response.blob();
+        const options = this.options;
+        const bitmapOptions: ImageBitmapOptions = {};
+        if (options?.bitmapResizeHeight) bitmapOptions.resizeHeight = options.bitmapResizeHeight;
+        const quality = options?.bitmapResizeQuality;
+        if (
+          quality === "pixelated" ||
+          quality === "low" ||
+          quality === "medium" ||
+          quality === "high"
+        ) {
+          bitmapOptions.resizeQuality = quality;
+        }
+        return createImageBitmap(blob, Object.keys(bitmapOptions).length ? bitmapOptions : undefined);
+      })();
+      cache.set(url, pending);
+      void pending.catch(() => {
+        if (cache.get(url) === pending) cache.delete(url);
+      });
+      return pending;
+    };
+    mainProto.__harborChapterImageGuard = true;
+  }
   if (
     mainProto &&
     typeof mainProto.pageLoaded === "function" &&

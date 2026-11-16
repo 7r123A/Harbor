@@ -23,6 +23,10 @@ pub fn cf_browser_ready(_host: &str) -> bool {
 pub fn cf_browser_ready_for(_app: &AppHandle, _host: &str) -> bool {
     false
 }
+
+pub fn cf_image_browser_ready_for(_app: &AppHandle, _host: &str) -> bool {
+    false
+}
 pub fn cf_prefer_browser(_host: &str) -> bool {
     false
 }
@@ -43,6 +47,14 @@ pub async fn cf_fetch(_app: AppHandle, url: String) -> Result<(), String> {
     ))
 }
 
+pub async fn cf_fetch_session(
+    app: AppHandle,
+    url: String,
+    _require_guard: bool,
+) -> Result<(), String> {
+    cf_fetch(app, url).await
+}
+
 // The desktop-only browser fallback has no WebView equivalent on Android.
 // Keep the shared HTTP API compatible without presenting a challenge as data.
 pub struct BrowserTextResponse {
@@ -53,8 +65,30 @@ pub struct BrowserTextResponse {
 
 pub async fn cf_browser_fetch(
     _app: &AppHandle,
-    _url: &str,
-    _accept: Option<&str>,
+    _args: &crate::http_fetch::HarborFetchArgs,
+    _request_id: uuid::Uuid,
 ) -> Result<Option<BrowserTextResponse>, String> {
     Ok(None)
+}
+
+pub async fn cf_browser_fetch_image(
+    _app: &AppHandle,
+    _args: &crate::http_fetch::HarborFetchArgs,
+    _request_id: uuid::Uuid,
+) -> Result<Option<crate::http_fetch::HarborFetchResponse>, String> {
+    // Android cannot share a second verified WebView for image recovery.
+    Ok(None)
+}
+
+pub async fn cf_fetch_image_session(
+    app: AppHandle,
+    url: String,
+    _referrer: String,
+    _require_guard: bool,
+) -> Result<(), String> {
+    cf_fetch(app, url).await
+}
+
+pub async fn cf_login_session(app: AppHandle, url: String) -> Result<(), String> {
+    cf_fetch(app, url).await
 }

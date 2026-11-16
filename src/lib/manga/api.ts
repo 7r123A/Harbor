@@ -141,8 +141,16 @@ async function cached<T>(
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < ttl) return hit.p as Promise<T>;
 
+  const provider = activeMangaProvider();
+  const owner = ["detail", "chapters", "chapters.own", "pages"].includes(kind)
+    ? (routeById(parts)?.provider ?? provider)
+    : provider;
   const call = () =>
-    attempt(() => run(activeMangaProvider()), opts.tries ?? TRIES, opts.timeout ?? CALL_TIMEOUT);
+    attempt(
+      () => run(provider),
+      opts.tries ?? TRIES,
+      Math.max(opts.timeout ?? CALL_TIMEOUT, owner.requestTimeoutMs ?? 0),
+    );
 
   if (!opts.disk) return remember(key, call(), "");
 

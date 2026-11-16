@@ -69,7 +69,7 @@ async function mergeLists(
       withTimeout(
         fn(p).then((l) => l.map((m) => ({ ...m, id: prefixId(p.id, m.id) }))),
         [] as MangaSummary[],
-        timeout,
+        Math.max(timeout, p.requestTimeoutMs ?? 0),
       ).catch(() => [] as MangaSummary[]),
     ),
   );
@@ -93,6 +93,7 @@ export async function streamAll(
       withTimeout(
         fn(p).then((l) => l.map((m) => ({ ...m, id: prefixId(p.id, m.id) }))),
         [] as MangaSummary[],
+        Math.max(SOURCE_TIMEOUT, p.requestTimeoutMs ?? 0),
       )
         .catch(() => [] as MangaSummary[])
         .then((list) => {
@@ -190,7 +191,7 @@ async function mergeSearchLists(query: string, opts?: SearchAllOpts): Promise<Ma
         items.map((item) => ({ ...item, id: prefixId(provider.id, item.id) })),
       ),
       [] as MangaSummary[],
-      30_000,
+      Math.max(30_000, provider.requestTimeoutMs ?? 0),
     ).then((items) => {
       lists.set(index, items);
       if (!opts?.exhaustive && !exactFound && pickSameTitle(items, query)) {
@@ -208,7 +209,11 @@ async function mergeSearchLists(query: string, opts?: SearchAllOpts): Promise<Ma
 async function mergeTags(): Promise<MangaTag[]> {
   const lists = await Promise.all(
     aggregateSubProviders().map((p) =>
-      withTimeout(p.tags?.() ?? Promise.resolve([]), [] as MangaTag[]).then((tags) =>
+      withTimeout(
+        p.tags?.() ?? Promise.resolve([]),
+        [] as MangaTag[],
+        Math.max(SOURCE_TIMEOUT, p.requestTimeoutMs ?? 0),
+      ).then((tags) =>
         tags.map((tag) =>
           tag.group === "Categories" && tag.id.startsWith("category:")
             ? { ...tag, id: prefixId(p.id, tag.id) }
@@ -236,6 +241,9 @@ export function withProviderTag<T>(
 export const aggregateProvider: MangaProvider = {
   id: "all",
   name: "All Sources",
+  get requestTimeoutMs() {
+    return Math.max(0, ...aggregateSubProviders().map((p) => p.requestTimeoutMs ?? 0));
+  },
   popular: (offset, tagId) =>
     mergeLists((p) => withProviderTag(p, tagId, (tag) => p.popular(offset, tag))),
   search: (query, offset, tagId) =>

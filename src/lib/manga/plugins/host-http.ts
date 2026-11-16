@@ -16,7 +16,7 @@ const DEFAULT_TIMEOUT = 20_000;
 const MAX_TIMEOUT = 120_000;
 // A Cloudflare solve is user-interactive. Text calls must outlive the solver window
 // so the retried request can reach the same source call instead of being aborted.
-const TEXT_CHALLENGE_TIMEOUT = 120_000;
+export const TEXT_CHALLENGE_TIMEOUT = 120_000;
 
 const PLUGIN_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";

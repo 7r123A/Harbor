@@ -221,6 +221,7 @@ async function invokeHarborFetch(
   timeoutMs = 30000,
   maxResponseBytes?: number,
   allowLocalNetwork = false,
+  allowImageChallenge = false,
 ): Promise<HarborFetchResponse> {
   countCrossing("harborFetch", input);
   const headers: Record<string, string> = {};
@@ -282,6 +283,7 @@ async function invokeHarborFetch(
       credentialHandle,
       publicNetworkOnly,
       allowLocalNetwork,
+      allowImageChallenge,
       followRedirects:
         init?.redirect === "manual" || init?.redirect === "error" ? false : undefined,
     },
@@ -305,6 +307,7 @@ async function tauriHarborFetch(
   timeoutMs = 30000,
   maxResponseBytes?: number,
   allowLocalNetwork = false,
+  allowImageChallenge = false,
 ): Promise<Response> {
   const resp = await invokeHarborFetch(
     input,
@@ -313,6 +316,7 @@ async function tauriHarborFetch(
     timeoutMs,
     maxResponseBytes,
     allowLocalNetwork,
+    allowImageChallenge,
   );
   const responseHeaders = new Headers(
     resp.headers ?? (resp.contentType ? { "content-type": resp.contentType } : {}),
@@ -618,6 +622,7 @@ export function safeFetchBytes(
   timeoutMs = 30000,
   maxResponseBytes?: number,
   allowLocalNetwork = false,
+  allowImageChallenge = false,
 ): Promise<Response> {
   const target = typeof input === "string" ? input : input instanceof URL ? input.href : null;
   const policyHeaders = new Headers(init?.headers as HeadersInit | undefined);
@@ -647,8 +652,8 @@ export function safeFetchBytes(
     return Promise.reject(new TrackerBlockedError(new URL(target).hostname));
   }
   return withDeadline(
-    tauriHarborFetch(target, init, "base64", timeoutMs, maxResponseBytes, allowLocalNetwork),
+    tauriHarborFetch(target, cleanInit, "base64", timeoutMs, maxResponseBytes, allowLocalNetwork, allowImageChallenge),
     init?.signal,
-    timeoutMs + 5_000,
+    timeoutMs + (allowImageChallenge ? 110_000 : 5_000),
   );
 }
