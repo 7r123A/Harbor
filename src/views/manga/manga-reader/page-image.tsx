@@ -20,11 +20,15 @@ import {
 } from "@/lib/manga/upscale/best";
 import { MANGA_PAGE_CACHED_EVENT } from "@/lib/manga/upscale/events";
 import { fetchImageObjectUrl, IMAGE_FALLBACK_HEADERS } from "./reader-utils";
+import { cachedChapterImage } from "./chapter-image-cache";
+import { isBatcaveImageUrl } from "./image-request-headers";
 import { isColorPage, noteRenderedPageWidth, readableBlob } from "./manga-upscale";
 
 type Status = "loading" | "loaded" | "error";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+const needsRecoveredImage = (url: string, headers?: Record<string, string>) =>
+  isTauri && (isBatcaveImageUrl(url) || !!cachedChapterImage(url, headers));
 
 export function PageImage({
   url,
@@ -34,6 +38,7 @@ export function PageImage({
   style,
   inline,
   fillHeight,
+  deferNativeFetch = false,
 }: {
   url: string;
   headers?: Record<string, string>;
@@ -43,6 +48,8 @@ export function PageImage({
   style?: React.CSSProperties;
   inline?: boolean;
   fillHeight?: boolean;
+  /** Scrolling readers only recover images near the viewport. */
+  deferNativeFetch?: boolean;
 }) {
   const t = useT();
   const { settings } = useSettings();
@@ -51,8 +58,10 @@ export function PageImage({
   const [bust, setBust] = useState(0);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [headerFailed, setHeaderFailed] = useState(false);
-  const [nativeFallback, setNativeFallback] = useState(false);
+  const [nativeFallback, setNativeFallback] = useState(() => needsRecoveredImage(url, headers));
   const [enhanced, setEnhanced] = useState<ImageBitmap | null>(null);
+  const holderRef = useRef<HTMLDivElement | null>(null);
+  const [nearViewport, setNearViewport] = useState(!deferNativeFetch);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const enhancedRef = useRef<ImageBitmap | null>(null);
   const imgRef = useRef<HTMLImageElement | null>(null);
@@ -78,7 +87,7 @@ export function PageImage({
     setBust(0);
     setBlobUrl(null);
     setHeaderFailed(false);
-    setNativeFallback(false);
+    setNativeFallback(needsRecoveredImage(url, headers));
     enhancedRef.current?.close();
     enhancedRef.current = null;
     setEnhanced(null);
@@ -93,6 +102,26 @@ export function PageImage({
       enhancedRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!deferNativeFetch) {
+      setNearViewport(true);
+      return;
+    }
+    const holder = holderRef.current;
+    if (!holder || typeof IntersectionObserver === "undefined") {
+      setNearViewport(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) setNearViewport(true);
+      },
+      { rootMargin: fillHeight ? "0px 100%" : "100% 0px", threshold: 0 },
+    );
+    observer.observe(holder);
+    return () => observer.disconnect();
+  }, [deferNativeFetch, fillHeight, url]);
 
   useEffect(() => {
     if (wantUpscaleBytes) warmMangaUpscaler();
@@ -127,11 +156,16 @@ export function PageImage({
   }, [status]);
 
   useEffect(() => {
-    if (!nativeFetch) return;
+    if (!nativeFetch || (deferNativeFetch && !nearViewport)) return;
     let alive = true;
     let created: string | null = null;
     setStatus("loading");
-    fetchImageObjectUrl(url, wantHeaderFetch && headers ? headers : IMAGE_FALLBACK_HEADERS)
+    fetchImageObjectUrl(
+      url,
+      wantHeaderFetch && headers ? headers : IMAGE_FALLBACK_HEADERS,
+      30_000,
+      { refresh: bust > 0 },
+    )
       .then((obj) => {
         if (!alive) {
           URL.revokeObjectURL(obj);
@@ -149,7 +183,7 @@ export function PageImage({
       alive = false;
       if (created) URL.revokeObjectURL(created);
     };
-  }, [url, headers, nativeFetch, wantHeaderFetch, bust]);
+  }, [url, headers, nativeFetch, wantHeaderFetch, bust, deferNativeFetch, nearViewport]);
 
   const rawSrc = bust ? `${url}${url.includes("?") ? "&" : "?"}h=${bust}` : url;
   const src = nativeFetch ? blobUrl : rawSrc;
@@ -378,6 +412,7 @@ export function PageImage({
 
   return (
     <div
+      ref={holderRef}
       className={
         inline
           ? "relative my-auto flex justify-center"
