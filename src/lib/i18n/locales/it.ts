@@ -405,6 +405,31 @@ const it: Record<string, string> = {
   "{sent} sent · {pending} pending · {failed} unmatched":
     "{sent} inviati · {pending} in sospeso · {failed} senza corrispondenza",
   "Unmatched items": "Elementi senza corrispondenza",
+  "Refract queue full; unable to save another watch":
+    "Coda Refract piena; impossibile salvare un’altra visione",
+  "No verified IMDb/TMDB/TVDB identity": "Nessun ID IMDb/TMDB/TVDB verificato",
+  "Movie not found in Refract": "Film non trovato in Refract",
+  "Episode not found; verify season numbering":
+    "Episodio non trovato; verifica la numerazione delle stagioni",
+  "Last watched item sent successfully": "Ultima visione inviata correttamente",
+  "Unknown error": "Errore sconosciuto",
+  "Some items could not be matched or sent": "Impossibile associare o inviare alcuni elementi",
+  "Refract denied access; check key and permissions":
+    "Refract ha negato l’accesso; verifica la chiave e i permessi",
+  "Network error; retry scheduled": "Errore di rete; nuovo tentativo programmato",
+  "No verified IMDb/TMDB/TVDB identity is available for this title.":
+    "Nessun ID IMDb/TMDB/TVDB verificato per questo titolo.",
+  "Refract could not uniquely identify this title.":
+    "Refract non è riuscito a identificare univocamente questo titolo.",
+  "Refract preserved an existing library entry or viewing history.":
+    "Refract ha conservato una voce esistente della libreria o della cronologia.",
+  "Added to Refract Plan to Watch.": "Aggiunto alla lista Da guardare di Refract.",
+  "Removed from Refract Plan to Watch.": "Rimosso dalla lista Da guardare di Refract.",
+  "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
+    "La lista di Refract richiede library:write. Riconnettiti con una chiave dotata di questo permesso.",
+  "Refract could not confirm the watchlist change. Try again.":
+    "Refract non ha potuto confermare la modifica della lista. Riprova.",
+  "Refract HTTP {status}": "Refract HTTP {status}",
 };
 
 export default it;
