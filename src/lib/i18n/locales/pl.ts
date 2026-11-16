@@ -415,6 +415,31 @@ const pl: Record<string, string> = {
   "{sent} sent · {pending} pending · {failed} unmatched":
     "Wysłane: {sent} · Oczekujące: {pending} · Niedopasowane: {failed}",
   "Unmatched items": "Niedopasowane pozycje",
+  "Refract queue full; unable to save another watch":
+    "Kolejka Refract jest pełna; nie można zapisać kolejnego oglądania",
+  "No verified IMDb/TMDB/TVDB identity": "Brak zweryfikowanego identyfikatora IMDb/TMDB/TVDB",
+  "Movie not found in Refract": "Nie znaleziono filmu w Refract",
+  "Episode not found; verify season numbering": "Nie znaleziono odcinka; sprawdź numerację sezonów",
+  "Last watched item sent successfully": "Ostatni zapis oglądania został wysłany",
+  "Unknown error": "Nieznany błąd",
+  "Some items could not be matched or sent":
+    "Nie udało się dopasować lub wysłać niektórych pozycji",
+  "Refract denied access; check key and permissions":
+    "Refract odmówił dostępu; sprawdź klucz i uprawnienia",
+  "Network error; retry scheduled": "Błąd sieci; zaplanowano ponowną próbę",
+  "No verified IMDb/TMDB/TVDB identity is available for this title.":
+    "Brak zweryfikowanego identyfikatora IMDb/TMDB/TVDB dla tego tytułu.",
+  "Refract could not uniquely identify this title.":
+    "Refract nie mógł jednoznacznie zidentyfikować tego tytułu.",
+  "Refract preserved an existing library entry or viewing history.":
+    "Refract zachował istniejący wpis w bibliotece lub historii oglądania.",
+  "Added to Refract Plan to Watch.": "Dodano do listy do obejrzenia w Refract.",
+  "Removed from Refract Plan to Watch.": "Usunięto z listy do obejrzenia w Refract.",
+  "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
+    "Lista do obejrzenia w Refract wymaga uprawnienia library:write. Połącz się ponownie z kluczem mającym to uprawnienie.",
+  "Refract could not confirm the watchlist change. Try again.":
+    "Refract nie mógł potwierdzić zmiany na liście. Spróbuj ponownie.",
+  "Refract HTTP {status}": "Refract HTTP {status}",
 };
 
 export default pl;
