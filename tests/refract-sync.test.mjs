@@ -252,3 +252,37 @@ test("an in-flight lookup for the previous Refract account cannot write to its r
     h.cleanup();
   }
 });
+
+test("a bulk history action exceeding remaining capacity is rejected without partial writes", async () => {
+  const h = harness();
+  try {
+    const storeKey = "harbor.refract.sync.v1";
+    const now = Date.now();
+    const pending = Array.from({ length: 2499 }, (_, i) => ({
+      id: `existing-${i}`,
+      requestId: `request-${i}`,
+      sourceId: `tmdb:movie:${i + 1}`,
+      type: "movie",
+      watchedAt: now,
+      attempts: 0,
+      nextAt: i === 0 ? now : now + 60_000,
+    }));
+    h.db.set(storeKey, JSON.stringify({ pending, recent: {}, failed: [], synced: 0 }));
+    h.sync.enqueueRefractWatch(episodeEvent(), {
+      episodes: [{ season: 2, episode: 4 }, { season: 2, episode: 5 }],
+    });
+    await tick();
+
+    // One independent queued movie succeeded, but the rejected batch remains visible.
+    const stored = JSON.parse(h.db.get(storeKey));
+    assert.equal(stored.pending.length, 2498);
+    assert.equal(stored.pending.some((job) => job.type === "episode"), false);
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.calls[0].kind, "movie");
+    assert.equal(h.sync.refractStatus().failed, 1);
+    assert.equal(h.sync.refractStatus().failureDetails[0].sourceId, episodeEvent().id);
+    assert.match(h.sync.refractStatus().failureDetails[0].reason, /queue full/);
+  } finally {
+    h.cleanup();
+  }
+});
