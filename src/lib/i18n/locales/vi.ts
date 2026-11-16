@@ -416,6 +416,37 @@ const vi: Record<string, string> = {
   ...reviews,
   ...queueBasket,
   ...liveWeb,
+  "Refract sync": "Đồng bộ Refract",
+  "Sync watched history and Harbor watchlist changes with Refract.":
+    "Đồng bộ lịch sử xem và các thay đổi trong danh sách muốn xem của Harbor với Refract.",
+  "Refract personal API key": "Khóa API cá nhân của Refract",
+  "Verifying...": "Đang xác minh…",
+  "Connect Refract": "Kết nối Refract",
+  "Refract key saved in Harbor's secret store":
+    "Khóa Refract đã được lưu trong kho bảo mật của Harbor",
+  "Sync watched history and watchlist": "Đồng bộ lịch sử xem và danh sách muốn xem",
+  "Send watched history and watchlist changes from Harbor to Refract. Only the primary Harbor profile is synced.":
+    "Gửi lịch sử xem và các thay đổi trong danh sách muốn xem từ Harbor đến Refract. Chỉ hồ sơ chính của Harbor được đồng bộ.",
+  "Retry pending watches": "Thử gửi lại các lượt xem đang chờ",
+  "Disconnect Refract": "Ngắt kết nối Refract",
+  "Connected to Refract ({identity}). Watched history sync is enabled.":
+    "Đã kết nối với Refract ({identity}). Đồng bộ lịch sử xem đã được bật.",
+  "Could not verify the key via Refract /v1/me. Check permissions and connectivity.":
+    "Không thể xác minh khóa qua Refract /v1/me. Hãy kiểm tra quyền truy cập và kết nối.",
+  "Disconnected from Refract.": "Đã ngắt kết nối Refract.",
+  "Create a personal API key in Refract with profile:read, library:read, library:write and history:write. Never share or commit the key.":
+    "Tạo khóa API cá nhân trong Refract với các quyền profile:read, library:read, library:write và history:write. Không bao giờ chia sẻ khóa hoặc đưa khóa vào commit.",
+  "Automatic watch threshold": "Ngưỡng tự động ghi nhận lượt xem",
+  "After {count} minutes": "Sau {count} phút",
+  "{count}% (default)": "{count}% (mặc định)",
+  "Log a movie or episode in Refract when playback reaches the selected time or percentage. Seeking past it also qualifies. Early logging counts as watched in Refract, not partially watched. Harbor's own completion threshold is unchanged.":
+    "Ghi nhận phim hoặc tập phim trong Refract khi phát đến thời lượng hoặc tỷ lệ đã chọn. Tua qua ngưỡng cũng được tính. Ghi nhận sớm sẽ đánh dấu nội dung là đã xem, không phải xem một phần. Ngưỡng hoàn thành của Harbor không thay đổi.",
+  "Harbor → Refract Plan to Watch": "Harbor → Refract: dự định xem",
+  "New watchlist additions and removals are sent automatically while sync is enabled. Requires library:write; reconnect with an updated key if needed. Existing Refract history and other library statuses are preserved.":
+    "Các mục thêm vào hoặc xóa khỏi danh sách muốn xem sẽ được gửi tự động khi bật đồng bộ. Cần quyền library:write; hãy kết nối lại bằng khóa mới nếu cần. Lịch sử Refract hiện có và các trạng thái thư viện khác được giữ nguyên.",
+  "{sent} sent · {pending} pending · {failed} unmatched":
+    "Đã gửi: {sent} · Đang chờ: {pending} · Không khớp: {failed}",
+  "Unmatched items": "Các mục không khớp",
 };
 
 export default vi;
