@@ -121,7 +121,7 @@
   pointer-events: none;
 }
 .music-watch-next-skeleton .music-watch-next-art {
-  cursor: var(--harbor-cursor-default, default);
+  cursor: default;
 }
 .music-watch-next-skeleton .music-watch-next-label {
   flex: 1;
