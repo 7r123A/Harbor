@@ -462,6 +462,31 @@ const ru: Record<string, string> = {
   "{sent} sent · {pending} pending · {failed} unmatched":
     "Отправлено: {sent} · Ожидает: {pending} · Не сопоставлено: {failed}",
   "Unmatched items": "Несопоставленные элементы",
+  "Refract queue full; unable to save another watch":
+    "Очередь Refract заполнена; невозможно сохранить ещё один просмотр",
+  "No verified IMDb/TMDB/TVDB identity": "Нет подтверждённого идентификатора IMDb/TMDB/TVDB",
+  "Movie not found in Refract": "Фильм не найден в Refract",
+  "Episode not found; verify season numbering": "Эпизод не найден; проверьте нумерацию сезонов",
+  "Last watched item sent successfully": "Последняя запись о просмотре успешно отправлена",
+  "Unknown error": "Неизвестная ошибка",
+  "Some items could not be matched or sent":
+    "Не удалось сопоставить или отправить некоторые элементы",
+  "Refract denied access; check key and permissions":
+    "Refract отказал в доступе; проверьте ключ и разрешения",
+  "Network error; retry scheduled": "Ошибка сети; запланирована повторная попытка",
+  "No verified IMDb/TMDB/TVDB identity is available for this title.":
+    "Для этого произведения нет подтверждённого идентификатора IMDb/TMDB/TVDB.",
+  "Refract could not uniquely identify this title.":
+    "Refract не удалось однозначно идентифицировать это произведение.",
+  "Refract preserved an existing library entry or viewing history.":
+    "Refract сохранил существующую запись в библиотеке или истории просмотров.",
+  "Added to Refract Plan to Watch.": "Добавлено в список «Хочу посмотреть» в Refract.",
+  "Removed from Refract Plan to Watch.": "Удалено из списка «Хочу посмотреть» в Refract.",
+  "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
+    "Для списка просмотра Refract требуется разрешение library:write. Подключитесь заново с ключом, имеющим это разрешение.",
+  "Refract could not confirm the watchlist change. Try again.":
+    "Refract не удалось подтвердить изменение списка просмотра. Повторите попытку.",
+  "Refract HTTP {status}": "Refract HTTP {status}",
 };
 
 export default ru;
