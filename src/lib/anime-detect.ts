@@ -60,25 +60,57 @@ const queue: DetectItem[] = [];
 let version = 0;
 const listeners = new Set<() => void>();
 
-function persist(): void {
+// A home feed settles dozens of detections in a burst, and each positive used to
+// rewrite the whole set synchronously. Positives are now batched like negatives;
+// both are flushed when the page goes away so nothing detected is lost.
+let positiveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function writePositives(): void {
   try {
     setItemWithRecovery(STORAGE_KEY, JSON.stringify([...detected]));
   } catch {}
 }
 
+function persist(): void {
+  if (positiveTimer != null) return;
+  positiveTimer = setTimeout(() => {
+    positiveTimer = null;
+    writePositives();
+  }, NEGATIVE_FLUSH_MS);
+}
+
 let negativeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function writeNegatives(): void {
+  try {
+    const all = [...negatives];
+    const ids = all.length > NEGATIVE_MAX ? all.slice(-NEGATIVE_MAX) : all;
+    setItemWithRecovery(NEGATIVE_KEY, JSON.stringify({ t: negativesSince, ids }));
+  } catch {}
+}
 
 function persistNegatives(): void {
   if (negativeTimer != null) return;
   negativeTimer = setTimeout(() => {
     negativeTimer = null;
-    try {
-      const all = [...negatives];
-      const ids = all.length > NEGATIVE_MAX ? all.slice(-NEGATIVE_MAX) : all;
-      setItemWithRecovery(NEGATIVE_KEY, JSON.stringify({ t: negativesSince, ids }));
-    } catch {}
+    writeNegatives();
   }, NEGATIVE_FLUSH_MS);
 }
+
+function flushPending(): void {
+  if (positiveTimer != null) {
+    clearTimeout(positiveTimer);
+    positiveTimer = null;
+    writePositives();
+  }
+  if (negativeTimer != null) {
+    clearTimeout(negativeTimer);
+    negativeTimer = null;
+    writeNegatives();
+  }
+}
+
+if (typeof window !== "undefined") window.addEventListener("pagehide", flushPending);
 
 // Detection settles one title at a time, and each settle used to notify synchronously: a home feed
 // with hundreds of anime re-rendered home, discover and every other version consumer once per

@@ -1,5 +1,10 @@
 import { addonBaseUrl } from "@/lib/addon-url";
-import { userAddons, type Addon, type AddonCatalogCursor, type CatalogDef } from "@/lib/addons";
+import {
+  cachedUserAddons,
+  type Addon,
+  type AddonCatalogCursor,
+  type CatalogDef,
+} from "@/lib/addons";
 import { fetchManifestAt, filterEnabled, loadInstalled } from "@/lib/addon-store";
 import { applyOrderToItems, hostOf, loadDisplayOrder } from "@/lib/addons-store/reorder";
 import { bpAddonLogo } from "./bp-addon-logo";
@@ -113,7 +118,7 @@ const cloudMemo = new Map<string, Promise<Addon[]>>();
 export function loadCloudAddons(authKey: string): Promise<Addon[]> {
   const hit = cloudMemo.get(authKey);
   if (hit) return hit;
-  const next = userAddons(authKey)
+  const next = cachedUserAddons(authKey)
     .then((list) => filterEnabled(list))
     .catch(() => [] as Addon[]);
   cloudMemo.set(authKey, next);

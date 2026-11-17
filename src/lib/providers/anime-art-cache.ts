@@ -46,6 +46,14 @@ function persist(): void {
   }
 }
 
+// Callers rebuild the backdrop array on every resolve, so an identity check
+// treated unchanged art as new and rewrote the whole 1000-entry blob each time.
+function sameList(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((v, i) => v === b[i]);
+}
+
 export function peekAnimeArt(key: string | undefined | null): AnimeArt | undefined {
   if (!key) return undefined;
   ensure();
@@ -62,7 +70,12 @@ export function saveAnimeArt(key: string | undefined | null, art: AnimeArt): voi
     backdrops: art.backdrops?.length ? art.backdrops : prev?.backdrops,
     t: Date.now(),
   };
-  if (prev && next.bg === prev.bg && next.logo === prev.logo && next.backdrops === prev.backdrops)
+  if (
+    prev &&
+    next.bg === prev.bg &&
+    next.logo === prev.logo &&
+    sameList(next.backdrops, prev.backdrops)
+  )
     return;
   mem.set(key, next);
   persist();

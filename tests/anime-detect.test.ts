@@ -14,6 +14,7 @@ function fixture(initial: Record<string, string> = {}) {
   const tmdbMapping = new Map<number, number>();
   const tmdbCalls: number[] = [];
   const timers: Array<() => void> = [];
+  const pageListeners = new Map<string, () => void>();
   const mocks: Record<string, unknown> = {
     react: { useSyncExternalStore: () => {} },
     "@/lib/cinemeta": {
@@ -45,7 +46,15 @@ function fixture(initial: Record<string, string> = {}) {
     },
   ).outputText;
   const api = {} as typeof import("../src/lib/anime-detect");
-  new Function("require", "exports", "localStorage", "setTimeout", compiled)(
+  new Function(
+    "require",
+    "exports",
+    "localStorage",
+    "setTimeout",
+    "clearTimeout",
+    "window",
+    compiled,
+  )(
     (id: string) => {
       assert.ok(id in mocks, id);
       return mocks[id];
@@ -59,6 +68,10 @@ function fixture(initial: Record<string, string> = {}) {
       timers.push(fn);
       return timers.length;
     },
+    (id: number) => {
+      timers[id - 1] = () => {};
+    },
+    { addEventListener: (type: string, fn: () => void) => pageListeners.set(type, fn) },
   );
   return {
     api,
@@ -70,6 +83,7 @@ function fixture(initial: Record<string, string> = {}) {
     tmdbCalls,
     storage,
     timers,
+    pageListeners,
   };
 }
 
@@ -141,4 +155,20 @@ test("catalog TMDB metas start anime detection", async () => {
   h.api.detectAnimeForMetas([{ id: "tmdb:tv:73223", type: "series" }]);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(h.api.isDetectedAnime("tmdb:tv:73223"), true);
+});
+
+test("detected anime are written in one batch and flushed when the page goes away", async () => {
+  const h = fixture();
+  h.metadata.set("tt201", { genres: ["Animation"], country: "Japan" });
+  h.metadata.set("tt202", { genres: ["Animation"], country: "Japan" });
+  await h.api.detectAnimeForCw([
+    { _id: "tt201", type: "series" },
+    { _id: "tt202", type: "series" },
+  ]);
+  assert.equal(h.storage.has("harbor.anime.detected.v2"), false);
+  h.pageListeners.get("pagehide")?.();
+  assert.deepEqual(JSON.parse(h.storage.get("harbor.anime.detected.v2") ?? "[]").sort(), [
+    "tt201",
+    "tt202",
+  ]);
 });
