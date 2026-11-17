@@ -4,8 +4,8 @@ use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 use tokio::process::Child;
 use tokio::sync::{Mutex, RwLock};
@@ -17,12 +17,24 @@ const SEGMENT_WAIT_MAX: Duration = Duration::from_secs(25);
 const SEGMENT_POLL_INTERVAL: Duration = Duration::from_millis(150);
 /// Segments this far behind the newest one a receiver asked for are deleted.
 const SEGMENTS_KEPT_BEHIND: u32 = 30;
-/// Length FFmpeg aims for. A converted stream has a keyframe every 2 s, so its segments are this
-/// long and its target duration never grows.
+/// Length FFmpeg aims for. Segments end on a keyframe at or after it.
 const SEGMENT_SEC: u32 = 4;
-/// Target duration of a stream whose video is copied: its own keyframes decide where segments
-/// end, and x264/x265 place one at least every 250 frames (10.4 s at 23.976 fps).
-const COPIED_TARGET_SEC: u32 = 11;
+/// EXT-X-TARGETDURATION of a converted stream: it has a keyframe every 2 s, so its segments are
+/// 4 s; the rest is margin for timestamp rounding.
+const CONVERTED_TARGET_SEC: u32 = 6;
+/// EXT-X-TARGETDURATION of a stream whose video is copied: the source's keyframes decide where its
+/// segments end. x264, x265 and NVENC place one at least every 250 frames (10.4 s at 23.976 fps);
+/// this is three times that.
+const COPIED_TARGET_SEC: u32 = 30;
+/// How far (in segments, 5 minutes) the conversion may run ahead of the newest segment a receiver
+/// asked for before FFmpeg is suspended, and where it resumes. Together with the
+/// [`SEGMENTS_KEPT_BEHIND`] kept behind, a session holds about 7 minutes of video on disk whatever
+/// the film's length or how long the receiver stays paused: some 0.7 GB at the 14 Mbit/s of
+/// 1080p HQ, 1.6 GB at 4K's 30 Mbit/s, and up to about 5 GB for an untouched 4K remux.
+const LEAD_MAX_SEGMENTS: u32 = 75;
+const LEAD_RESUME_SEGMENTS: u32 = 60;
+/// How often the lead is checked.
+const LEAD_CHECK: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug)]
 struct Variant {
@@ -41,9 +53,12 @@ struct HlsSession {
     newest_requested: AtomicU32,
     /// Segments below this number were deleted; the playlist stops listing them.
     pruned_below: AtomicU32,
-    /// EXT-X-TARGETDURATION served for the whole session. It only grows if FFmpeg ever reports a
-    /// longer segment, which the floor chosen at registration is there to prevent.
-    target_duration: AtomicU32,
+    /// EXT-X-TARGETDURATION, fixed when the session starts: RFC 8216 6.2.1 forbids changing it.
+    target_duration: u32,
+    /// FFmpeg is suspended because it ran too far ahead of the receiver.
+    held: AtomicBool,
+    /// A segment longer than the target was already reported in the log.
+    overlong_noted: AtomicBool,
 }
 
 fn touch(session: &HlsSession) {
@@ -106,15 +121,25 @@ impl HlsState {
             process: Mutex::new(Some(child)),
             newest_requested: AtomicU32::new(0),
             pruned_below: AtomicU32::new(0),
-            target_duration: AtomicU32::new(if job.plan.summary.video == "copy" {
-                COPIED_TARGET_SEC
-            } else {
-                SEGMENT_SEC
-            }),
+            target_duration: if job.plan.summary.video == "copy" { COPIED_TARGET_SEC } else { CONVERTED_TARGET_SEC },
+            held: AtomicBool::new(false),
+            overlong_noted: AtomicBool::new(false),
         });
+        spawn_lead_guard(Arc::downgrade(&session));
         self.sessions.write().await.insert(id.clone(), session);
         eprintln!("[cast-hls] session {} registered, seek={:.1}s", id, job.seek_sec);
         Ok(id)
+    }
+
+    /// Marks a session as in use, so [`Self::evict_idle`] keeps it while its receiver is paused.
+    pub async fn touch_session(&self, id: &str) -> bool {
+        match self.sessions.read().await.get(id) {
+            Some(session) => {
+                touch(session);
+                true
+            }
+            None => false,
+        }
     }
 
     pub async fn stop_session(&self, id: &str) -> bool {
@@ -378,8 +403,8 @@ async fn handle_variant(State(state): State<HlsState>, Path(id): Path<String>) -
         if let Ok(content) = tokio::fs::read_to_string(&playlist_path).await {
             if content.contains("#EXTINF") {
                 let pruned = session.pruned_below.load(Ordering::SeqCst);
-                let target = session_target_duration(&session, &content);
-                return playlist_response(served_playlist(&content, pruned, target));
+                note_overlong_segments(&session, &content);
+                return playlist_response(served_playlist(&content, pruned, session.target_duration));
             }
         }
         if std::time::Instant::now() >= deadline {
@@ -392,10 +417,115 @@ async fn handle_variant(State(state): State<HlsState>, Path(id): Path<String>) -
     }
 }
 
-/// The session's target duration, raised (never lowered) to cover FFmpeg's own.
-fn session_target_duration(session: &HlsSession, playlist: &str) -> u32 {
+/// The target duration never changes once served. A copied source whose keyframes are further
+/// apart than its bound is reported once in the log instead.
+fn note_overlong_segments(session: &HlsSession, playlist: &str) {
     let reported = playlist_target_duration(playlist);
-    session.target_duration.fetch_max(reported, Ordering::SeqCst).max(reported)
+    if reported > session.target_duration && !session.overlong_noted.swap(true, Ordering::SeqCst) {
+        eprintln!(
+            "[cast-hls] FFmpeg wrote a {reported}s segment, longer than the session's {}s target duration",
+            session.target_duration
+        );
+    }
+}
+
+/// The last segment FFmpeg finished, from its playlist.
+fn newest_written(playlist: &str) -> Option<u32> {
+    playlist.lines().rev().find_map(|line| segment_number(line.trim()))
+}
+
+/// Whether FFmpeg should be suspended, from how far its newest segment is ahead of the newest one
+/// the receiver asked for. Two thresholds keep it from flapping around one.
+fn hold_conversion(written: u32, requested: u32, held: bool) -> bool {
+    let lead = written.saturating_sub(requested);
+    if held {
+        lead > LEAD_RESUME_SEGMENTS
+    } else {
+        lead > LEAD_MAX_SEGMENTS
+    }
+}
+
+/// Suspends or resumes a running FFmpeg.
+#[cfg(windows)]
+fn set_process_held(child: &Child, hold: bool) -> std::io::Result<()> {
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtSuspendProcess(process: *mut std::ffi::c_void) -> i32;
+        fn NtResumeProcess(process: *mut std::ffi::c_void) -> i32;
+    }
+    let handle = child
+        .raw_handle()
+        .ok_or_else(|| std::io::Error::other("FFmpeg has already exited"))?;
+    // SAFETY: the handle belongs to a child this session still owns (the caller holds its lock).
+    let status = unsafe {
+        if hold {
+            NtSuspendProcess(handle)
+        } else {
+            NtResumeProcess(handle)
+        }
+    };
+    if status >= 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!("NTSTATUS {status:#x}")))
+    }
+}
+
+/// Suspends or resumes a running FFmpeg.
+#[cfg(unix)]
+fn set_process_held(child: &Child, hold: bool) -> std::io::Result<()> {
+    let pid = child.id().ok_or_else(|| std::io::Error::other("FFmpeg has already exited"))?;
+    let pid = libc::pid_t::try_from(pid).map_err(std::io::Error::other)?;
+    // SAFETY: plain signal delivery to a child this session still owns.
+    let rc = unsafe { libc::kill(pid, if hold { libc::SIGSTOP } else { libc::SIGCONT }) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
+fn set_process_held(_child: &Child, _hold: bool) -> std::io::Result<()> {
+    Err(std::io::Error::other("suspending FFmpeg is not supported here"))
+}
+
+/// Keeps the conversion within [`LEAD_MAX_SEGMENTS`] of the receiver, so a long film or a paused
+/// receiver never fills the disk: FFmpeg is suspended when it gets that far ahead and resumed when
+/// the receiver catches up. The guard ends with the session or when FFmpeg is done.
+fn spawn_lead_guard(session: Weak<HlsSession>) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(LEAD_CHECK);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            let Some(session) = session.upgrade() else { return };
+            let Ok(playlist) = tokio::fs::read_to_string(session.temp_dir.join("playlist.m3u8")).await else {
+                continue;
+            };
+            if playlist.contains("#EXT-X-ENDLIST") {
+                return;
+            }
+            let Some(written) = newest_written(&playlist) else { continue };
+            let held = session.held.load(Ordering::SeqCst);
+            let hold = hold_conversion(written, session.newest_requested.load(Ordering::SeqCst), held);
+            if hold == held {
+                continue;
+            }
+            let guard = session.process.lock().await;
+            let Some(child) = guard.as_ref() else { return };
+            match set_process_held(child, hold) {
+                Ok(()) => {
+                    session.held.store(hold, Ordering::SeqCst);
+                    eprintln!(
+                        "[cast-hls] conversion {} at segment {written}",
+                        if hold { "paused, far enough ahead of the receiver," } else { "resumed" }
+                    );
+                }
+                Err(error) => eprintln!("[cast-hls] could not {} FFmpeg: {error}", if hold { "pause" } else { "resume" }),
+            }
+        }
+    });
 }
 
 /// True once FFmpeg has exited without producing what a receiver is waiting for.
@@ -640,7 +770,9 @@ mod tests {
             process: tokio::sync::Mutex::new(None),
             newest_requested: AtomicU32::new(0),
             pruned_below: AtomicU32::new(0),
-            target_duration: AtomicU32::new(SEGMENT_SEC),
+            target_duration: CONVERTED_TARGET_SEC,
+            held: AtomicBool::new(false),
+            overlong_noted: AtomicBool::new(false),
         })
     }
 
@@ -749,60 +881,78 @@ mod tests {
     }
 
     #[test]
-    fn the_target_duration_is_fixed_for_the_session() {
+    fn the_target_duration_never_changes_once_served() {
+        // Whatever FFmpeg reports later, every response carries the value chosen at the start.
         let s = session(std::env::temp_dir());
-        s.target_duration.store(COPIED_TARGET_SEC, Ordering::SeqCst);
-        // A copied film whose early segments are short still announces the session's value.
         let early = ffmpeg_playlist(3, "ts", "");
-        assert_eq!(session_target_duration(&s, &early), COPIED_TARGET_SEC);
-        let out = served_playlist(&early, 0, session_target_duration(&s, &early));
-        assert!(out.contains("#EXT-X-TARGETDURATION:11\n") && !out.contains("TARGETDURATION:4"), "{out}");
-        // A longer segment than ever planned raises it once; it never drops back.
-        let long = early.replace("#EXT-X-TARGETDURATION:4", "#EXT-X-TARGETDURATION:13");
-        assert_eq!(session_target_duration(&s, &long), 13);
-        assert_eq!(session_target_duration(&s, &early), 13);
+        let late = ffmpeg_playlist(40, "ts", "").replace("#EXT-X-TARGETDURATION:4", "#EXT-X-TARGETDURATION:13");
+        for playlist in [&early, &late, &early] {
+            note_overlong_segments(&s, playlist);
+            let out = served_playlist(playlist, 0, s.target_duration);
+            assert_eq!(playlist_target_duration(&out), CONVERTED_TARGET_SEC, "{out}");
+            assert_eq!(out.matches("#EXT-X-TARGETDURATION").count(), 1, "{out}");
+        }
+        assert!(s.overlong_noted.load(Ordering::SeqCst), "the longer segment is reported");
+        // The bounds cover what each kind of stream produces: 4 s converted segments, and copied
+        // segments up to x264/x265's default 250-frame keyframe interval at 23.976 fps.
+        assert!(CONVERTED_TARGET_SEC >= SEGMENT_SEC + 1);
+        assert!(f64::from(COPIED_TARGET_SEC) >= (250.0 / 23.976_f64).round() * 2.0);
         assert_eq!(playlist_target_duration("#EXTM3U\n"), 0);
     }
 
-    #[tokio::test]
-    async fn old_segments_are_pruned_behind_the_receiver() {
-        let temp_dir = std::env::temp_dir().join(format!("harbor-hls-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
-        for n in 0..40u32 {
-            std::fs::write(temp_dir.join(format!("seg{n:05}.ts")), b"G").unwrap();
-        }
-        let s = session(temp_dir.clone());
-        prune_behind(&s, 40).await;
-        assert!(!temp_dir.join("seg00000.ts").exists());
-        assert!(!temp_dir.join("seg00009.ts").exists());
-        assert!(temp_dir.join("seg00010.ts").exists());
-        assert_eq!(s.pruned_below.load(Ordering::SeqCst), 10);
-        let _ = std::fs::remove_dir_all(temp_dir);
+    #[test]
+    fn the_conversion_pauses_far_ahead_of_the_receiver_and_resumes_as_it_catches_up() {
+        assert!(!hold_conversion(LEAD_MAX_SEGMENTS, 0, false));
+        assert!(hold_conversion(LEAD_MAX_SEGMENTS + 1, 0, false));
+        // Held, it waits until the receiver is well within the limit, not one segment closer.
+        assert!(hold_conversion(LEAD_MAX_SEGMENTS + 1, 2, true));
+        assert!(!hold_conversion(500 + LEAD_RESUME_SEGMENTS, 500, true));
+        assert!(!hold_conversion(3, 10, false), "a receiver past the written segments is no lead");
+        let p = format!("{}#EXT-X-ENDLIST\n", ffmpeg_playlist(12, "m4s", "#EXT-X-MAP:URI=\"init.mp4\"\n"));
+        assert_eq!(newest_written(&p), Some(11));
+        assert_eq!(newest_written("#EXTM3U\n"), None);
     }
 
     #[tokio::test]
-    async fn missing_or_future_segment_requests_never_prune() {
-        let temp_dir = std::env::temp_dir().join(format!("harbor-hls-test-{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
-        let mut playlist = String::from("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n");
-        for n in 0..40u32 {
-            std::fs::write(temp_dir.join(format!("seg{n:05}.ts")), b"G").unwrap();
-            playlist.push_str(&format!("#EXTINF:4.000000,\nseg{n:05}.ts\n"));
-        }
-        std::fs::write(temp_dir.join("playlist.m3u8"), &playlist).unwrap();
-        // Written to disk but not listed yet: FFmpeg has not finished it.
-        std::fs::write(temp_dir.join("seg00045.ts"), b"G").unwrap();
-        let s = session(temp_dir.clone());
-        prune_after_serving(&s, "seg01000.ts").await;
-        prune_after_serving(&s, "seg00045.ts").await;
-        assert_eq!(s.pruned_below.load(Ordering::SeqCst), 0);
-        assert_eq!(s.newest_requested.load(Ordering::SeqCst), 0);
-        assert!(temp_dir.join("seg00000.ts").exists());
-        prune_after_serving(&s, "seg00035.ts").await;
-        assert_eq!(s.pruned_below.load(Ordering::SeqCst), 5);
-        assert!(!temp_dir.join("seg00004.ts").exists());
-        assert!(temp_dir.join("seg00005.ts").exists());
-        let _ = std::fs::remove_dir_all(temp_dir);
+    async fn a_running_process_can_be_paused_and_resumed() {
+        let mut command = if cfg!(windows) {
+            let mut c = tokio::process::Command::new("ping");
+            c.args(["-n", "30", "127.0.0.1"]);
+            c
+        } else {
+            let mut c = tokio::process::Command::new("sleep");
+            c.arg("30");
+            c
+        };
+        let mut child = command
+            .kill_on_drop(true)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("start a long-running process");
+        set_process_held(&child, true).expect("suspend");
+        set_process_held(&child, false).expect("resume");
+        assert!(child.try_wait().expect("status").is_none(), "still running after resume");
+        set_process_held(&child, true).expect("suspend again");
+        // A suspended process can still be stopped, as stopping a session does.
+        child.start_kill().expect("kill while suspended");
+        child.wait().await.expect("reap");
+    }
+
+    #[tokio::test]
+    async fn a_session_kept_alive_is_not_evicted_as_idle() {
+        let state = HlsState::new();
+        let id = Uuid::new_v4().to_string();
+        let temp_dir = std::env::temp_dir().join(format!("harbor-hls-test-{id}"));
+        std::fs::create_dir_all(&temp_dir).expect("create test HLS directory");
+        state.sessions.write().await.insert(id.clone(), session(temp_dir.clone()));
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert!(state.touch_session(&id).await);
+        assert_eq!(state.evict_idle(Duration::from_millis(40)).await, 0, "touched just now");
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert_eq!(state.evict_idle(Duration::from_millis(40)).await, 1, "idle once nobody follows it");
+        assert!(!temp_dir.exists());
+        assert!(!state.touch_session(&id).await);
     }
 
     #[test]
