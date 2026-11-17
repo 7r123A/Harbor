@@ -1,4 +1,4 @@
-import { ArrowDownToLine, Ban, Bookmark, Check, MoreHorizontal, RotateCw, X } from "lucide-react";
+import { ArrowDownToLine, Check, MoreHorizontal, RotateCw, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { Meta } from "@/lib/cinemeta";
@@ -89,14 +89,10 @@ export function HeroActionOverflow({
   onWatched,
   watchedMark = false,
   showSync = false,
-  inWatchlist = false,
-  onToggleWatchlist,
   listItem = null,
   simkl = null,
   anilist = null,
   pmdb = null,
-  canDrop = false,
-  onDrop,
 }: {
   meta: Meta;
   isFav: boolean;
@@ -108,14 +104,10 @@ export function HeroActionOverflow({
   onWatched?: () => void;
   watchedMark?: boolean;
   showSync?: boolean;
-  inWatchlist?: boolean;
-  onToggleWatchlist?: () => void;
   listItem?: ListItemInput | null;
   simkl?: { harborId: string; type: "movie" | "series" } | null;
   anilist?: { harborId: string } | null;
   pmdb?: { harborId: string; type: "movie" | "series" } | null;
-  canDrop?: boolean;
-  onDrop?: () => void;
 }) {
   const t = useT();
   const { openPicker } = useView();
@@ -182,21 +174,6 @@ export function HeroActionOverflow({
           >
             {showSync && (
               <>
-                <Item
-                  icon={
-                    inWatchlist ? (
-                      <Check size={14} strokeWidth={2.4} />
-                    ) : (
-                      <Bookmark size={14} strokeWidth={2} />
-                    )
-                  }
-                  label={inWatchlist ? t("In library") : t("Save to library")}
-                  active={inWatchlist}
-                  onClick={() => {
-                    onToggleWatchlist?.();
-                    setMenu(null);
-                  }}
-                />
                 {simkl && (
                   <SimklMenuItems
                     harborId={simkl.harborId}
@@ -260,17 +237,6 @@ export function HeroActionOverflow({
                 active={watchedMark}
                 onClick={() => {
                   onWatched?.();
-                  setMenu(null);
-                }}
-              />
-            )}
-            {canDrop && (
-              <Item
-                icon={<Ban size={14} strokeWidth={2.1} />}
-                label={t("Drop show")}
-                danger
-                onClick={() => {
-                  onDrop?.();
                   setMenu(null);
                 }}
               />

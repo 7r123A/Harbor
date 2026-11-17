@@ -10,7 +10,6 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Ban, Check, Plus } from "lucide-react";
 import { Play } from "@/components/icons/play-filled";
 import { animePlayEpisode } from "./detail/anime-play-episode";
 import {
@@ -99,7 +98,7 @@ import {
 } from "@/lib/manual-watched";
 import { useTogether } from "@/lib/together/provider";
 import { useTrakt } from "@/lib/trakt/provider";
-import { noteLocalImdbId, toggleWatchlist, useInWatchlist } from "@/lib/watchlist";
+import { noteLocalImdbId, useInWatchlist } from "@/lib/watchlist";
 import {
   pullWatchProgressFromNuvio,
   pullWatchedItemsFromNuvio,
@@ -149,6 +148,7 @@ import { AddToAnilistButton } from "./detail/add-to-anilist-button";
 import { AddToMalButton } from "@/components/mal/add-to-mal-button";
 import { AddToSimklButton } from "./detail/add-to-simkl-button";
 import { AddToPmdbButton } from "./detail/add-to-publicmetadb-button";
+import { LibraryActionButton } from "./detail/library-action-button";
 import { getLocalCache, saveLocalCache } from "@/lib/simkl/activities";
 import { simklRequest } from "@/lib/simkl/client";
 import { CollectionRow } from "./detail/collection-row";
@@ -2803,55 +2803,37 @@ function DetailContent({
                     </button>
                   </PlayModeHint>
                 )}
-                {actionStage < 2 && (
-                  <HoverTooltip
-                    label={
-                      isNuvio
-                        ? t("Synced to Nuvio Cloud")
-                        : traktConnected
-                          ? t("Synced to Trakt")
-                          : t("Saved locally. Connect Trakt in Settings to sync.")
-                    }
-                    align="center"
-                    className="shrink-0"
-                  >
-                    <button
-                      type="button"
-                      onClick={() =>
-                        toggleWatchlist({
-                          id: meta.id,
-                          type: meta.type,
-                          name: title || meta.name,
-                          poster: poster,
-                          imdbId: detail?.imdbId,
-                          background: meta.background,
-                          logo: ownLogo || meta.logo,
-                          description: meta.description,
-                          releaseInfo: meta.releaseInfo,
-                          imdbRating: meta.imdbRating,
-                          genres: meta.genres,
-                          posterShape:
-                            ((meta as unknown as Record<string, unknown>).posterShape as
-                              | "POSTER"
-                              | "SQUARE"
-                              | "LANDSCAPE") || "POSTER",
-                        })
-                      }
-                      className={`flex h-12 items-center gap-2.5 whitespace-nowrap rounded-full px-6 text-[15px] font-medium transition-[transform,background-color] duration-200 active:scale-[0.98] ${
-                        inWatchlist
-                          ? "bg-ink/15 text-ink hover:bg-ink/20"
-                          : "bg-canvas/80 text-ink hover:bg-canvas/95"
-                      }`}
-                    >
-                      <PopIcon
-                        active={inWatchlist}
-                        activeIcon={<Check size={18} strokeWidth={2.4} />}
-                        inactiveIcon={<Plus size={18} strokeWidth={2} />}
-                      />
-                      {inWatchlist ? t("In library") : t("Save to library")}
-                    </button>
-                  </HoverTooltip>
-                )}
+                <LibraryActionButton
+                  input={{
+                    id: meta.id,
+                    type: meta.type,
+                    name: title || meta.name,
+                    poster: poster,
+                    imdbId: detail?.imdbId,
+                    background: meta.background,
+                    logo: ownLogo || meta.logo,
+                    description: meta.description,
+                    releaseInfo: meta.releaseInfo,
+                    imdbRating: meta.imdbRating,
+                    genres: meta.genres,
+                    posterShape:
+                      ((meta as unknown as Record<string, unknown>).posterShape as
+                        | "POSTER"
+                        | "SQUARE"
+                        | "LANDSCAPE") || "POSTER",
+                    animeId: isAnime ? (animeCanonicalId ?? meta.id) : null,
+                  }}
+                  inWatchlist={inWatchlist}
+                  canDrop={canDropTitle}
+                  onDrop={() => setDropConfirmOpen(true)}
+                  syncLabel={
+                    isNuvio
+                      ? t("Synced to Nuvio Cloud")
+                      : traktConnected
+                        ? t("Synced to Trakt")
+                        : t("Saved locally. Connect Trakt in Settings to sync.")
+                  }
+                />
                 {actionStage < 2 && animeIdentity && (
                   <AddToAnilistButton
                     harborId={animeCanonicalId ?? meta.id}
@@ -2877,16 +2859,6 @@ function DetailContent({
                     title={title || meta.name}
                     type={meta.type === "movie" ? "movie" : "series"}
                   />
-                )}
-                {actionStage < 2 && canDropTitle && (
-                  <button
-                    type="button"
-                    onClick={() => setDropConfirmOpen(true)}
-                    className="flex h-12 items-center gap-2.5 rounded-full border border-danger/30 bg-danger/10 px-5 text-[15px] font-medium text-danger transition-[transform,background-color,border-color] duration-200 hover:bg-danger/15 active:scale-[0.98]"
-                  >
-                    <Ban size={17} strokeWidth={2.1} />
-                    {t("Drop show")}
-                  </button>
                 )}
                 {!liveContext && (
                   <RateButton
@@ -2920,27 +2892,6 @@ function DetailContent({
                     onWatched={markThisMovieWatched}
                     showSync={actionStage >= 2}
                     listItem={listSeed}
-                    inWatchlist={inWatchlist}
-                    onToggleWatchlist={() =>
-                      toggleWatchlist({
-                        id: meta.id,
-                        type: meta.type,
-                        name: title || meta.name,
-                        poster: poster,
-                        imdbId: detail?.imdbId,
-                        background: meta.background,
-                        logo: ownLogo || meta.logo,
-                        description: meta.description,
-                        releaseInfo: meta.releaseInfo,
-                        imdbRating: meta.imdbRating,
-                        genres: meta.genres,
-                        posterShape:
-                          ((meta as unknown as Record<string, unknown>).posterShape as
-                            | "POSTER"
-                            | "SQUARE"
-                            | "LANDSCAPE") || "POSTER",
-                      })
-                    }
                     simkl={{
                       harborId: isAnime ? (animeCanonicalId ?? meta.id) : meta.id,
                       type: meta.type === "movie" ? "movie" : "series",
@@ -2950,8 +2901,6 @@ function DetailContent({
                       harborId: isAnime ? (animeCanonicalId ?? meta.id) : meta.id,
                       type: meta.type === "movie" ? "movie" : "series",
                     }}
-                    canDrop={canDropTitle}
-                    onDrop={() => setDropConfirmOpen(true)}
                   />
                 ) : (
                   <>
