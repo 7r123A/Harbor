@@ -1,3 +1,4 @@
+import { markPlaybackTrace } from "@/lib/perf/playback-trace";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import type { PlayerBridge } from "@/lib/player/bridge";
 import { cloudWriteId } from "@/lib/stremio";
@@ -135,6 +136,7 @@ export function useBridgeLoad(params: {
         !src.startFromZero &&
         src.startPositionMs == null &&
         (resumePlaybackRef.current || resumePromptRef.current);
+      if (shouldResolveResume) markPlaybackTrace(src.playbackTraceId, "resume-start");
       const resumePromise = !shouldResolveResume
         ? Promise.resolve({ ms: 0, fromRemote: false, finished: false })
         : resolveStartMs({
@@ -146,6 +148,7 @@ export function useBridgeLoad(params: {
       let resolved: Awaited<typeof resumePromise>;
       try {
         resolved = await resumePromise;
+        if (shouldResolveResume) markPlaybackTrace(src.playbackTraceId, "resume-ready");
       } catch (e) {
         if (isCurrent()) console.warn("[player] resume lookup failed", e);
         return;
@@ -177,6 +180,9 @@ export function useBridgeLoad(params: {
         resumePromptRef.current &&
         startSec > RESUME_PROMPT_MIN_SEC &&
         !guestInRoom;
+      if (eligibleForPrompt || (!guestInRoom && (hasExplicitStart ? startSec > 0 : startSec > 5))) {
+        markPlaybackTrace(src.playbackTraceId, "resume.position-pending");
+      }
       try {
         await bridge.load({
           url: playUrl,
@@ -258,7 +264,11 @@ export function useBridgeLoad(params: {
     ackRef.current?.(action);
   };
 
-  const clearPendingSeek = () => setPendingSeekSec(null);
+  const clearPendingSeek = () => {
+    // Called only after the bridge reports the requested playback position.
+    markPlaybackTrace(src.playbackTraceId, "resume.position-confirmed");
+    setPendingSeekSec(null);
+  };
 
   return {
     pendingResumeSec: readyLoadKey === sourceKey ? pendingResumeSec : null,

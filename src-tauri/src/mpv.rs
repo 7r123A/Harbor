@@ -2436,7 +2436,13 @@ fn spawn_event_loop(
                     } = &event
                     {
                         if let Some(log) = &log {
-                            let _ = log.try_send(format!("[{prefix}] {level}: {text}"));
+                            let wall_ms = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis();
+                            let _ = log.try_send(format!(
+                                "[wall_ms={wall_ms}] [{prefix}] {level}: {text}"
+                            ));
                             #[cfg(windows)]
                             if let (Some(resumed_at), Some(kind)) = (
                                 resume_trace.last_resumed_at,
