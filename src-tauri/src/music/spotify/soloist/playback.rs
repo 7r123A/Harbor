@@ -29,9 +29,6 @@ struct Current {
     loaded: bool,
     ended: bool,
     displaced: bool,
-    // A single-track subprocess can briefly advertise Spotify's *next*
-    // autoplay URI while exiting. Do not let it displace Harbor's track.
-    awaiting_process_exit: bool,
     paused: bool,
     anchor_ms: f64,
     timestamp_ms: u64,
@@ -111,19 +108,29 @@ fn payload(message: Message) -> Option<Value> {
     serde_json::from_str(message.to_text().ok()?).ok()
 }
 async fn authenticate(socket: &mut Socket) -> Result<(), String> {
-    let message = tokio::time::timeout(Duration::from_secs(3), socket.next())
-        .await
-        .map_err(|_| "Soloist authentication timed out")?
-        .ok_or("Soloist disconnected before authentication")?
-        .map_err(|_| "Soloist authentication failed")?;
-    let auth = payload(message).ok_or("Invalid Soloist authentication event")?;
-    if auth["type"] != "auth_state" {
-        return Err("Soloist did not report authentication state".into());
+    // A fresh daemon first reports logged_in=false while its stored session
+    // restores; give the login a short window instead of failing the command.
+    let decided = tokio::time::timeout(Duration::from_secs(3), async {
+        while let Some(frame) = socket.next().await {
+            let frame = frame.map_err(|_| "Soloist authentication failed".to_owned())?;
+            let Some(auth) = payload(frame) else {
+                continue;
+            };
+            if auth["type"] != "auth_state" {
+                continue;
+            }
+            if auth["logged_in"] == true {
+                return Ok(());
+            }
+        }
+        Err("Soloist closed its WebSocket".to_owned())
+    })
+    .await;
+    match decided {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(error),
+        Err(_) => Err("Pair Harbor Soloist from the official Spotify app before playing.".into()),
     }
-    if auth["logged_in"] != true {
-        return Err("Pair Harbor Soloist from the official Spotify app before playing.".into());
-    }
-    Ok(())
 }
 /// Reuse a private native control connection instead of establishing a new
 /// WebSocket for every volume-slider update. All commands remain ordered.
@@ -215,6 +222,11 @@ fn set_playback_paused(current: &mut Current, paused: bool) {
     current.speed = if paused { 0.0 } else { 1.0 };
     current.paused = paused;
 }
+/// While paused, only a stopped anchor is trusted. A stray moving sync must
+/// not unfreeze Harbor's timer; an explicit seek still arrives with speed 0.
+fn should_apply_position_sync(current: &Current, event: &Value) -> bool {
+    !current.paused || event["position"]["speed"].as_f64().unwrap_or(0.0) <= 0.0
+}
 /// A changed Spotify URI does not imply natural completion. Soloist sends
 /// track_changed for manual skips and remote actions too; only an idle state
 /// at the known track end can produce Harbor's EOF/queue advance.
@@ -227,13 +239,6 @@ enum TrackTransition {
 }
 
 fn track_transition(current: &Current, event: &Value) -> TrackTransition {
-    track_transition_for_mode(current, event, super::single_track_mode())
-}
-fn track_transition_for_mode(
-    current: &Current,
-    event: &Value,
-    single_track: bool,
-) -> TrackTransition {
     let kind = event["type"].as_str().unwrap_or("");
     if current.ended {
         return TrackTransition::Ignore;
@@ -243,27 +248,6 @@ fn track_transition_for_mode(
     // This grace period is only for displacement; matching track and EOF events
     // are still processed normally.
     let starting = (now_ms() / 1000).saturating_sub(current.started_at) < 3;
-    if single_track {
-        // In single-track mode Soloist's own process exit is the only EOF.
-        // It may publish idle or a transient device state before the last
-        // audio buffer has finished, so never cut Harbor's track short.
-        if kind == "device_changed" {
-            return TrackTransition::Ignore;
-        }
-        if kind != "track_changed" && kind != "playback_state" {
-            return TrackTransition::Ignore;
-        }
-        if event["item"]["uri"].as_str() == Some(current.uri.as_str()) {
-            return TrackTransition::Same;
-        }
-        if kind == "playback_state" && event["status"] == "idle" {
-            return TrackTransition::Ignore;
-        }
-        // Soloist can report an unrelated Spotify autoplay item even in
-        // --single-track mode just before it terminates. This is not an
-        // external takeover: only process exit is authoritative for EOF.
-        return TrackTransition::Ignore;
-    }
     if kind == "device_changed" {
         return if !starting && current.loaded && event["is_active"] == false {
             TrackTransition::Displaced
@@ -281,6 +265,19 @@ fn track_transition_for_mode(
             TrackTransition::Ignore
         };
     }
+    // Soloist can stall at the very end of a track: it reports buffering for
+    // the same URI and never reaches idle. Treat buffering at the known end
+    // as EOF so Harbor's queue never waits forever (the rule the Volumio
+    // Soloist plugin uses for its queue mode too). Mid-track buffering stays
+    // a normal state so the UI can show the stall without advancing.
+    if kind == "playback_state"
+        && event["status"] == "buffering"
+        && current.loaded
+        && current.duration > 0.0
+        && position(current) >= current.duration - 1.5
+    {
+        return TrackTransition::NaturalEnd;
+    }
     if event["item"]["uri"].as_str() == Some(current.uri.as_str()) {
         return TrackTransition::Same;
     }
@@ -290,11 +287,15 @@ fn track_transition_for_mode(
         return TrackTransition::Ignore;
     }
     if kind == "playback_state" {
+        // Soloist can stall at the very end of a track: it reports buffering
+        // and never reaches idle. Treat buffering at the known end as EOF so
+        // Harbor's queue never waits forever (same rule the Volumio plugin
+        // uses for its queue mode).
         if event["status"] == "idle" && event["item"]["uri"].is_null() {
             return if current.duration > 0.0 && position(current) >= current.duration - 1.5 {
                 TrackTransition::NaturalEnd
             } else {
-                TrackTransition::Ignore
+                TrackTransition::Displaced
             };
         }
         if event["item"]["uri"].as_str().is_none() {
@@ -319,14 +320,6 @@ fn track_transition_for_mode(
     }
 }
 
-fn is_stray_single_track_item(current: &Current, event: &Value) -> bool {
-    matches!(
-        event["type"].as_str(),
-        Some("track_changed" | "playback_state")
-    ) && event["item"]["uri"]
-        .as_str()
-        .is_some_and(|uri| uri != current.uri)
-}
 enum Action {
     Loaded(MusicTrack),
     Pause(MusicTrack, bool),
@@ -347,12 +340,6 @@ fn process(app: &AppHandle, generation: u64, event: &Value) {
             return;
         };
         let kind = event["type"].as_str().unwrap_or("");
-        if super::single_track_mode()
-            && current.loaded
-            && is_stray_single_track_item(current, event)
-        {
-            current.awaiting_process_exit = true;
-        }
         match kind {
             "track_changed" | "playback_state" => match track_transition(current, event) {
                 TrackTransition::NaturalEnd => {
@@ -372,7 +359,6 @@ fn process(app: &AppHandle, generation: u64, event: &Value) {
                     current.speed = 0.0;
                     actions.push(Action::Displaced(current.track.clone()));
                 }
-                TrackTransition::Same if current.awaiting_process_exit => {}
                 TrackTransition::Same => {
                     if !current.loaded {
                         current.loaded = true;
@@ -388,47 +374,30 @@ fn process(app: &AppHandle, generation: u64, event: &Value) {
                     if kind == "playback_state" {
                         mark_listening(current);
                         update_position(current, &event["position"]);
-                        let status = event["status"].as_str().unwrap_or("");
-                        if super::single_track_mode() && status == "buffering" {
-                            // Freeze the clock during buffering but don't
-                            // display a premature pause at the song boundary.
-                            current.speed = 0.0;
-                            actions
-                                .push(Action::Position(current.track.clone(), position(current)));
-                        } else if !(super::single_track_mode() && status == "idle") {
-                            set_playback_paused(current, status != "playing");
-                            actions.push(Action::Pause(current.track.clone(), current.paused));
-                            actions
-                                .push(Action::Position(current.track.clone(), position(current)));
-                        }
+                        set_playback_paused(current, event["status"] != "playing");
+                        actions.push(Action::Pause(current.track.clone(), current.paused));
+                        actions.push(Action::Position(current.track.clone(), position(current)));
                     }
                 }
                 TrackTransition::Ignore => {}
             },
-            "playback_changed"
-                if current.loaded && !current.ended && !current.awaiting_process_exit =>
-            {
+            "playback_changed" if current.loaded && !current.ended => {
                 if let Some(status) = event["status"].as_str() {
                     if status == "playing" || status == "paused" || status == "idle" {
                         mark_listening(current);
-                        if super::single_track_mode() && status == "idle" {
-                            // Wait for successful process exit, not its
-                            // pre-end idle/crossfade notification.
+                        let finished_at_end = status == "idle"
+                            && current.duration > 0.0
+                            && position(current) >= current.duration - 1.5;
+                        if finished_at_end {
+                            current.ended = true;
+                            actions.push(Action::End(
+                                current.track.clone(),
+                                current.started_at,
+                                current.listened_seconds,
+                            ));
                         } else {
-                            let finished_at_end = status == "idle"
-                                && current.duration > 0.0
-                                && position(current) >= current.duration - 1.5;
-                            if finished_at_end {
-                                current.ended = true;
-                                actions.push(Action::End(
-                                    current.track.clone(),
-                                    current.started_at,
-                                    current.listened_seconds,
-                                ));
-                            } else {
-                                set_playback_paused(current, status != "playing");
-                                actions.push(Action::Pause(current.track.clone(), current.paused));
-                            }
+                            set_playback_paused(current, status != "playing");
+                            actions.push(Action::Pause(current.track.clone(), current.paused));
                         }
                     }
                 }
@@ -441,12 +410,12 @@ fn process(app: &AppHandle, generation: u64, event: &Value) {
                 current.speed = 0.0;
                 actions.push(Action::Displaced(current.track.clone()));
             }
-            "position_sync"
-                if current.loaded && !current.ended && !current.awaiting_process_exit =>
-            {
+            "position_sync" if current.loaded && !current.ended => {
                 mark_listening(current);
-                update_position(current, &event["position"]);
-                actions.push(Action::Position(current.track.clone(), position(current)));
+                if should_apply_position_sync(current, event) {
+                    update_position(current, &event["position"]);
+                    actions.push(Action::Position(current.track.clone(), position(current)));
+                }
             }
             "volume_changed" if current.loaded && !current.ended => {
                 if let Some(value) = event["volume"].as_f64() {
@@ -554,84 +523,10 @@ fn fail(app: &AppHandle, generation: u64, message: &str) {
     };
     emit(app, &track, "player-failure", json!({"reason":message}));
 }
-/// Single-track mode exits normally after the *last* audio buffer. Trust
-/// exit code 0, not Spotify's independent Connect queue or a coarse timer.
-fn finish_single_track(app: &AppHandle, generation: u64, exit_code: i32) {
-    if exit_code != 0 {
-        fail(
-            app,
-            generation,
-            if exit_code == 10 {
-                "The Soloist build has expired. Install a current Soloist build."
-            } else {
-                "Soloist single-track playback exited unexpectedly. Check pairing and the installed build."
-            },
-        );
-        return;
-    }
-    let finished = {
-        let mut guard = watch().lock();
-        if guard.generation != generation {
-            return;
-        }
-        let Some(current) = guard.current.as_mut() else {
-            return;
-        };
-        if current.ended {
-            return;
-        }
-        if !current.loaded {
-            drop(guard);
-            fail(
-                app,
-                generation,
-                "Soloist stopped before the requested track loaded.",
-            );
-            return;
-        }
-        mark_listening(current);
-        current.ended = true;
-        (
-            current.track.clone(),
-            current.started_at,
-            current.listened_seconds,
-            current.duration,
-        )
-    };
-    let (track, started_at, listened, duration) = finished;
-    if duration > 0.0 {
-        property(app, &track, "time-pos", json!(duration));
-    }
-    emit(app, &track, "end-file", json!({"reason":"eof"}));
-    if crate::music::engine::should_scrobble(listened, track.duration_seconds as f64) {
-        let app = app.clone();
-        tokio::spawn(async move {
-            if let Ok(true) = crate::music::commands::scrobble_track(&app, &track, started_at).await
-            {
-                let _ = app.emit("music://lastfm", json!({"status":"scrobbled"}));
-            }
-        });
-    }
-}
-// Do not depend on the WebSocket being closed at precisely the same time as
-// the single-track subprocess. Soloist may leave its socket alive after audio
-// finishes, so checking only *after* socket.next() breaks leaves Harbor stuck
-// on the last song and never advances its own queue.
-fn process_single_track_exit(app: &AppHandle, generation: u64) -> bool {
-    if let Some(code) = super::single_track_exit() {
-        finish_single_track(app, generation, code);
-        true
-    } else {
-        false
-    }
-}
 async fn listen(app: AppHandle, generation: u64) {
     let mut failures = 0u8;
     loop {
         if watch().lock().generation != generation {
-            return;
-        }
-        if process_single_track_exit(&app, generation) {
             return;
         }
         if let Ok(mut socket) = connect(&app).await {
@@ -650,20 +545,12 @@ async fn listen(app: AppHandle, generation: u64) {
                         },
                         _ => break,
                     },
-                    _ = clock.tick() => {
-                        if process_single_track_exit(&app, generation) {
-                            return;
-                        }
-                        tick(&app, generation);
-                    },
+                    _ = clock.tick() => tick(&app, generation),
                 }
                 if watch().lock().generation != generation {
                     return;
                 }
             }
-        }
-        if process_single_track_exit(&app, generation) {
-            return;
         }
         failures = failures.saturating_add(1);
         if failures >= 12 {
@@ -702,7 +589,6 @@ fn observe(app: AppHandle, track: MusicTrack, uri: String) {
         loaded: false,
         ended: false,
         displaced: false,
-        awaiting_process_exit: false,
         paused: false,
         anchor_ms: 0.0,
         timestamp_ms: now_ms(),
@@ -720,6 +606,11 @@ fn percent(volume: f64) -> u8 {
     }
     (volume.clamp(0.0, 1.0) * 100.0).round() as u8
 }
+/// Harbor owns the queue: one long-lived Soloist daemon plays each track on
+/// request with `play { uri }`, and the end-of-track handoff pauses it before
+/// Harbor advances. Per-track processes (`--single-track`) were abandoned:
+/// Soloist kills those after 60 seconds of pause and their session restore is
+/// unreliable, which broke pause and resume.
 pub async fn play(app: &AppHandle, track: MusicTrack, volume: f64) -> Result<(), String> {
     let _handoff = playback_handoff().lock().await;
     let uri = track
@@ -731,13 +622,35 @@ pub async fn play(app: &AppHandle, track: MusicTrack, volume: f64) -> Result<(),
         })
         .ok_or("Spotify track is missing a valid URI")?
         .to_owned();
-    // Spotify Connect mode carries an autonomous recommendation queue.
-    // Harbor must own queue advancement, so play this URI in a dedicated
-    // single-track subprocess instead (Spotify-supported --single-track).
-    super::start_harbor_track(app, &uri, percent(volume)).await?;
-    observe(app.clone(), track, uri);
-    // The process starts its URI and volume itself. Never send play(uri) or
-    // activate a separate Connect context that could restore Spotify autoplay.
+    super::start_daemon(app).await?;
+    // A restarted daemon restores its stored session asynchronously. Wait for
+    // the login before issuing commands, or `play {uri}` is rejected.
+    let data = super::data_dir(app)?;
+    let mut logged_in = false;
+    for _ in 0..30 {
+        if !super::running() {
+            return Err(
+                "Soloist exited during startup. Check pairing and the installed build.".into(),
+            );
+        }
+        if let Some(url) = super::endpoint(&data) {
+            if let Ok((true, _)) = super::auth_state(&url).await {
+                logged_in = true;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(120)).await;
+    }
+    if !logged_in {
+        return Err("Open the Spotify app and pair Harbor Soloist once.".into());
+    }
+    command(app, "activate", json!({})).await?;
+    command(app, "set_volume", json!({"volume":percent(volume)})).await?;
+    observe(app.clone(), track, uri.clone());
+    if let Err(error) = command(app, "play", json!({"uri":uri})).await {
+        cancel();
+        return Err(error);
+    }
     Ok(())
 }
 fn owns_output() -> bool {
@@ -751,10 +664,28 @@ pub async fn pause(app: &AppHandle, paused: bool) -> Result<(), String> {
     if !owns_output() {
         return Ok(());
     }
+    let _handoff = playback_handoff().lock().await;
     let result = command(app, if paused { "pause" } else { "play" }, json!({})).await;
     if result.is_ok() {
         // An explicit pause or resume supersedes a prior video auto-pause.
         video_paused().store(false, Ordering::SeqCst);
+        // Mirror the command result immediately instead of waiting for the
+        // next position anchor, so the progress timer cannot keep running
+        // between the pause and Soloist's event.
+        let update = {
+            let mut guard = watch().lock();
+            guard.current.as_mut().and_then(|current| {
+                if !current.loaded || current.ended {
+                    return None;
+                }
+                set_playback_paused(current, paused);
+                Some((current.track.clone(), current.paused, position(current)))
+            })
+        };
+        if let Some((track, value, at)) = update {
+            property(app, &track, "pause", json!(value));
+            property(app, &track, "time-pos", json!(at));
+        }
     }
     result
 }
@@ -792,11 +723,6 @@ pub async fn stop(app: &AppHandle, resume: bool) -> Result<(), String> {
     let owned = owns_output();
     super::capture::release_process();
     cancel();
-    if super::single_track_mode() {
-        // Does not advertise a Connect device and has no autonomous queue.
-        // Terminate only Harbor's own process, not another Spotify device.
-        return super::terminate_managed();
-    }
     if !owned || !running() {
         return Ok(());
     }
@@ -846,50 +772,6 @@ pub fn shutdown() {
 mod tests {
     use super::*;
     #[test]
-    fn single_track_waits_for_process_exit_instead_of_early_connect_idle() {
-        let mut current = test_current();
-        current.anchor_ms = 179_000.0;
-        current.timestamp_ms = now_ms();
-        current.speed = 0.0;
-        let idle = json!({"type":"playback_state","status":"idle","item":null});
-        assert_eq!(
-            track_transition_for_mode(&current, &idle, false),
-            TrackTransition::NaturalEnd
-        );
-        assert_eq!(
-            track_transition_for_mode(&current, &idle, true),
-            TrackTransition::Ignore
-        );
-        let new_song = json!({"type":"track_changed","item":{"uri":"spotify:track:unrelated"}});
-        assert_eq!(
-            track_transition_for_mode(&current, &new_song, false),
-            TrackTransition::NaturalEnd
-        );
-        // In a single-track process, Soloist can advertise the next Spotify
-        // autoplay URI just before exit. Never mark Harbor as displaced:
-        // doing that suppresses the process-exit EOF and stalls the queue.
-        assert_eq!(
-            track_transition_for_mode(&current, &new_song, true),
-            TrackTransition::Ignore
-        );
-        assert!(is_stray_single_track_item(&current, &new_song));
-        let mut waiting = test_current();
-        waiting.awaiting_process_exit = true;
-        assert!(waiting.awaiting_process_exit);
-        assert!(!is_stray_single_track_item(
-            &current,
-            &json!({
-                "type":"playback_state","item":{"uri":"spotify:track:one"}
-            })
-        ));
-        let matching = json!({"type":"playback_state","status":"playing",
-            "item":{"uri":"spotify:track:one"}});
-        assert_eq!(
-            track_transition_for_mode(&current, &matching, true),
-            TrackTransition::Same
-        );
-    }
-    #[test]
     fn volume_is_clamped() {
         assert_eq!(percent(-4.0), 0);
         assert_eq!(percent(2.0), 100);
@@ -918,7 +800,6 @@ mod tests {
             loaded: true,
             ended: false,
             displaced: false,
-            awaiting_process_exit: false,
             paused: false,
             anchor_ms: 42_000.0,
             timestamp_ms: now_ms(),
@@ -947,6 +828,45 @@ mod tests {
         let mut current = test_current();
         current.anchor_ms = 185_000.0;
         assert_eq!(position(&current), 180.0);
+    }
+    #[test]
+    fn a_moving_position_sync_does_not_unfreeze_a_paused_track() {
+        let mut current = test_current();
+        current.paused = true;
+        current.speed = 0.0;
+        let moving = json!({
+            "type":"position_sync",
+            "position":{"position_ms":60_000,"timestamp_ms":now_ms(),"speed":1.0}
+        });
+        assert!(!should_apply_position_sync(&current, &moving));
+        let frozen = json!({
+            "type":"position_sync",
+            "position":{"position_ms":42_000,"timestamp_ms":now_ms(),"speed":0.0}
+        });
+        assert!(should_apply_position_sync(&current, &frozen));
+        current.paused = false;
+        assert!(should_apply_position_sync(&current, &moving));
+    }
+    #[test]
+    fn buffering_at_the_track_end_advances_the_queue() {
+        let mut near_end = test_current();
+        near_end.anchor_ms = 179_900.0;
+        near_end.timestamp_ms = now_ms();
+        near_end.speed = 0.0;
+        let buffering = json!({
+            "type":"playback_state", "status":"buffering",
+            "item":{"uri":"spotify:track:one"}
+        });
+        assert_eq!(
+            track_transition(&near_end, &buffering),
+            TrackTransition::NaturalEnd
+        );
+        // Mid-track buffering is a normal stall, not an end.
+        let mut mid = test_current();
+        mid.anchor_ms = 42_000.0;
+        mid.timestamp_ms = now_ms();
+        mid.speed = 0.0;
+        assert_eq!(track_transition(&mid, &buffering), TrackTransition::Same);
     }
 
     #[test]
