@@ -38,6 +38,7 @@ import { useTilt } from "@/lib/use-tilt";
 import { observe } from "@/lib/visibility";
 import { LocalDot } from "@/components/local-badge";
 import { Poster, useLocalizedPoster } from "./poster";
+import { FriendReviewBadges } from "@/components/ratings/friend-review-badges";
 import { useProfiledEffect } from "./profiled";
 import { ListingBadgeStrip } from "./listing-badge-strip";
 import {
@@ -572,6 +573,7 @@ const PosterCard = memo(function PosterCard({
           }`}
         >
           {posterOverlays}
+          <FriendReviewBadges metaId={meta.id} kind={meta.type} />
         </Poster>
         {settings.cardHoverShine && (
           <div

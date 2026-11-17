@@ -210,6 +210,7 @@ import { useAnimeCharacters } from "./detail/use-anime-characters";
 import { TraktComments } from "./detail/trakt-comments";
 import { LetterboxdPanel } from "./detail/letterboxd-panel";
 import { RateButton } from "@/components/ratings/rate-button";
+import { TitleReviewsEntry } from "@/components/ratings/title-reviews-entry";
 import {
   chainedPrimaryRating,
   detailImdbRating,
@@ -2695,7 +2696,7 @@ export function DetailView({
               <MovieReleaseCountdowns detail={detail} />
               <div
                 ref={actionRowRef}
-                className={`mt-9 flex ${awardsInDescription ? "" : "w-fit max-w-full "}items-center gap-3 [&>*]:shrink-0`}
+                className={`mt-9 flex ${awardsInDescription ? "" : "w-full max-w-full "}items-center gap-3 [&>*]:shrink-0`}
               >
                 {upcoming ? (
                   <UpcomingCta detail={detail} onTry={() => smartPlay()} />
@@ -2983,6 +2984,15 @@ export function DetailView({
                         ? t("Open in Anime")
                         : t("Open in Movies")}
                   </button>
+                )}
+                {!liveContext && (
+                  <TitleReviewsEntry
+                    className="ms-auto"
+                    target={ratingTarget(
+                      { id: meta.id, name: title || meta.name, poster: poster },
+                      isAnime ? "anime" : isSeries ? "series" : "movie",
+                    )}
+                  />
                 )}
               </div>
             </div>
