@@ -5,10 +5,12 @@ import { isPlaybackRedirectCandidate } from "../src/lib/streams/playback-redirec
 import { isLivePlaybackSrc } from "../src/lib/player/live-src.ts";
 
 const original = "https://addon.debridio.com/fixture/play";
+const meteorUrl = "https://meteorfortheweebs.midnightignite.me/fixture/play";
 const finalUrl = "https://cdn.example.org/fixture.mkv";
 
 test("only exact supported HTTPS origins are eligible", () => {
   assert.equal(isPlaybackRedirectCandidate(original), true);
+  assert.equal(isPlaybackRedirectCandidate(meteorUrl), true);
   assert.equal(isPlaybackRedirectCandidate("https://mediafusion.elfhosted.com/play"), true);
   for (const url of [
     finalUrl,
@@ -16,6 +18,9 @@ test("only exact supported HTTPS origins are eligible", () => {
     "https://addon.debridio.com.attacker.test/play",
     "https://user:secret@addon.debridio.com/play",
     "https://addon.debridio.com:8443/play",
+    "https://meteorfortheweebs.midnightignite.me.attacker.test/play",
+    "https://another.midnightignite.me/play",
+    "http://meteorfortheweebs.midnightignite.me/play",
     "not a URL",
   ]) {
     assert.equal(isPlaybackRedirectCandidate(url), false, url);
@@ -58,6 +63,10 @@ test("ordinary CDN links, header-bound streams, web playback and cancelled reque
 test("uses a resolved URL, with fallback for unavailable native support and invalid targets", async () => {
   const args = { url: original, signal: new AbortController().signal };
   assert.equal(await redirectHarness(async () => finalUrl).render(args), finalUrl);
+  assert.equal(
+    await redirectHarness(async () => finalUrl).render({ ...args, url: meteorUrl }),
+    finalUrl,
+  );
   for (const result of [
     null,
     "file:///private",
@@ -224,12 +233,14 @@ test("manual Torrentio selection supersedes a pending AIOStreams resolution", as
   );
 });
 
-test("instant-play and downloads keep their existing paths", async () => {
+test("automatic selection resolves redirects while downloads keep their existing path", async () => {
   const automatic = pickerHarness();
   automatic.api.onPlay({ url: original }, true, false, true);
   await flushPromises();
-  assert.equal(automatic.lookups, 0);
-  assert.equal(automatic.opened[0].url, original);
+  assert.equal(automatic.lookups, 1);
+  assert.equal(automatic.opened[0].url, finalUrl);
+  assert.equal(automatic.opened[0].historyUrl, original);
+  assert.equal(automatic.history[0].url, original);
   assert.equal(automatic.opened[0].autoFired, true);
   const download = pickerHarness("download");
   download.api.onPlay({ url: original });
@@ -249,6 +260,25 @@ test("a cancelled manual selection never opens or saves the resolved stream", as
   );
   h.api.onPlay({ url: original });
   await flushPromises();
+  h.api.abortResolve();
+  finish(finalUrl);
+  await flushPromises();
+  assert.equal(h.opened.length, 0);
+  assert.equal(h.history.length, 0);
+});
+
+test("cancelling automatic selection during redirect resolution never opens the result", async () => {
+  const h = pickerHarness();
+  let finish!: (url: string) => void;
+  h.redirect(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  h.api.onPlay({ url: original }, true, false, true);
+  await flushPromises();
+  assert.equal(h.lookups, 1);
   h.api.abortResolve();
   finish(finalUrl);
   await flushPromises();

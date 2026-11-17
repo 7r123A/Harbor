@@ -10,7 +10,8 @@ export function isPlaybackRedirectCandidate(url: string): boolean {
       !parsed.port &&
       (parsed.hostname === "addon.debridio.com" ||
         parsed.hostname === "sooti.click" ||
-        parsed.hostname === "mediafusion.elfhosted.com")
+        parsed.hostname === "mediafusion.elfhosted.com" ||
+        parsed.hostname === "meteorfortheweebs.midnightignite.me")
     );
   } catch {
     return false;

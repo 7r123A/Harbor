@@ -289,12 +289,14 @@ export function usePickHandler({
       }
       debridFailStreakRef.current = 0;
       let playUrl = r.data.url;
-      if (intent !== "download" && !autoPickRef.current && r.via === "direct") {
+      if (intent !== "download" && r.via === "direct") {
+        markPlaybackTrace(playbackTraceId, "redirect-start");
         playUrl = await resolvePlaybackRedirect({
           url: playUrl,
           headers: r.data.headers,
           signal: ac.signal,
         });
+        markPlaybackTrace(playbackTraceId, "redirect-ready");
         if (ac.signal.aborted) return;
       }
       markPlaybackTrace(playbackTraceId, "resolve-ready");

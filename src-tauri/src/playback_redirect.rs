@@ -11,7 +11,12 @@ fn candidate(url: &Url) -> bool {
         && url.port().is_none()
         && matches!(
             url.host_str(),
-            Some("addon.debridio.com" | "sooti.click" | "mediafusion.elfhosted.com")
+            Some(
+                "addon.debridio.com"
+                    | "sooti.click"
+                    | "mediafusion.elfhosted.com"
+                    | "meteorfortheweebs.midnightignite.me"
+            )
         )
 }
 
@@ -126,7 +131,11 @@ mod tests {
 
     #[test]
     fn only_measured_https_addon_origins_are_candidates() {
-        for host in ["addon.debridio.com", "mediafusion.elfhosted.com"] {
+        for host in [
+            "addon.debridio.com",
+            "mediafusion.elfhosted.com",
+            "meteorfortheweebs.midnightignite.me",
+        ] {
             assert!(candidate(
                 &Url::parse(&format!("https://{host}/fixture/play")).unwrap()
             ));
