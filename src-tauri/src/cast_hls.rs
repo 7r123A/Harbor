@@ -17,6 +17,12 @@ const SEGMENT_WAIT_MAX: Duration = Duration::from_secs(25);
 const SEGMENT_POLL_INTERVAL: Duration = Duration::from_millis(150);
 /// Segments this far behind the newest one a receiver asked for are deleted.
 const SEGMENTS_KEPT_BEHIND: u32 = 30;
+/// Length FFmpeg aims for. A converted stream has a keyframe every 2 s, so its segments are this
+/// long and its target duration never grows.
+const SEGMENT_SEC: u32 = 4;
+/// Target duration of a stream whose video is copied: its own keyframes decide where segments
+/// end, and x264/x265 place one at least every 250 frames (10.4 s at 23.976 fps).
+const COPIED_TARGET_SEC: u32 = 11;
 
 #[derive(Clone, Debug)]
 struct Variant {
@@ -35,6 +41,9 @@ struct HlsSession {
     newest_requested: AtomicU32,
     /// Segments below this number were deleted; the playlist stops listing them.
     pruned_below: AtomicU32,
+    /// EXT-X-TARGETDURATION served for the whole session. It only grows if FFmpeg ever reports a
+    /// longer segment, which the floor chosen at registration is there to prevent.
+    target_duration: AtomicU32,
 }
 
 fn touch(session: &HlsSession) {
@@ -97,6 +106,11 @@ impl HlsState {
             process: Mutex::new(Some(child)),
             newest_requested: AtomicU32::new(0),
             pruned_below: AtomicU32::new(0),
+            target_duration: AtomicU32::new(if job.plan.summary.video == "copy" {
+                COPIED_TARGET_SEC
+            } else {
+                SEGMENT_SEC
+            }),
         });
         self.sessions.write().await.insert(id.clone(), session);
         eprintln!("[cast-hls] session {} registered, seek={:.1}s", id, job.seek_sec);
@@ -224,59 +238,130 @@ async fn handle_master(
     playlist_response(master_playlist(&session.variant))
 }
 
-/// FFmpeg writes an event playlist that grows from the transcode's first segment. Receivers
-/// otherwise join an open playlist near its live edge, which skips the start of the film and, with
-/// a transcode running faster than real time, keeps skipping ahead.
-fn start_at_beginning(playlist: &str) -> String {
-    if playlist.contains("#EXT-X-START") {
-        return playlist.to_string();
-    }
-    match playlist.find("#EXT-X-TARGETDURATION") {
-        Some(at) => {
-            let mut out = String::with_capacity(playlist.len() + 48);
-            out.push_str(&playlist[..at]);
-            out.push_str("#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n");
-            out.push_str(&playlist[at..]);
-            out
-        }
-        None => playlist.to_string(),
-    }
+/// Tags that describe the media segment after them, so they belong to its block.
+fn is_segment_tag(line: &str) -> bool {
+    [
+        "#EXTINF",
+        "#EXT-X-BYTERANGE",
+        "#EXT-X-DISCONTINUITY",
+        "#EXT-X-PROGRAM-DATE-TIME",
+        "#EXT-X-GAP",
+        "#EXT-X-BITRATE",
+        "#EXT-X-DATERANGE",
+    ]
+    .iter()
+    .any(|tag| line.starts_with(tag))
 }
 
-/// The playlist minus deleted segments. An EVENT playlist may never drop a segment, so once
-/// pruning starts it is served as a plain live playlist whose media sequence starts at the oldest
-/// segment still on disk; EXT-X-START (added after this) then points there instead of at a gap.
-fn retained_playlist(playlist: &str, oldest_kept: u32) -> String {
-    let mut out = String::with_capacity(playlist.len());
-    let mut block = String::new();
+/// Tags that hold for every later segment until replaced: they outlive the segment they precede.
+fn is_carried_tag(line: &str) -> bool {
+    line.starts_with("#EXT-X-MAP") || line.starts_with("#EXT-X-KEY")
+}
+
+/// FFmpeg's target duration, or 0 when the playlist has none yet.
+fn playlist_target_duration(playlist: &str) -> u32 {
+    playlist
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("#EXT-X-TARGETDURATION:"))
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// The variant playlist exactly as receivers get it, on every request of the session.
+///
+/// FFmpeg writes an EVENT playlist, but segments well behind the receiver are deleted (see
+/// [`prune_behind`]) and an EVENT playlist may never drop one. Switching the type once pruning
+/// starts would change the playlist under a playing receiver, which strict players answer with an
+/// error or a reset, so the playlist is always served the same way:
+/// - as a live playlist with no EXT-X-PLAYLIST-TYPE, from the first response on;
+/// - with EXT-X-MEDIA-SEQUENCE naming the first segment still listed;
+/// - with the session's fixed EXT-X-TARGETDURATION (RFC 8216 6.2.1: it must not change);
+/// - with EXT-X-START at offset 0, so receivers begin at the oldest listed segment instead of
+///   joining near the live edge, which skips the film's start and, with a conversion running
+///   faster than real time, keeps skipping ahead;
+/// - keeping EXT-X-MAP and EXT-X-KEY even when the segment they preceded is gone, since every
+///   later segment still depends on them.
+fn served_playlist(playlist: &str, oldest_kept: u32, target_duration: u32) -> String {
+    let mut header: Vec<String> = Vec::new();
+    let mut body = String::with_capacity(playlist.len());
+    let mut block: Vec<&str> = Vec::new();
+    let mut carried: Vec<&str> = Vec::new();
+    let mut first_kept: Option<u32> = None;
+    let mut listed_any = false;
+    let mut ended = false;
     let mut in_segments = false;
-    for line in playlist.lines() {
-        if !in_segments {
-            if line.starts_with("#EXT-X-PLAYLIST-TYPE") || line.starts_with("#EXT-X-MEDIA-SEQUENCE") {
-                continue;
-            }
-            if line.starts_with("#EXTINF") {
-                in_segments = true;
-                out.push_str(&format!("#EXT-X-MEDIA-SEQUENCE:{oldest_kept}\n"));
-            } else {
-                out.push_str(line);
-                out.push('\n');
-                continue;
-            }
-        }
-        if line.starts_with("#EXT-X-ENDLIST") {
-            out.push_str(line);
-            out.push('\n');
+    for raw in playlist.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
             continue;
         }
-        block.push_str(line);
-        block.push('\n');
-        if !line.starts_with('#') && !line.trim().is_empty() {
-            if segment_number(line.trim()).is_none_or(|n| n >= oldest_kept) {
-                out.push_str(&block);
+        if !in_segments && !is_segment_tag(line) && line.starts_with('#') {
+            if line.starts_with("#EXT-X-PLAYLIST-TYPE")
+                || line.starts_with("#EXT-X-MEDIA-SEQUENCE")
+                || line.starts_with("#EXT-X-START")
+            {
+                continue;
             }
-            block.clear();
+            if line.starts_with("#EXT-X-TARGETDURATION") {
+                header.push(format!("#EXT-X-TARGETDURATION:{target_duration}"));
+            } else {
+                header.push(line.to_string());
+            }
+            continue;
         }
+        in_segments = true;
+        if line.starts_with("#EXT-X-ENDLIST") {
+            ended = true;
+            continue;
+        }
+        if line.starts_with('#') {
+            block.push(line);
+            continue;
+        }
+        // A URI line closes the segment its tags described.
+        let number = segment_number(line);
+        if number.is_none_or(|n| n >= oldest_kept) {
+            if !listed_any {
+                listed_any = true;
+                first_kept = number;
+            }
+            for tag in carried.drain(..).chain(block.drain(..)) {
+                body.push_str(tag);
+                body.push('\n');
+            }
+            body.push_str(line);
+            body.push('\n');
+        } else {
+            for tag in block.drain(..) {
+                if is_carried_tag(tag) {
+                    // Only the latest of each kind still applies.
+                    carried.retain(|kept| kept.split(':').next() != tag.split(':').next());
+                    carried.push(tag);
+                }
+            }
+        }
+    }
+    let sequence = format!("#EXT-X-MEDIA-SEQUENCE:{}", first_kept.unwrap_or(oldest_kept));
+    let target_at = header.iter().position(|line| line.starts_with("#EXT-X-TARGETDURATION"));
+    // The media sequence must precede the first segment and every tag of it, EXT-X-MAP included,
+    // so it goes right after the target duration.
+    match target_at {
+        Some(at) => {
+            header.insert(at + 1, sequence);
+            header.insert(at, "#EXT-X-START:TIME-OFFSET=0,PRECISE=YES".into());
+        }
+        None => {
+            let at = header.len().min(1);
+            header.insert(at, sequence);
+            header.insert(at, format!("#EXT-X-TARGETDURATION:{target_duration}"));
+            header.insert(at, "#EXT-X-START:TIME-OFFSET=0,PRECISE=YES".into());
+        }
+    }
+    let mut out = header.join("\n");
+    out.push('\n');
+    out.push_str(&body);
+    if ended {
+        out.push_str("#EXT-X-ENDLIST\n");
     }
     out
 }
@@ -293,8 +378,8 @@ async fn handle_variant(State(state): State<HlsState>, Path(id): Path<String>) -
         if let Ok(content) = tokio::fs::read_to_string(&playlist_path).await {
             if content.contains("#EXTINF") {
                 let pruned = session.pruned_below.load(Ordering::SeqCst);
-                let listed = if pruned > 0 { retained_playlist(&content, pruned) } else { content };
-                return playlist_response(start_at_beginning(&listed));
+                let target = session_target_duration(&session, &content);
+                return playlist_response(served_playlist(&content, pruned, target));
             }
         }
         if std::time::Instant::now() >= deadline {
@@ -305,6 +390,12 @@ async fn handle_variant(State(state): State<HlsState>, Path(id): Path<String>) -
         }
         tokio::time::sleep(SEGMENT_POLL_INTERVAL).await;
     }
+}
+
+/// The session's target duration, raised (never lowered) to cover FFmpeg's own.
+fn session_target_duration(session: &HlsSession, playlist: &str) -> u32 {
+    let reported = playlist_target_duration(playlist);
+    session.target_duration.fetch_max(reported, Ordering::SeqCst).max(reported)
 }
 
 /// True once FFmpeg has exited without producing what a receiver is waiting for.
@@ -496,11 +587,10 @@ async fn spawn_continuous_ffmpeg(job: &CastJob, temp_dir: &std::path::Path) -> R
     } else {
         cmd.args(["-hls_segment_type", "mpegts"]);
     }
+    cmd.arg("-hls_time").arg(SEGMENT_SEC.to_string());
     cmd.args([
             "-f",
             "hls",
-            "-hls_time",
-            "4",
             "-hls_playlist_type",
             "event",
             "-hls_list_size",
@@ -550,7 +640,24 @@ mod tests {
             process: tokio::sync::Mutex::new(None),
             newest_requested: AtomicU32::new(0),
             pruned_below: AtomicU32::new(0),
+            target_duration: AtomicU32::new(SEGMENT_SEC),
         })
+    }
+
+    fn first_segment(playlist: &str) -> &str {
+        playlist.lines().find(|line| !line.starts_with('#')).unwrap_or("")
+    }
+
+    /// FFmpeg's EVENT playlist with segments `0..count` of `extension`.
+    fn ffmpeg_playlist(count: u32, extension: &str, header: &str) -> String {
+        let mut p = format!(
+            "#EXTM3U\n#EXT-X-VERSION:{}\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-INDEPENDENT-SEGMENTS\n{header}",
+            if extension == "m4s" { 7 } else { 3 }
+        );
+        for n in 0..count {
+            p.push_str(&format!("#EXTINF:4.004000,\nseg{n:05}.{extension}\n"));
+        }
+        p
     }
 
     #[test]
@@ -571,25 +678,90 @@ mod tests {
         assert_eq!(finished_segment_type("seg00001.ts", &[0x47, 0x40]), Some("video/mp2t"));
         assert_eq!(finished_segment_type("seg00001.ts", &[0, 0]), None);
         // FFmpeg's fMP4 playlist: pruning keeps the header map every segment depends on.
-        let mut p = String::from(
-            "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-MAP:URI=\"init.mp4\"\n",
-        );
-        for n in 0..14 {
-            p.push_str(&format!("#EXTINF:4.004000,\nseg{n:05}.m4s\n"));
-        }
-        let out = start_at_beginning(&retained_playlist(&p, 10));
-        assert!(out.contains("#EXT-X-MAP:URI=\"init.mp4\"\n#EXT-X-MEDIA-SEQUENCE:10\n"), "{out}");
-        assert!(!out.contains("seg00009.m4s") && out.contains("seg00010.m4s"), "{out}");
+        let p = ffmpeg_playlist(14, "m4s", "#EXT-X-MAP:URI=\"init.mp4\"\n");
+        let out = served_playlist(&p, 10, 4);
+        assert!(out.contains("#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:4.004000,\nseg00010.m4s\n"), "{out}");
+        assert!(out.contains("#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:10\n"), "{out}");
+        assert!(out.find("MEDIA-SEQUENCE") < out.find("#EXT-X-MAP"), "the sequence precedes the map: {out}");
+        assert!(!out.contains("seg00009.m4s"), "{out}");
     }
 
     #[test]
-    fn event_playlists_start_at_the_first_segment() {
-        let p = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXTINF:4.0,\nseg00000.ts\n";
-        let out = start_at_beginning(p);
-        assert!(out.contains("#EXT-X-VERSION:3\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n#EXT-X-TARGETDURATION:4"));
-        assert_eq!(start_at_beginning(&out), out);
+    fn playlists_start_at_the_first_listed_segment() {
+        let out = served_playlist(&ffmpeg_playlist(1, "ts", ""), 0, 4);
+        assert!(
+            out.starts_with(
+                "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n"
+            ),
+            "{out}"
+        );
+        // Serving a served playlist again changes nothing: one EXT-X-START, one media sequence.
+        assert_eq!(served_playlist(&out, 0, 4), out);
         assert_eq!(segment_number("seg00042.ts"), Some(42));
         assert_eq!(segment_number("playlist.m3u8"), None);
+    }
+
+    #[test]
+    fn the_playlist_type_never_changes_during_a_session() {
+        // Strict receivers (AVPlayer, the Chromecast receiver) reset when a reloaded playlist
+        // changes type, so the first response must already look like the pruned ones.
+        let before = served_playlist(&ffmpeg_playlist(12, "ts", ""), 0, 4);
+        let after = served_playlist(&ffmpeg_playlist(80, "ts", ""), 45, 4);
+        for out in [&before, &after] {
+            assert!(!out.contains("PLAYLIST-TYPE"), "{out}");
+            assert_eq!(out.matches("#EXT-X-MEDIA-SEQUENCE").count(), 1, "{out}");
+            assert_eq!(out.matches("#EXT-X-TARGETDURATION:4\n").count(), 1, "{out}");
+            assert_eq!(out.matches("#EXT-X-START").count(), 1, "{out}");
+        }
+        assert!(before.contains("#EXT-X-MEDIA-SEQUENCE:0\n") && first_segment(&before) == "seg00000.ts", "{before}");
+        assert!(after.contains("#EXT-X-MEDIA-SEQUENCE:45\n") && first_segment(&after) == "seg00045.ts", "{after}");
+        assert_eq!(before.matches("#EXTINF").count(), 12);
+        assert_eq!(after.matches("#EXTINF").count(), 35);
+        // The finished film keeps its end marker after the last segment.
+        let ended = served_playlist(&format!("{}#EXT-X-ENDLIST\n", ffmpeg_playlist(80, "ts", "")), 45, 4);
+        assert!(ended.ends_with("seg00079.ts\n#EXT-X-ENDLIST\n"), "{ended}");
+    }
+
+    #[test]
+    fn the_media_sequence_names_the_first_segment_actually_listed() {
+        // FFmpeg's playlist can lag the pruning boundary by a segment or two.
+        let mut p = ffmpeg_playlist(0, "ts", "");
+        for n in 12..20u32 {
+            p.push_str(&format!("#EXTINF:4.004000,\r\nseg{n:05}.ts\r\n"));
+        }
+        let out = served_playlist(&p, 10, 4);
+        assert!(out.contains("#EXT-X-MEDIA-SEQUENCE:12\n"), "{out}");
+        assert!(!out.contains('\r'), "{out}");
+    }
+
+    #[test]
+    fn header_tags_of_a_dropped_segment_carry_over() {
+        // A map or key in front of a deleted segment still applies to the ones after it.
+        let mut p = ffmpeg_playlist(0, "m4s", "#EXT-X-MAP:URI=\"init.mp4\"\n");
+        p.push_str("#EXTINF:4.0,\nseg00000.m4s\n");
+        p.push_str("#EXT-X-MAP:URI=\"init1.mp4\"\n#EXTINF:4.0,\nseg00001.m4s\n");
+        p.push_str("#EXT-X-MAP:URI=\"init2.mp4\"\n#EXTINF:4.0,\nseg00002.m4s\n#EXTINF:4.0,\nseg00003.m4s\n");
+        let out = served_playlist(&p, 3, 4);
+        assert!(out.contains("#EXT-X-MAP:URI=\"init2.mp4\"\n#EXTINF:4.0,\nseg00003.m4s\n"), "{out}");
+        assert!(!out.contains("init1.mp4"), "only the latest map of the dropped ones still applies: {out}");
+        // The header's own map is never dropped.
+        assert!(out.contains("#EXT-X-MAP:URI=\"init.mp4\"\n"), "{out}");
+    }
+
+    #[test]
+    fn the_target_duration_is_fixed_for_the_session() {
+        let s = session(std::env::temp_dir());
+        s.target_duration.store(COPIED_TARGET_SEC, Ordering::SeqCst);
+        // A copied film whose early segments are short still announces the session's value.
+        let early = ffmpeg_playlist(3, "ts", "");
+        assert_eq!(session_target_duration(&s, &early), COPIED_TARGET_SEC);
+        let out = served_playlist(&early, 0, session_target_duration(&s, &early));
+        assert!(out.contains("#EXT-X-TARGETDURATION:11\n") && !out.contains("TARGETDURATION:4"), "{out}");
+        // A longer segment than ever planned raises it once; it never drops back.
+        let long = early.replace("#EXT-X-TARGETDURATION:4", "#EXT-X-TARGETDURATION:13");
+        assert_eq!(session_target_duration(&s, &long), 13);
+        assert_eq!(session_target_duration(&s, &early), 13);
+        assert_eq!(playlist_target_duration("#EXTM3U\n"), 0);
     }
 
     #[tokio::test]
@@ -612,15 +784,10 @@ mod tests {
     async fn missing_or_future_segment_requests_never_prune() {
         let temp_dir = std::env::temp_dir().join(format!("harbor-hls-test-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&temp_dir).unwrap();
-        let mut playlist = String::from("#EXTM3U
-#EXT-X-TARGETDURATION:4
-#EXT-X-MEDIA-SEQUENCE:0
-");
+        let mut playlist = String::from("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n");
         for n in 0..40u32 {
             std::fs::write(temp_dir.join(format!("seg{n:05}.ts")), b"G").unwrap();
-            playlist.push_str(&format!("#EXTINF:4.000000,
-seg{n:05}.ts
-"));
+            playlist.push_str(&format!("#EXTINF:4.000000,\nseg{n:05}.ts\n"));
         }
         std::fs::write(temp_dir.join("playlist.m3u8"), &playlist).unwrap();
         // Written to disk but not listed yet: FFmpeg has not finished it.
@@ -640,15 +807,9 @@ seg{n:05}.ts
 
     #[test]
     fn the_playlist_never_lists_a_pruned_segment() {
-        let mut p = String::from(
-            "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n",
-        );
-        for n in 0..14 {
-            p.push_str(&format!("#EXTINF:4.000000,\nseg{n:05}.ts\n"));
-        }
-        let out = start_at_beginning(&retained_playlist(&p, 10));
+        let out = served_playlist(&ffmpeg_playlist(14, "ts", ""), 10, 4);
         assert!(!out.contains("PLAYLIST-TYPE"), "an EVENT playlist cannot drop segments: {out}");
-        assert!(out.contains("#EXT-X-MEDIA-SEQUENCE:10\n#EXTINF:4.000000,\nseg00010.ts\n"), "{out}");
+        assert!(out.contains("#EXT-X-MEDIA-SEQUENCE:10\n") && first_segment(&out) == "seg00010.ts", "{out}");
         assert!(!out.contains("seg00009.ts"), "{out}");
         assert!(out.contains("seg00013.ts") && out.contains("#EXT-X-START:TIME-OFFSET=0"), "{out}");
         assert_eq!(out.matches("#EXTINF").count(), 4);
