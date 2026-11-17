@@ -427,3 +427,31 @@ test("queue-full warning returns after a failed attempt is successfully retried"
     h.cleanup();
   }
 });
+
+test("replacement watch queued during superseded lookup flushes without waiting for polling", async () => {
+  const h = harness();
+  try {
+    let finishOld;
+    h.setLookup(
+      () =>
+        new Promise((resolve) => {
+          finishOld = resolve;
+        }),
+    );
+    h.sync.enqueueRefractWatch(movieEvent());
+    h.sync.resetRefractSync();
+    h.setKey("rfk_replacement_fixture");
+    h.setLookup(async () => [{ ids: { refract: "replacement-movie" } }]);
+    h.sync.enqueueRefractWatch(movieEvent("tmdb:movie:56"));
+    assert.equal(h.calls.length, 0);
+    finishOld([{ ids: { refract: "old-movie" } }]);
+    await tick();
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.calls[0].args[0], "rfk_replacement_fixture");
+    assert.equal(h.calls[0].args[1], "replacement-movie");
+    assert.equal(h.sync.refractStatus().pending, 0);
+    assert.equal(h.sync.refractStatus().synced, 1);
+  } finally {
+    h.cleanup();
+  }
+});
