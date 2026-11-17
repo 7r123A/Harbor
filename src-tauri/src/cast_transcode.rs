@@ -887,7 +887,10 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
             let needed = h264_level(v.width, v.height, fps, rate_kbps, None);
             hls_video_codec = h264_codec_string(needed.max(v.level.unwrap_or(0)));
         } else if let Some(v) = video.filter(|v| v.codec == "hevc") {
-            output.extend(["-bsf:v".into(), "hevc_mp4toannexb".into()]);
+            // No Annex B filter here: copied H.265 goes into fragmented MP4 over HLS, where the
+            // `hvc1` sample entry keeps the parameter sets in its hvcC record and the samples
+            // length-prefixed (ISO/IEC 14496-15 8.3.2). The MPEG-TS muxer (the continuous DLNA
+            // stream) inserts the Annex B conversion it needs by itself.
             let needed = hevc_level(v.width, v.height, fps);
             hls_video_codec = hevc_codec_string(v, needed.max(v.level.unwrap_or(0)));
             hls_fmp4 = true;
@@ -1168,7 +1171,7 @@ mod tests {
         let options = CastOptions { hevc_native: true, quality: "4k".into(), audio_mode: "original".into(), ..Default::default() };
         let plan = plan(Some(&probe), &options, &caps);
         let args = plan.output.join(" ");
-        assert!(args.contains("-c:v copy -bsf:v hevc_mp4toannexb"), "{args}");
+        assert!(args.contains("-c:v copy") && !args.contains("hevc_mp4toannexb"), "fMP4 keeps hvcC samples: {args}");
         assert!(args.contains("-c:a copy"), "{args}");
         assert_eq!(plan.hls_codecs, "hvc1.2.4.L150.B0,ec-3", "3840x1606 at 23.976 fits level 5");
         assert!(plan.hls_fmp4, "H.265 travels in fragmented MP4 over HLS");
