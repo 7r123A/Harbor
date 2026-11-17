@@ -35,7 +35,12 @@ function harness() {
       if (offline) throw new Error("offline");
       calls.push({ kind: "episode", args });
     },
-    RefractApiError: class RefractApiError extends Error {},
+    RefractApiError: class RefractApiError extends Error {
+      constructor(status) {
+        super(`HTTP ${status}`);
+        this.status = status;
+      }
+    },
   };
   const file = readFileSync(new URL("../src/lib/refract/sync.ts", import.meta.url), "utf8");
   const output = ts.transpileModule(file, {
@@ -54,6 +59,7 @@ function harness() {
   );
   return {
     sync: module.exports,
+    apiError: (status) => new client.RefractApiError(status),
     db,
     calls,
     setPrimary: (v) => {
@@ -453,5 +459,31 @@ test("replacement watch queued during superseded lookup flushes without waiting 
     assert.equal(h.sync.refractStatus().synced, 1);
   } finally {
     h.cleanup();
+  }
+});
+
+
+test("HTTP 409 remains retryable while 404 and 422 are terminal", async () => {
+  for (const status of [409, 404, 422]) {
+    const h = harness();
+    try {
+      let attempts = 0;
+      h.setMovieWrite(async (...args) => {
+        attempts += 1;
+        if (attempts === 1) throw h.apiError(status);
+        h.calls.push({ kind: "movie", args });
+      });
+      h.sync.enqueueRefractWatch(movieEvent());
+      await tick();
+      assert.equal(h.sync.refractStatus().pending, status === 409 ? 1 : 0);
+      assert.equal(h.sync.refractStatus().failed, status === 409 ? 0 : 1);
+      h.sync.retryRefractSync();
+      await tick();
+      assert.equal(h.calls.length, status === 409 ? 1 : 0);
+      assert.equal(h.sync.refractStatus().pending, 0);
+      assert.equal(h.sync.refractStatus().failed, status === 409 ? 0 : 1);
+    } finally {
+      h.cleanup();
+    }
   }
 });
