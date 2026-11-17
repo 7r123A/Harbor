@@ -1,0 +1,109 @@
+import type { RatingMediaType, PublicRating } from "@/lib/ratings/types";
+
+export type QuickSort = "recent" | "liked" | "commented" | "highest" | "lowest";
+
+export type QuickReview = {
+  /** Missing on older backends that do not expose review interactions. */
+  id?: string;
+  contentType: RatingMediaType;
+  contentId: string;
+  score: number;
+  title?: string;
+  posterUrl?: string;
+  review?: string;
+  spoiler?: boolean;
+  createdAt: string;
+  updatedAt: string;
+  reactions: { count: number; viewerReacted: boolean };
+  comments: { count: number };
+};
+
+export function reviewFromRating(rating: PublicRating): QuickReview {
+  return {
+    id: rating.reviewId,
+    contentType: rating.mediaType,
+    contentId: rating.itemKey,
+    score: rating.score,
+    title: rating.title,
+    posterUrl: rating.posterUrl,
+    review: rating.review,
+    spoiler: rating.spoiler,
+    createdAt: rating.at,
+    updatedAt: rating.at,
+    reactions: {
+      count: rating.reactions?.count ?? 0,
+      viewerReacted: rating.reactions?.mine ?? false,
+    },
+    comments: { count: rating.comments?.count ?? 0 },
+  };
+}
+
+/** Order a loaded page without mutating it. Server paths use the matching cursor sort. */
+export function sortQuickReviews(items: QuickReview[], sort: QuickSort): QuickReview[] {
+  const list = items.slice();
+  const recent = (a: QuickReview, b: QuickReview) =>
+    Date.parse(b.updatedAt || b.createdAt) - Date.parse(a.updatedAt || a.createdAt);
+  if (sort === "highest" || sort === "lowest") {
+    const dir = sort === "highest" ? -1 : 1;
+    return list.sort((a, b) => (a.score === b.score ? recent(a, b) : dir * (a.score - b.score)));
+  }
+  if (sort === "liked" || sort === "commented") {
+    const count = (row: QuickReview) =>
+      Math.max(0, (sort === "liked" ? row.reactions?.count : row.comments?.count) ?? 0);
+    return list.sort((a, b) => (count(a) === count(b) ? recent(a, b) : count(b) - count(a)));
+  }
+  return list.sort(recent);
+}
+
+/** Search, review-only filtering, and title exclusion shared by server and fallback paths. */
+export function filterQuickReviews(
+  items: QuickReview[],
+  opts: {
+    q?: string;
+    withReview?: boolean;
+    excludeContentId?: string;
+    excludeContentType?: string;
+  },
+): QuickReview[] {
+  const q = (opts.q ?? "").trim().toLowerCase();
+  return items.filter((review) => {
+    const sameTitle =
+      !!opts.excludeContentId &&
+      review.contentId === opts.excludeContentId &&
+      (!opts.excludeContentType || review.contentType === opts.excludeContentType);
+    if (sameTitle) return false;
+    if (opts.withReview && !(review.review ?? "").trim()) return false;
+    if (!q) return true;
+    return `${review.title || ""} ${review.review || ""} ${review.contentId}`
+      .toLowerCase()
+      .includes(q);
+  });
+}
+
+export function canLikeQuickReview(review: QuickReview): boolean {
+  return !!review.id;
+}
+
+/** Apply the fallback path's filter, sort, and page in the same order as the hub route. */
+export function pageQuickReviews(
+  items: QuickReview[],
+  options: {
+    q?: string;
+    withReview?: boolean;
+    excludeContentId?: string;
+    excludeContentType?: string;
+    sort: QuickSort;
+    offset: number;
+    limit: number;
+  },
+): { items: QuickReview[]; nextOffset?: number; total: number } {
+  const filtered = filterQuickReviews(items, options);
+  const sorted = sortQuickReviews(filtered, options.sort);
+  const start = Math.max(0, options.offset);
+  const end = start + Math.max(0, options.limit);
+  return {
+    items: sorted.slice(start, end),
+    nextOffset: end < sorted.length ? end : undefined,
+    total: sorted.length,
+  };
+}

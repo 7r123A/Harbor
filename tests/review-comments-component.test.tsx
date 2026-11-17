@@ -1,0 +1,150 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+import ts from "typescript";
+import { JSDOM } from "jsdom";
+import * as React from "react";
+import * as jsx from "react/jsx-runtime";
+import { createRoot } from "react-dom/client";
+
+function loadReviewComments(dependencies: Record<string, unknown>) {
+  const source = readFileSync(
+    new URL("../src/components/ratings/review-comments.tsx", import.meta.url),
+    "utf8",
+  );
+  const { outputText } = ts.transpileModule(source, {
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.CommonJS,
+      jsx: ts.JsxEmit.ReactJSX,
+    },
+  });
+  const mocks: Record<string, unknown> = {
+    react: React,
+    "react/jsx-runtime": jsx,
+    "lucide-react": { Loader2: () => null },
+    "@/lib/i18n": { useT: () => (key: string) => key },
+    ...dependencies,
+  };
+  const module = { exports: {} as Record<string, unknown> };
+  new Function("require", "module", "exports", outputText)(
+    (name: string) => {
+      assert.ok(name in mocks, `Missing mock: ${name}`);
+      return mocks[name];
+    },
+    module,
+    module.exports,
+  );
+  return module.exports as { ReviewComments: React.ComponentType<any> };
+}
+
+test("review comments show server counts, load the next cursor, and reconcile a new reply", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { url: "https://fixture.invalid" });
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
+
+  const pageCalls: Array<string | undefined> = [];
+  const countUpdates: number[] = [];
+  const { ReviewComments } = loadReviewComments({
+    "@/lib/theme-auth": { authToken: () => "fixture-token" },
+    "@/lib/ratings/quote": {
+      parseQuotedBody: (body: string) => ({ text: body }),
+      ratingQuoteLength: () => 0,
+    },
+    "@/views/profile/comment-compose": {
+      CommentCompose: ({ onSubmit }: { onSubmit: (body: string) => Promise<unknown> }) =>
+        React.createElement("button", { onClick: () => void onSubmit("A reply") }, "Post reply"),
+    },
+    "@/views/profile/profile-bits": {
+      Avatar: () => React.createElement("span"),
+      timeAgo: () => "today",
+    },
+    "@/views/profile/user-hover-card": { UserHoverCard: ({ children }: any) => children },
+    "@/lib/social/open-profile": { requestOpenProfile: () => {} },
+    "@/views/profile/text-safety": {
+      COMMENT_MAX: 1000,
+      segmentProfanity: (text: string) => [{ text, masked: false }],
+      stripUrls: (text: string) => text,
+      validateComment: () => null,
+    },
+    "@/lib/social/review-comments": {
+      loadReviewThread: async () => ({ comments: [], hasMore: false }),
+      replyToReview: async () => ({}),
+      reviewQuote: () => null,
+    },
+    "@/lib/social/review-comment-api": {
+      loadReviewCommentPage: async (_id: string, cursor?: string) => {
+        pageCalls.push(cursor);
+        return cursor
+          ? {
+              comments: [
+                { id: "c2", body: "Second reply", at: "2026-11-17", author: { handle: "friend" } },
+              ],
+              total: 3,
+            }
+          : {
+              comments: [
+                { id: "c1", body: "First reply", at: "2026-11-17", author: { handle: "friend" } },
+              ],
+              nextCursor: "cursor-2",
+              total: 3,
+            };
+      },
+      createReviewComment: async (_id: string, body: string) => ({
+        id: "c3",
+        body,
+        at: "2026-11-17",
+        author: { handle: "viewer" },
+      }),
+    },
+  });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const render = () =>
+    React.createElement(ReviewComments, {
+      handle: "friend",
+      target: { itemKey: "tt123", mediaType: "movie" },
+      score: 8,
+      reviewId: "review-1",
+      onCount: (count: number) => countUpdates.push(count),
+    });
+
+  try {
+    await React.act(async () => {
+      root.render(render());
+      await Promise.resolve();
+    });
+    assert.match(dom.window.document.body.textContent || "", /First reply/);
+    assert.equal(countUpdates.at(-1), 3);
+
+    const more = [...dom.window.document.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("Show more comments"),
+    );
+    assert.ok(more);
+    await React.act(async () => {
+      more.click();
+      await Promise.resolve();
+    });
+    assert.deepEqual(pageCalls, [undefined, "cursor-2"]);
+    assert.match(dom.window.document.body.textContent || "", /Second reply/);
+
+    const post = [...dom.window.document.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("Post reply"),
+    );
+    assert.ok(post);
+    await React.act(async () => {
+      post.click();
+      await Promise.resolve();
+    });
+    assert.match(dom.window.document.body.textContent || "", /A reply/);
+    assert.equal(countUpdates.at(-1), 4);
+  } finally {
+    await React.act(() => root.unmount());
+    dom.window.close();
+    for (const key of ["window", "document", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"])
+      Reflect.deleteProperty(globalThis, key);
+  }
+});

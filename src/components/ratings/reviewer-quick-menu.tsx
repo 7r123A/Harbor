@@ -1,12 +1,35 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Heart, Loader2, MessageSquare, Search, Star, UserPlus,
-  Users as UsersIcon, X } from "lucide-react";
+import {
+  Heart,
+  Loader2,
+  MessageSquare,
+  Search,
+  Star,
+  UserPlus,
+  Users as UsersIcon,
+  X,
+} from "lucide-react";
 import { ModalShell, useEscape, useModalExit } from "@/components/modal-shell";
 import { useT } from "@/lib/i18n";
-import { requestFriendship, friendRowState } from "@/lib/social/friend-request";
-import type { FriendRowState } from "@/lib/social/friend-request";
+import {
+  requestFriendship,
+  resolveQuickFriendship,
+  visibleQuickFriendship,
+  friendRowLabel,
+  type FriendRowState,
+  type ProfileFriendStatus,
+} from "@/lib/social/friend-request";
 import { fetchFriends, fetchPendingRequests } from "@/lib/social/friends";
 import { likeReview, unlikeReview } from "@/lib/social/review-reactions";
+import { ReviewComments } from "@/components/ratings/review-comments";
+import {
+  canLikeQuickReview,
+  pageQuickReviews,
+  reviewFromRating,
+  type QuickReview,
+  type QuickSort,
+} from "@/lib/social/quick-reviews";
+import { UserHoverCard } from "@/views/profile/user-hover-card";
 import { socialGet } from "@/lib/social/client";
 import { openDmConversation } from "@/lib/social/dm";
 import { requestOpenDm } from "@/lib/social/dm-store";
@@ -14,7 +37,6 @@ import { requestOpenProfile } from "@/lib/social/open-profile";
 import { profileMediaMeta } from "@/lib/social/profile-media-meta";
 type ProfileCardLook = Record<string, unknown> | null | undefined;
 import { fetchUserRatings } from "@/lib/social/ratings-api";
-import type { PublicRating } from "@/lib/ratings/types";
 import { currentAuthor } from "@/lib/theme-auth";
 import { useView } from "@/lib/view";
 import { Avatar, timeAgo } from "@/views/profile/profile-bits";
@@ -23,23 +45,6 @@ import { VerifiedBadge } from "@/views/account/verified-badge";
 // The review-rich profile quick menu, used from a title's User Reviews list only.
 // It is deliberately not a global replacement for opening a profile: everywhere else
 // a username still navigates, because that is what people expect there.
-
-type QuickSort = "recent" | "liked" | "commented" | "highest" | "lowest";
-
-type QuickReview = {
-  id: string;
-  contentType: string;
-  contentId: string;
-  score: number;
-  title?: string;
-  posterUrl?: string;
-  review?: string;
-  spoiler?: boolean;
-  createdAt: string;
-  updatedAt: string;
-  reactions: { count: number; viewerReacted: boolean };
-  comments: { count: number };
-};
 
 type QuickProfile = {
   handle: string;
@@ -57,6 +62,7 @@ type QuickProfile = {
   dmPolicy?: "everyone" | "friends";
   counts?: { watched?: number; friends?: number; badges?: number };
   profileCard?: ProfileCardLook;
+  friendStatus?: ProfileFriendStatus;
 };
 
 type QuickResponse = {
@@ -88,35 +94,11 @@ const SORT_LABEL: Record<QuickSort, string> = {
  */
 let quickRouteAvailable = true;
 
-function reviewFromRating(r: PublicRating): QuickReview {
-  return {
-    id: r.reviewId || `rating:${r.mediaType}:${r.itemKey}:${r.at}`,
-    contentType: r.mediaType,
-    contentId: r.itemKey,
-    score: r.score,
-    title: r.title,
-    posterUrl: r.posterUrl,
-    review: r.review,
-    spoiler: r.spoiler,
-    createdAt: r.at,
-    updatedAt: r.at,
-    reactions: { count: r.reactions?.count ?? 0, viewerReacted: r.reactions?.mine ?? false },
-    comments: { count: r.comments?.count ?? 0 },
-  };
-}
-
-/** The fallback has no engagement data, so those two sorts degrade to recency rather than lying. */
-function sortQuickReviews(items: QuickReview[], sort: QuickSort): QuickReview[] {
-  const list = items.slice();
-  const recent = (a: QuickReview, b: QuickReview) =>
-    Date.parse(b.updatedAt || b.createdAt) - Date.parse(a.updatedAt || a.createdAt);
-  if (sort === "highest" || sort === "lowest") {
-    const dir = sort === "highest" ? -1 : 1;
-    return list.sort((a, b) => (a.score === b.score ? recent(a, b) : dir * (a.score - b.score)));
-  }
-  return list.sort(recent);
-}
-
+/**
+ * The hub route sorts on the server. This ordering is the fallback's, and it must agree with the
+ * route for every option, including the two counter-based ones: an author's ratings carry reaction
+ * and comment counts, so popularity is real here rather than quietly replaced by recency.
+ */
 const PRESENCE_DOT: Record<string, string> = {
   online: "bg-emerald-400",
   away: "bg-amber-400",
@@ -125,10 +107,12 @@ const PRESENCE_DOT: Record<string, string> = {
 };
 
 function ReviewerReviewRow({
+  handle,
   review,
   onOpenTitle,
 }: {
   review: QuickReview;
+  handle: string;
   onOpenTitle: (review: QuickReview) => void;
 }) {
   const t = useT();
@@ -137,6 +121,12 @@ function ReviewerReviewRow({
   const [likes, setLikes] = useState(review.reactions?.count ?? 0);
   const [liked, setLiked] = useState(review.reactions?.viewerReacted === true);
   const [liking, setLiking] = useState(false);
+  const [threadOpen, setThreadOpen] = useState(false);
+  const [commentCount, setCommentCount] = useState(review.comments?.count ?? 0);
+  const commentTarget = useMemo(
+    () => ({ itemKey: review.contentId, mediaType: review.contentType }),
+    [review.contentId, review.contentType],
+  );
   const text = review.review ?? "";
   const hidden = review.spoiler === true && !revealed;
   const long = text.length > 260;
@@ -148,7 +138,7 @@ function ReviewerReviewRow({
           type="button"
           onClick={() => onOpenTitle(review)}
           aria-label={t("Open {title}", { title: review.title || review.contentId })}
-          className="h-[72px] w-[50px] shrink-0 overflow-hidden rounded-md bg-canvas/70"
+          className="h-[96px] w-[64px] shrink-0 overflow-hidden rounded-md bg-canvas/70"
         >
           {review.posterUrl ? (
             <img
@@ -174,15 +164,16 @@ function ReviewerReviewRow({
               {review.score}
             </span>
           </div>
-          <div className="mt-1 flex items-center gap-2 text-[12px] text-ink-subtle">
+          <div className="mt-1.5 flex flex-wrap items-center gap-2.5 text-[13px] text-ink-subtle">
             <span>{timeAgo(review.updatedAt || review.createdAt)}</span>
             <span aria-hidden>·</span>
             <button
               type="button"
               aria-pressed={liked}
               aria-label={liked ? t("Unlike this review") : t("Like this review")}
-              disabled={liking}
+              disabled={liking || !canLikeQuickReview(review)}
               onClick={async () => {
+                if (!canLikeQuickReview(review) || !review.id) return;
                 const next = !liked;
                 setLiking(true);
                 setLiked(next);
@@ -200,14 +191,16 @@ function ReviewerReviewRow({
               }}
               className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 transition-colors ${liked ? "text-accent" : "text-ink-subtle hover:text-ink"}`}
             >
-              <Heart size={12} className={liked ? "fill-current" : undefined} /> {likes}
+              <Heart size={14} className={liked ? "fill-current" : undefined} /> {likes}
             </button>
             <button
               type="button"
+              aria-expanded={threadOpen}
               aria-label={t("Comments")}
               className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-ink-subtle transition-colors hover:text-ink"
+              onClick={() => setThreadOpen((open) => !open)}
             >
-              <MessageSquare size={12} /> {review.comments?.count ?? 0}
+              <MessageSquare size={14} /> {commentCount}
             </button>
           </div>
           {text ? (
@@ -220,7 +213,7 @@ function ReviewerReviewRow({
                 {t("Contains spoilers — show review")}
               </button>
             ) : (
-              <p className="mt-1.5 whitespace-pre-line text-[12.5px] leading-relaxed text-ink-muted">
+              <p className="mt-2 whitespace-pre-line text-[13.5px] leading-relaxed text-ink-muted">
                 {long && !expanded ? `${text.slice(0, 260)}…` : text}
                 {long && (
                   <button
@@ -234,10 +227,23 @@ function ReviewerReviewRow({
               </p>
             )
           ) : (
-            <p className="mt-1.5 text-[11.5px] italic text-ink-subtle">{t("Rated without a written review")}</p>
+            <p className="mt-2 text-[12.5px] italic text-ink-subtle">
+              {t("Rated without a written review")}
+            </p>
           )}
         </div>
       </div>
+      {threadOpen && (
+        <div className="mt-3 rounded-lg bg-canvas/50 px-3 pb-3 pt-1 ring-1 ring-edge-soft">
+          <ReviewComments
+            handle={handle}
+            target={commentTarget}
+            score={review.score}
+            reviewId={review.id}
+            onCount={setCommentCount}
+          />
+        </div>
+      )}
     </article>
   );
 }
@@ -272,30 +278,36 @@ export function ReviewerQuickMenu({
   const [withReview, setWithReview] = useState(false);
   const [friend, setFriend] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [friendship, setFriendship] = useState<FriendRowState>("idle");
+  // Until the relationship is known, treat the action as settled instead of offering a
+  // duplicate request to someone who is already a friend or already asked.
+  const [friendshipKnown, setFriendshipKnown] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    void Promise.all([fetchFriends().catch(() => []), fetchPendingRequests().catch(() => [])]).then(([frs, pend]) => {
+    setFriendshipKnown(false);
+    void Promise.allSettled([fetchFriends(), fetchPendingRequests()]).then(([frs, pend]) => {
       if (!alive) return;
-      setFriendship(
-        friendRowState(handle, {
-          self: me?.handle ?? null,
-          friends: frs.map((f) => f.handle),
-          pending: pend.map((r) => r.from.handle),
-        }),
-      );
+      const relationship = resolveQuickFriendship(handle, profile?.friendStatus, {
+        self: me?.handle ?? null,
+        friends: frs.status === "fulfilled" ? frs.value.map((friend) => friend.handle) : undefined,
+        pending:
+          pend.status === "fulfilled"
+            ? pend.value.map((request) => request.from.handle)
+            : undefined,
+      });
+      setFriendship(relationship.state);
+      setFriendshipKnown(relationship.known);
     });
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handle]);
+  }, [handle, profile?.friendStatus]);
   const [debounced, setDebounced] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
   const [paging, setPaging] = useState(false);
   const [messaging, setMessaging] = useState(false);
   const [messageError, setMessageError] = useState<string | null>(null);
-  const [degraded, setDegraded] = useState(!quickRouteAvailable);
   const requestId = useRef(0);
   const fallbackRatings = useRef<QuickReview[] | null>(null);
 
@@ -338,31 +350,26 @@ export function ReviewerQuickMenu({
         }
         fallbackRatings.current = all;
       }
-      const q = debounced.toLowerCase();
-      const filtered = fallbackRatings.current.filter((review) => {
-        const sameTitle =
-          !!excludeContentId &&
-          review.contentId === excludeContentId &&
-          (!excludeContentType || review.contentType === excludeContentType);
-        if (sameTitle) return false;
-        if (!q) return true;
-        return `${review.title || ""} ${review.review || ""} ${review.contentId}`
-          .toLowerCase()
-          .includes(q);
+      const page = pageQuickReviews(fallbackRatings.current, {
+        q: debounced,
+        withReview,
+        excludeContentId,
+        excludeContentType,
+        sort,
+        offset,
+        limit: PAGE,
       });
-      const sorted = sortQuickReviews(filtered, sort);
-      const nextOffset = offset + PAGE;
       return {
         profile: (await profilePromise) as QuickProfile | null,
         reviews: {
-          items: sorted.slice(offset, nextOffset),
-          nextCursor: nextOffset < sorted.length ? `off:${nextOffset}` : undefined,
-          total: sorted.length,
+          items: page.items,
+          nextCursor: page.nextOffset == null ? undefined : `off:${page.nextOffset}`,
+          total: page.total,
           sort,
         },
       };
     },
-    [handle, debounced, sort, excludeContentId, excludeContentType],
+    [handle, debounced, sort, withReview, excludeContentId, excludeContentType],
   );
 
   const load = useCallback(
@@ -378,7 +385,6 @@ export function ReviewerQuickMenu({
             const status = (error as { status?: number }).status;
             if (status !== 404 && status !== 405) throw error;
             quickRouteAvailable = false;
-            setDegraded(true);
             return loadFallback(offset);
           })
         : loadFallback(offset);
@@ -440,185 +446,231 @@ export function ReviewerQuickMenu({
 
   const mine = !!me && (me.handle || "").toLowerCase() === handle.toLowerCase();
   const profileHandle = profile?.handle || handle;
+  const visibleFriendship = visibleQuickFriendship(friendship, friendshipKnown);
   const openFullProfile = () => {
     close();
     requestOpenProfile(profileHandle);
   };
-  const sortChoices = degraded
-    ? SORTS.filter((s) => s !== "liked" && s !== "commented")
-    : SORTS;
+  const sortChoices = SORTS;
+  const friendLabel = t(friendRowLabel(friendship === "sending" ? "sending" : visibleFriendship));
+  const friendSettled =
+    visibleFriendship === "friends" ||
+    visibleFriendship === "requested" ||
+    visibleFriendship === "blocked";
 
   return (
     <ModalShell closing={closing} onDismiss={close} width={560} labelledBy="reviewer-quick-title">
       <div className="relative flex max-h-[min(84vh,760px)] flex-col overflow-hidden">
         <div className="relative flex min-h-0 flex-1 flex-col">
-        <div className="relative h-24 w-full shrink-0 overflow-hidden bg-elevated">
-          {profile?.bannerUrl ? (
-            <img src={profile.bannerUrl} alt="" className="h-full w-full object-cover" draggable={false} />
-          ) : (
-            <div className="h-full w-full bg-gradient-to-r from-elevated to-canvas" />
-          )}
-          <button
-            type="button"
-            onClick={close}
-            aria-label={t("Close")}
-            className="absolute end-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-canvas/70 text-ink transition-colors hover:bg-canvas"
-          >
-            <X size={16} strokeWidth={2.2} />
-          </button>
-        </div>
-
-        <div className="relative shrink-0 px-4 pb-3">
-          <div className="-mt-8 flex items-end gap-3">
+          <div className="relative h-24 w-full shrink-0 overflow-hidden bg-elevated">
+            {profile?.bannerUrl ? (
+              <img
+                src={profile.bannerUrl}
+                alt=""
+                className="h-full w-full object-cover"
+                draggable={false}
+              />
+            ) : (
+              <div className="h-full w-full bg-gradient-to-r from-elevated to-canvas" />
+            )}
             <button
               type="button"
-              onClick={openFullProfile}
-              aria-label={t("Open full profile")}
-              className="shrink-0 rounded-full transition-transform enabled:hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              onClick={close}
+              aria-label={t("Close")}
+              className="absolute end-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-canvas/70 text-ink transition-colors hover:bg-canvas"
             >
-              <Avatar src={profile?.avatarUrl ?? fallback?.avatarUrl} size={64} alias={profile?.alias || fallback?.alias || handle} />
+              <X size={16} strokeWidth={2.2} />
             </button>
-            <div className="min-w-0 flex-1 pb-1">
-              <div className="flex items-center gap-1.5">
+          </div>
+
+          <div className="relative shrink-0 px-4 pb-3">
+            <div className="-mt-8 flex items-end gap-3">
+              <UserHoverCard handle={profileHandle}>
                 <button
                   type="button"
                   onClick={openFullProfile}
-                  className="min-w-0 truncate text-start text-[17.5px] font-semibold text-ink transition-colors hover:text-accent"
+                  aria-label={t("Open full profile")}
+                  className="shrink-0 rounded-full transition-transform enabled:hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 >
-                  <span id="reviewer-quick-title">{profile?.alias || fallback?.alias || handle}</span>
+                  <Avatar
+                    src={profile?.avatarUrl ?? fallback?.avatarUrl}
+                    size={64}
+                    alias={profile?.alias || fallback?.alias || handle}
+                  />
                 </button>
-                {profile?.verified && <VerifiedBadge size="sm" />}
-                {friendship === "friends" && (
+              </UserHoverCard>
+              <div className="min-w-0 flex-1 pb-1">
+                <div className="flex items-center gap-1.5">
+                  <UserHoverCard handle={profileHandle}>
+                    <button
+                      type="button"
+                      onClick={openFullProfile}
+                      className="min-w-0 truncate text-start text-[17.5px] font-semibold text-ink transition-colors hover:text-accent"
+                    >
+                      <span id="reviewer-quick-title">
+                        {profile?.alias || fallback?.alias || handle}
+                      </span>
+                    </button>
+                  </UserHoverCard>
+                  {profile?.verified && <VerifiedBadge size="sm" />}
+                  {visibleFriendship === "friends" && (
+                    <span
+                      title={t("Your friend")}
+                      aria-label={t("Your friend")}
+                      className="shrink-0 text-ink-subtle"
+                    >
+                      <UsersIcon size={13} strokeWidth={2.2} />
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 text-[13px] text-ink-subtle">
                   <span
-                    title={t("Your friend")}
-                    aria-label={t("Your friend")}
-                    className="shrink-0 text-ink-subtle"
-                  >
-                    <UsersIcon size={13} strokeWidth={2.2} />
+                    className={`h-2 w-2 rounded-full ${PRESENCE_DOT[profile?.status || "offline"] || PRESENCE_DOT.offline}`}
+                  />
+                  <span className="truncate">@{profile?.handle || handle}</span>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5 pb-1">
+                {!mine && (
+                  <span className="inline-flex" title={friendSettled ? friendLabel : undefined}>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!friendshipKnown || friendSettled) return;
+                        setFriend("sending");
+                        try {
+                          const result = await requestFriendship(profile?.handle || handle);
+                          setFriendship(result);
+                          setFriend(result === "requested" ? "sent" : "idle");
+                        } catch {
+                          setFriend("error");
+                        }
+                      }}
+                      disabled={
+                        !friendshipKnown ||
+                        friendSettled ||
+                        friend === "sending" ||
+                        friend === "sent"
+                      }
+                      aria-label={friendLabel}
+                      title={friendLabel}
+                      className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${visibleFriendship === "friends" || !friendshipKnown ? "cursor-default bg-elevated/30 text-ink-subtle opacity-55" : friendSettled ? "cursor-default bg-elevated/60 text-ink-subtle" : "bg-elevated/60 text-ink-muted hover:text-ink"}`}
+                    >
+                      {friend === "sending" ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <UserPlus size={14} strokeWidth={2.2} />
+                      )}
+                    </button>
                   </span>
                 )}
+                {!mine && (
+                  <button
+                    type="button"
+                    onClick={message}
+                    disabled={messaging}
+                    className="flex h-8 items-center gap-1.5 rounded-full bg-ink px-3 text-[12px] font-semibold text-canvas transition-transform enabled:hover:scale-[1.02] disabled:opacity-60"
+                  >
+                    {messaging ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <MessageSquare size={13} />
+                    )}
+                    {t("Message")}
+                  </button>
+                )}
               </div>
-              <div className="flex items-center gap-1.5 text-[13px] text-ink-subtle">
-                <span className={`h-2 w-2 rounded-full ${PRESENCE_DOT[profile?.status || "offline"] || PRESENCE_DOT.offline}`} />
-                <span className="truncate">@{profile?.handle || handle}</span>
-                {profile?.level ? <span className="shrink-0">· {t("Level {n}", { n: profile.level })}</span> : null}
-              </div>
             </div>
-            <div className="flex shrink-0 items-center gap-1.5 pb-1">
-              {!mine && (
-              <span className="inline-flex" title={friendship === "friends" ? t("This user is your friend.") : friendship === "requested" ? t("Friend request pending") : undefined}>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    setFriend("sending");
-                    try {
-                      const result = await requestFriendship(profile?.handle || handle);
-                      setFriend(result === "requested" ? "sent" : "error");
-                    } catch {
-                      setFriend("error");
-                    }
-                  }}
-                  disabled={friendship === "friends" || friendship === "requested" || friend === "sending" || friend === "sent"}
-                  aria-label={t("Add friend")}
-                  title={undefined}
-                  className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${friendship === "friends" ? "cursor-default bg-elevated/30 text-ink-subtle opacity-55" : "bg-elevated/60 text-ink-muted hover:text-ink"}`}
-                >
-                  {friend === "sending" ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} strokeWidth={2.2} />}
-                </button>
-                </span>
-              )}
-              {!mine && (
-                <button
-                  type="button"
-                  onClick={message}
-                  disabled={messaging}
-                  className="flex h-8 items-center gap-1.5 rounded-full bg-ink px-3 text-[12px] font-semibold text-canvas transition-transform enabled:hover:scale-[1.02] disabled:opacity-60"
-                >
-                  {messaging ? <Loader2 size={13} className="animate-spin" /> : <MessageSquare size={13} />}
-                  {t("Message")}
-                </button>
-              )}
-            </div>
-          </div>
-          {profile?.slogan && <p className="mt-2 line-clamp-1 text-[12.5px] text-ink-muted">{profile.slogan}</p>}
-          {messageError && <p className="mt-1 text-[11.5px] text-ink-muted">{messageError}</p>}
-        </div>
-
-        <div className="flex shrink-0 items-center gap-2 px-4">
-          <div className="relative flex-1">
-            <Search size={14} strokeWidth={2.2} className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t("Search their reviews")}
-              className="h-8 w-full rounded-full bg-elevated/60 ps-8 pe-3 text-[12.5px] text-ink outline-none placeholder:text-ink-subtle focus:ring-1 focus:ring-inset focus:ring-accent/40"
-            />
-          </div>
-                    <button
-            type="button"
-            onClick={() => setWithReview((v) => !v)}
-            aria-pressed={withReview}
-            title={t("Only ratings that include a written review")}
-            className={`h-8 shrink-0 rounded-full px-2.5 text-[12px] font-medium transition-colors ${withReview ? "bg-ink text-canvas" : "bg-elevated/60 text-ink-muted hover:text-ink"}`}
-          >
-            {t("With review")}
-          </button>
-<select
-            value={sort}
-            onChange={(e) => setSort(e.target.value as QuickSort)}
-            aria-label={t("Sort reviews")}
-            className="h-8 rounded-full bg-elevated/60 px-2 text-[12px] text-ink-muted outline-none"
-          >
-            {sortChoices.map((s) => (
-              <option key={s} value={s}>
-                {t(SORT_LABEL[s])}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="mt-2 flex-1 overflow-y-auto px-4 pb-4">
-          <div className="mb-2 flex items-center justify-between text-[11.5px] uppercase tracking-wider text-ink-subtle">
-            <span>{t("Other reviews")}</span>
-            {state === "ready" && <span className="tabular-nums">{total}</span>}
+            {profile?.slogan && (
+              <p className="mt-2 line-clamp-1 text-[12.5px] text-ink-muted">{profile.slogan}</p>
+            )}
+            {messageError && <p className="mt-1 text-[11.5px] text-ink-muted">{messageError}</p>}
           </div>
 
-          {state === "loading" && (
-            <div className="flex items-center justify-center py-10 text-ink-subtle">
-              <Loader2 size={16} className="animate-spin" />
+          <div className="flex shrink-0 items-center gap-2 px-4">
+            <div className="relative flex-1">
+              <Search
+                size={14}
+                strokeWidth={2.2}
+                className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-ink-subtle"
+              />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t("Search their reviews")}
+                className="h-8 w-full rounded-full bg-elevated/60 ps-8 pe-3 text-[12.5px] text-ink outline-none placeholder:text-ink-subtle focus:ring-1 focus:ring-inset focus:ring-accent/40"
+              />
             </div>
-          )}
-          {state === "error" && (
             <button
               type="button"
-              onClick={() => void load()}
-              className="w-full rounded-lg bg-elevated/50 py-3 text-[12.5px] text-ink-muted transition-colors hover:text-ink"
+              onClick={() => setWithReview((v) => !v)}
+              aria-pressed={withReview}
+              title={t("Only ratings that include a written review")}
+              className={`h-8 shrink-0 rounded-full px-2.5 text-[12px] font-medium transition-colors ${withReview ? "bg-ink text-canvas" : "bg-elevated/60 text-ink-muted hover:text-ink"}`}
             >
-              {t("Reviews could not be loaded. Retry")}
+              {t("With review")}
             </button>
-          )}
-          {state === "ready" && !items.length && (
-            <p className="py-8 text-center text-[12.5px] text-ink-muted">
-              {debounced ? t("No reviews match that search.") : t("No other reviews yet.")}
-            </p>
-          )}
-          <div className="flex flex-col gap-2.5">
-            {items.map((review) => (
-              <ReviewerReviewRow key={review.id} review={review} onOpenTitle={openTitle} />
-            ))}
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as QuickSort)}
+              aria-label={t("Sort reviews")}
+              className="h-8 rounded-full bg-elevated/60 px-2 text-[12px] text-ink-muted outline-none"
+            >
+              {sortChoices.map((s) => (
+                <option key={s} value={s}>
+                  {t(SORT_LABEL[s])}
+                </option>
+              ))}
+            </select>
           </div>
-          {state === "ready" && cursor && (
-            <button
-              type="button"
-              onClick={() => void load(cursor)}
-              disabled={paging}
-              className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-elevated/50 text-[12.5px] font-medium text-ink-muted transition-colors enabled:hover:text-ink"
-            >
-              {paging && <Loader2 size={13} className="animate-spin" />}
-              {t("Load more")}
-            </button>
-          )}
-        </div>
+
+          <div className="mt-2 flex-1 overflow-y-auto px-4 pb-4">
+            <div className="mb-2 flex items-center justify-between text-[11.5px] uppercase tracking-wider text-ink-subtle">
+              <span>{t("Other reviews")}</span>
+              {state === "ready" && <span className="tabular-nums">{total}</span>}
+            </div>
+
+            {state === "loading" && (
+              <div className="flex items-center justify-center py-10 text-ink-subtle">
+                <Loader2 size={16} className="animate-spin" />
+              </div>
+            )}
+            {state === "error" && (
+              <button
+                type="button"
+                onClick={() => void load()}
+                className="w-full rounded-lg bg-elevated/50 py-3 text-[12.5px] text-ink-muted transition-colors hover:text-ink"
+              >
+                {t("Reviews could not be loaded. Retry")}
+              </button>
+            )}
+            {state === "ready" && !items.length && (
+              <p className="py-8 text-center text-[12.5px] text-ink-muted">
+                {debounced ? t("No reviews match that search.") : t("No other reviews yet.")}
+              </p>
+            )}
+            <div className="flex flex-col gap-2.5">
+              {items.map((review) => (
+                <ReviewerReviewRow
+                  key={review.id}
+                  review={review}
+                  onOpenTitle={openTitle}
+                  handle={profileHandle}
+                />
+              ))}
+            </div>
+            {state === "ready" && cursor && (
+              <button
+                type="button"
+                onClick={() => void load(cursor)}
+                disabled={paging}
+                className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-elevated/50 text-[12.5px] font-medium text-ink-muted transition-colors enabled:hover:text-ink"
+              >
+                {paging && <Loader2 size={13} className="animate-spin" />}
+                {t("Load more")}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </ModalShell>

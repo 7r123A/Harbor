@@ -1,17 +1,37 @@
 import { useT } from "@/lib/i18n";
 import { useEffect } from "react";
-import { ensureMarksForTitle, markKeyForItem, useFriendReviewIndex } from "@/lib/social/friend-review-index";
+import {
+  ensureMarksForTitle,
+  markKeyForItem,
+  useFriendReviewIndex,
+} from "@/lib/social/friend-review-index";
 import { Avatar } from "@/views/profile/profile-bits";
+import type { FriendReviewMark } from "@/lib/social/friend-review-index";
 
 /**
  * The poster-side half of the social signal: up to three friends who rated this title, plus how
  * many more did. Reads the shared friends-feed index, so a rail of cards costs one feed read.
  */
 function contentTypeFor(metaId: string, kind?: string): string {
-  // The card knows what it is; the id prefix is only a fallback for callers that do not.
-  if (kind === "series" || kind === "movie" || kind === "anime" || kind === "manga") return kind;
+  if (kind === "manga") return "manga";
+  // Anime IDs can be carried by metas whose display type is only movie or series.
   if (/^(kitsu|mal|anilist|anidb):/i.test(metaId)) return "anime";
+  if (kind === "series" || kind === "movie" || kind === "anime") return kind;
   return "movie";
+}
+
+/**
+ * How many avatars to draw and how many to count as "+N". The backend sends an uncapped friend
+ * count but only a few avatars, so the remainder has to be arithmetic — and it must never go
+ * negative when a cached scan holds fewer marks than the count claims.
+ */
+export function friendBadgePlan(
+  marks: FriendReviewMark[],
+  max = 3,
+): { shown: FriendReviewMark[]; extra: number; total: number } {
+  const shown = marks.slice(0, max);
+  const total = Math.max(marks[0]?.totalCount ?? marks.length, marks.length);
+  return { shown, extra: Math.max(0, total - shown.length), total };
 }
 
 export function FriendReviewBadges({
@@ -33,15 +53,14 @@ export function FriendReviewBadges({
   }, [metaId, kind]);
   if (!index) return null;
 
-  const marks = index.get(markKeyForItem(metaId));
+  const marks = index.get(markKeyForItem(contentTypeFor(metaId, kind), metaId));
   if (!marks || marks.length === 0) return null;
 
-  const shown = marks.slice(0, 3);
-  const extra = marks.length - shown.length;
+  const { shown, extra, total: totalCount } = friendBadgePlan(marks);
   const label =
-    marks.length === 1
+    totalCount === 1
       ? t("1 friend rated this")
-      : t("{count} friends rated this", { count: marks.length });
+      : t("{count} friends rated this", { count: totalCount });
 
   return (
     <div

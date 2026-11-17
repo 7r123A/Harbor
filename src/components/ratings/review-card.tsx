@@ -6,6 +6,7 @@ import { cachedReviewCommentCount, loadReviewThread } from "@/lib/social/review-
 import { likeReview, unlikeReview } from "@/lib/social/review-reactions";
 import type { TitleRating, TitleRef } from "@/lib/social/review-rank";
 import { Avatar, timeAgo } from "@/views/profile/profile-bits";
+import { UserHoverCard } from "@/views/profile/user-hover-card";
 import { VerifiedBadge } from "@/views/account/verified-badge";
 import { ReviewComments } from "./review-comments";
 
@@ -35,11 +36,14 @@ export function ReviewCard({
   const [like, setLike] = useState(review.reactions ?? { count: 0, mine: false });
   const [liking, setLiking] = useState(false);
   const [commentCount, setCommentCount] = useState<number | null>(() =>
-    cachedReviewCommentCount(review.handle, target),
+    review.reviewId
+      ? (review.comments?.count ?? null)
+      : cachedReviewCommentCount(review.handle, target),
   );
 
   useEffect(() => {
-    if (!prefetchComments || commentCount !== null) return;
+    // A hub review has its own thread; only the legacy profile-quote thread needs a prefetch.
+    if (!prefetchComments || review.reviewId || commentCount !== null) return;
     let live = true;
     loadReviewThread(review.handle, target)
       .then((result) => {
@@ -51,7 +55,7 @@ export function ReviewCard({
     return () => {
       live = false;
     };
-  }, [prefetchComments, commentCount, review.handle, target]);
+  }, [prefetchComments, commentCount, review.handle, review.reviewId, target]);
 
   const text = review.review ?? "";
   const long = text.length > LONG_REVIEW;
@@ -61,26 +65,32 @@ export function ReviewCard({
     <article className="group overflow-hidden rounded-2xl bg-elevated/35 ring-1 ring-edge-soft transition-colors duration-150 hover:bg-elevated/50">
       <div className="p-3.5">
         <header className="flex items-start gap-3">
-          <button
-            type="button"
-            onClick={onOpenAuthor}
-            aria-label={t("Open {alias} profile", { alias: review.alias })}
-            className="shrink-0 rounded-full transition-transform enabled:hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          >
-            <Avatar src={review.avatarUrl} size={38} alias={review.alias} />
-          </button>
+          <UserHoverCard handle={review.handle}>
+            <button
+              type="button"
+              onClick={onOpenAuthor}
+              aria-label={t("Open {alias} profile", { alias: review.alias })}
+              className="shrink-0 rounded-full transition-transform enabled:hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            >
+              <Avatar src={review.avatarUrl} size={38} alias={review.alias} />
+            </button>
+          </UserHoverCard>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-              <button
-                type="button"
-                onClick={onOpenAuthor}
-                className="min-w-0 truncate text-[13.5px] font-semibold text-ink transition-colors hover:text-accent"
-              >
-                {review.alias}
-              </button>
+              <UserHoverCard handle={review.handle}>
+                <button
+                  type="button"
+                  onClick={onOpenAuthor}
+                  className="min-w-0 truncate text-[13.5px] font-semibold text-ink transition-colors hover:text-accent"
+                >
+                  {review.alias}
+                </button>
+              </UserHoverCard>
               {review.verified && <VerifiedBadge size="sm" />}
               <span className="shrink-0 text-[11.5px] text-ink-subtle">@{review.handle}</span>
-              <span aria-hidden className="shrink-0 text-[11px] text-ink-subtle">·</span>
+              <span aria-hidden className="shrink-0 text-[11px] text-ink-subtle">
+                ·
+              </span>
               <span className="shrink-0 text-[11.5px] text-ink-subtle">{timeAgo(review.at)}</span>
             </div>
             <div className="mt-1.5 flex flex-wrap items-center gap-2">
@@ -150,7 +160,9 @@ export function ReviewCard({
                 .finally(() => setLiking(false));
             }}
             className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-[12px] font-semibold tabular-nums transition-colors ${
-              like.mine ? "bg-accent/15 text-accent" : "text-ink-subtle hover:bg-elevated/70 hover:text-ink-muted"
+              like.mine
+                ? "bg-accent/15 text-accent"
+                : "text-ink-subtle hover:bg-elevated/70 hover:text-ink-muted"
             }`}
           >
             {liking ? (
@@ -165,6 +177,7 @@ export function ReviewCard({
           type="button"
           onClick={() => setThread((value) => !value)}
           aria-expanded={thread}
+          aria-label={t("Comments")}
           className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-[12px] tabular-nums text-ink-subtle transition-colors hover:bg-elevated/70 hover:text-ink-muted ${
             thread ? "text-ink" : ""
           }`}
@@ -180,6 +193,7 @@ export function ReviewCard({
             handle={review.handle}
             target={target}
             score={review.score}
+            reviewId={review.reviewId}
             onCount={setCommentCount}
           />
         </div>
