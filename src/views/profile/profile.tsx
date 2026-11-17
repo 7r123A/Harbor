@@ -42,6 +42,7 @@ import type { FavoriteKind } from "./use-favorites";
 import type { PublicRating } from "@/lib/ratings/types";
 import { ratingQuoteFrom, type RatingQuote } from "@/lib/ratings/quote";
 import { RatingsCard } from "./ratings-card";
+import { MutualRatingsCard } from "./mutual-ratings-card";
 import { UserRatings } from "@/views/ratings/user-ratings";
 import { ImportModal } from "@/views/ratings/import/import-modal";
 import { WatchNowCard } from "./watch-now-card";
@@ -306,13 +307,16 @@ export function ProfileView({
       />
     ),
     ratings: (
-      <RatingsCard
-        ratings={summary.ratings}
-        isOwner={summary.isOwner}
-        onViewAll={() => setShowRatings(true)}
-        onImport={summary.isOwner ? () => setImportingRatings(true) : undefined}
-        onOpenMeta={onOpenMeta}
-      />
+      <>
+        <RatingsCard
+          ratings={summary.ratings}
+          isOwner={summary.isOwner}
+          onViewAll={() => setShowRatings(true)}
+          onImport={summary.isOwner ? () => setImportingRatings(true) : undefined}
+          onOpenMeta={onOpenMeta}
+        />
+        <MutualRatingsCard handle={handle} isOwner={summary.isOwner} />
+      </>
     ),
     canvas: c.hasCanvas ? (
       <CanvasCard
