@@ -3,8 +3,11 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 
-const locales = ["ar", "de", "es", "fr", "hi", "id", "it", "ja", "ko", "pl", "pt", "ru", "tr", "vi", "zh"];
-const localePath = (locale) => new URL(`../src/lib/i18n/locales/${locale}.ts`, import.meta.url);
+const locales = [
+  "ar", "de", "es", "fr", "hi", "id", "it", "ja", "ko", "pl", "pt", "ru", "tr", "vi", "zh",
+];
+const localePath = (locale) =>
+  new URL(`../src/lib/i18n/locales/${locale}.ts`, import.meta.url);
 
 function catalog(locale) {
   const file = ts.createSourceFile(
@@ -35,9 +38,14 @@ const english = catalog("ui-fallback");
 const refractKeys = [...english.keys()].filter(
   (key) =>
     /refract/i.test(key) ||
-    ["Network error; retry scheduled", "Movie not found in Refract", "Episode not found; verify season numbering"].includes(key),
+    [
+      "Network error; retry scheduled",
+      "Movie not found in Refract",
+      "Episode not found; verify season numbering",
+    ].includes(key),
 );
-const placeholders = (value) => [...value.matchAll(/\{[a-zA-Z][\w]*\}/g)].map((match) => match[0]).sort();
+const placeholders = (value) =>
+  [...value.matchAll(/\{[a-zA-Z][\w]*\}/g)].map((match) => match[0]).sort();
 const scopes = ["profile:read", "library:read", "library:write", "history:write"];
 
 for (const locale of locales) {
@@ -47,7 +55,11 @@ for (const locale of locales) {
       assert.ok(translated.has(key), `${locale}: missing ${key}`);
       const value = translated.get(key);
       assert.ok(value.trim(), `${locale}: empty translation for ${key}`);
-      assert.deepEqual(placeholders(value), placeholders(english.get(key)), `${locale}: placeholders for ${key}`);
+      assert.deepEqual(
+        placeholders(value),
+        placeholders(english.get(key)),
+        `${locale}: placeholders for ${key}`,
+      );
       for (const scope of scopes) {
         if (english.get(key).includes(scope)) {
           assert.ok(value.includes(scope), `${locale}: missing ${scope} in ${key}`);
