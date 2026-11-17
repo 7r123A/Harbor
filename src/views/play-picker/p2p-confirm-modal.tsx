@@ -1,8 +1,11 @@
 import { Radio, Users, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Meta } from "@/lib/cinemeta";
-import type { ScoredStream } from "@/lib/streams/types";
+import { magnetFromHash } from "@/lib/debrid/types";
 import { formatSize, streamSummaryParts } from "./picker-utils";
+import { scheduleAbandonedTorrentRemoval, torrentEngineAdd } from "@/lib/torrent/local-engine";
+import { trackersFromSources } from "@/lib/torrent/stremio-stream";
+import type { ScoredStream } from "@/lib/streams/types";
 
 export function P2pConfirmModal({
   meta,
@@ -16,6 +19,32 @@ export function P2pConfirmModal({
   onCancel: () => void;
 }) {
   const [remember, setRemember] = useState(false);
+  const confirmed = useRef(false);
+  // Start metadata resolution and peer discovery while the prompt is open. The
+  // torrent is added paused, so no file data moves until the player asks for
+  // bytes; without this the whole discovery path would run after the player has
+  // already initialized. Cancelling the prompt cleans the prewarmed torrent up.
+  useEffect(() => {
+    const infoHash = stream.infoHash;
+    if (!infoHash) return;
+    let cancelled = false;
+    const fileIdx = typeof stream.fileIdx === "number" ? stream.fileIdx : undefined;
+    void torrentEngineAdd(
+      magnetFromHash(infoHash),
+      trackersFromSources(stream.sources),
+      fileIdx,
+    ).then((added) => {
+      if (!added) return;
+      if (cancelled && !confirmed.current) scheduleAbandonedTorrentRemoval(added.info_hash);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [stream.infoHash, stream.sources, stream.fileIdx]);
+  const confirm = (rememberIt: boolean) => {
+    confirmed.current = true;
+    onConfirm(rememberIt);
+  };
   const backdrop = meta.background || meta.poster;
   const title = stream.parsedTitle || stream.title || stream.name || "This source";
   const summary = streamSummaryParts(stream).filter((p) => !/seed/i.test(p));
@@ -63,7 +92,7 @@ export function P2pConfirmModal({
         <div className="flex items-center gap-3 pt-1">
           <button
             type="button"
-            onClick={() => onConfirm(remember)}
+            onClick={() => confirm(remember)}
             className="flex h-12 items-center gap-2 rounded-xl bg-accent px-6 text-[14px] font-semibold text-canvas transition-transform hover:scale-[1.02] active:scale-[0.97]"
           >
             <Radio size={15} strokeWidth={2.4} />
