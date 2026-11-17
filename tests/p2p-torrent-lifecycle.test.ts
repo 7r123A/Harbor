@@ -160,9 +160,12 @@ test("failed P2P preparation is discarded and remains retryable", () => {
 
 test("existing torrent preparation is reused without repeating magnet discovery", () => {
   const addStart = engine.indexOf("pub async fn torrent_engine_add");
-  const seedStart = engine.indexOf("dht_boot::seed_peers", addStart);
+  const seedStart = engine.indexOf("seed_side_dht(&magnet)", addStart);
   const existingLookup = engine.indexOf("session.get(TorrentIdOrHash::Hash(info_hash))", addStart);
+  assert.ok(seedStart > addStart, "add must seed the side DHT through the bounded helper");
   assert.ok(existingLookup > addStart && existingLookup < seedStart);
+  assert.match(engine, /async fn seed_side_dht/);
+  assert.match(engine, /dht_boot::seed_peers\(&dht, magnet, 40, SIDE_DHT_SEED_BUDGET\)/);
   assert.match(dhtBoot, /pub\(crate\) fn info_hash_from_magnet/);
 });
 
