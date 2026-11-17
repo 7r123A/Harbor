@@ -21,9 +21,11 @@ import {
 } from "@/lib/social/friend-request";
 import { fetchFriends, fetchPendingRequests } from "@/lib/social/friends";
 import { likeReview, unlikeReview } from "@/lib/social/review-reactions";
+import { useReviewEngagement } from "@/lib/social/review-engagement";
 import { ReviewComments } from "@/components/ratings/review-comments";
 import {
   canLikeQuickReview,
+  fetchQuickReviews,
   pageQuickReviews,
   reviewFromRating,
   type QuickReview,
@@ -41,6 +43,10 @@ import { currentAuthor } from "@/lib/theme-auth";
 import { useView } from "@/lib/view";
 import { Avatar, timeAgo } from "@/views/profile/profile-bits";
 import { VerifiedBadge } from "@/views/account/verified-badge";
+import { ReviewSortControls } from "./review-sort-controls";
+import { WithReviewButton } from "./with-review-button";
+import { MutualMatchBadge } from "./mutual-match-badge";
+import { ReviewSpoiler } from "./review-spoiler";
 
 // The review-rich profile quick menu, used from a title's User Reviews list only.
 // It is deliberately not a global replacement for opening a profile: everywhere else
@@ -76,15 +82,6 @@ type QuickResponse = {
 };
 
 const PAGE = 12;
-const SORTS: QuickSort[] = ["recent", "liked", "commented", "highest", "lowest"];
-
-const SORT_LABEL: Record<QuickSort, string> = {
-  recent: "Most recent",
-  liked: "Most liked",
-  commented: "Most commented",
-  highest: "Highest rated",
-  lowest: "Lowest rated",
-};
 
 /**
  * The bundled `/quick` route is new. Until a deployment carries it, the menu falls back
@@ -118,11 +115,21 @@ function ReviewerReviewRow({
   const t = useT();
   const [expanded, setExpanded] = useState(false);
   const [revealed, setRevealed] = useState(false);
-  const [likes, setLikes] = useState(review.reactions?.count ?? 0);
-  const [liked, setLiked] = useState(review.reactions?.viewerReacted === true);
+  const { value: engagement, update } = useReviewEngagement(review.id);
+  const likes = engagement.like?.count ?? review.reactions.count;
+  const liked = engagement.like?.mine ?? review.reactions.viewerReacted;
   const [liking, setLiking] = useState(false);
+  const [likeFailed, setLikeFailed] = useState(false);
   const [threadOpen, setThreadOpen] = useState(false);
-  const [commentCount, setCommentCount] = useState(review.comments?.count ?? 0);
+  const [legacyCount, setLegacyCount] = useState(review.comments.count);
+  const commentCount = engagement.comments ?? legacyCount;
+  const onCommentCount = useCallback(
+    (count: number) => {
+      if (review.id) update({ comments: count });
+      else setLegacyCount(count);
+    },
+    [review.id, update],
+  );
   const commentTarget = useMemo(
     () => ({ itemKey: review.contentId, mediaType: review.contentType }),
     [review.contentId, review.contentType],
@@ -160,8 +167,8 @@ function ReviewerReviewRow({
               {review.title || review.contentId}
             </button>
             <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-canvas/60 px-2 py-1 text-[12.5px] font-bold tabular-nums text-ink">
-              <Star size={10} className="fill-current" />
-              {review.score}
+              <Star size={11} className="fill-current text-amber-400" />
+              {review.score}/10
             </span>
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-2.5 text-[13px] text-ink-subtle">
@@ -176,15 +183,12 @@ function ReviewerReviewRow({
                 if (!canLikeQuickReview(review) || !review.id) return;
                 const next = !liked;
                 setLiking(true);
-                setLiked(next);
-                setLikes((n) => Math.max(0, n + (next ? 1 : -1)));
+                setLikeFailed(false);
                 try {
                   const result = next ? await likeReview(review.id) : await unlikeReview(review.id);
-                  setLikes(result.count);
-                  setLiked(result.reacted);
+                  update({ like: { count: result.count, mine: result.reacted } });
                 } catch {
-                  setLiked(!next);
-                  setLikes(review.reactions?.count ?? 0);
+                  setLikeFailed(true);
                 } finally {
                   setLiking(false);
                 }
@@ -202,34 +206,25 @@ function ReviewerReviewRow({
             >
               <MessageSquare size={14} /> {commentCount}
             </button>
+            {likeFailed && <span role="status">{t("Could not update this like.")}</span>}
           </div>
-          {text ? (
-            hidden ? (
-              <button
-                type="button"
-                onClick={() => setRevealed(true)}
-                className="mt-1.5 rounded-md bg-canvas/60 px-2 py-1 text-[11.5px] font-medium text-ink-muted transition-colors hover:text-ink"
-              >
-                {t("Contains spoilers — show review")}
-              </button>
-            ) : (
-              <p className="mt-2 whitespace-pre-line text-[13.5px] leading-relaxed text-ink-muted">
-                {long && !expanded ? `${text.slice(0, 260)}…` : text}
-                {long && (
-                  <button
-                    type="button"
-                    onClick={() => setExpanded((v) => !v)}
-                    className="ms-1 text-[11.5px] font-semibold text-ink"
-                  >
-                    {expanded ? t("Less") : t("More")}
-                  </button>
-                )}
-              </p>
-            )
-          ) : (
-            <p className="mt-2 text-[12.5px] italic text-ink-subtle">
-              {t("Rated without a written review")}
-            </p>
+          {text && (
+            <div className="mt-2">
+              <ReviewSpoiler hidden={hidden} onReveal={() => setRevealed(true)}>
+                <p className="whitespace-pre-line break-words text-[13.5px] leading-relaxed text-ink-muted">
+                  {long && !expanded ? `${text.slice(0, 260)}…` : text}
+                </p>
+              </ReviewSpoiler>
+              {long && !hidden && (
+                <button
+                  type="button"
+                  onClick={() => setExpanded((v) => !v)}
+                  className="ms-1 text-[11.5px] font-semibold text-ink"
+                >
+                  {expanded ? t("Less") : t("More")}
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -240,7 +235,7 @@ function ReviewerReviewRow({
             target={commentTarget}
             score={review.score}
             reviewId={review.id}
-            onCount={setCommentCount}
+            onCount={onCommentCount}
           />
         </div>
       )}
@@ -379,9 +374,7 @@ export function ReviewerQuickMenu({
       else setState("loading");
       const offset = nextCursor?.startsWith("off:") ? Number(nextCursor.slice(4)) || 0 : 0;
       const run = quickRouteAvailable
-        ? socialGet<QuickResponse>(
-            `/social/u/${encodeURIComponent(handle)}/quick?${params}${nextCursor ? `&cursor=${encodeURIComponent(nextCursor)}` : ""}`,
-          ).catch((error: unknown) => {
+        ? fetchQuickReviews<QuickResponse>(handle, params, nextCursor).catch((error: unknown) => {
             const status = (error as { status?: number }).status;
             if (status !== 404 && status !== 405) throw error;
             quickRouteAvailable = false;
@@ -451,7 +444,6 @@ export function ReviewerQuickMenu({
     close();
     requestOpenProfile(profileHandle);
   };
-  const sortChoices = SORTS;
   const friendLabel = t(friendRowLabel(friendship === "sending" ? "sending" : visibleFriendship));
   const friendSettled =
     visibleFriendship === "friends" ||
@@ -528,6 +520,9 @@ export function ReviewerQuickMenu({
                     className={`h-2 w-2 rounded-full ${PRESENCE_DOT[profile?.status || "offline"] || PRESENCE_DOT.offline}`}
                   />
                   <span className="truncate">@{profile?.handle || handle}</span>
+                  <MutualMatchBadge
+                    handle={mine || visibleFriendship === "blocked" ? undefined : profileHandle}
+                  />
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1.5 pb-1">
@@ -601,27 +596,11 @@ export function ReviewerQuickMenu({
                 className="h-8 w-full rounded-full bg-elevated/60 ps-8 pe-3 text-[12.5px] text-ink outline-none placeholder:text-ink-subtle focus:ring-1 focus:ring-inset focus:ring-accent/40"
               />
             </div>
-            <button
-              type="button"
-              onClick={() => setWithReview((v) => !v)}
-              aria-pressed={withReview}
-              title={t("Only ratings that include a written review")}
-              className={`h-8 shrink-0 rounded-full px-2.5 text-[12px] font-medium transition-colors ${withReview ? "bg-ink text-canvas" : "bg-elevated/60 text-ink-muted hover:text-ink"}`}
-            >
-              {t("With review")}
-            </button>
-            <select
-              value={sort}
-              onChange={(e) => setSort(e.target.value as QuickSort)}
-              aria-label={t("Sort reviews")}
-              className="h-8 rounded-full bg-elevated/60 px-2 text-[12px] text-ink-muted outline-none"
-            >
-              {sortChoices.map((s) => (
-                <option key={s} value={s}>
-                  {t(SORT_LABEL[s])}
-                </option>
-              ))}
-            </select>
+            <WithReviewButton pressed={withReview} onToggle={() => setWithReview((v) => !v)} />
+          </div>
+
+          <div className="mt-3 shrink-0 px-4">
+            <ReviewSortControls value={sort} onChange={setSort} compact />
           </div>
 
           <div className="mt-2 flex-1 overflow-y-auto px-4 pb-4">
@@ -652,7 +631,12 @@ export function ReviewerQuickMenu({
             <div className="flex flex-col gap-2.5">
               {items.map((review) => (
                 <ReviewerReviewRow
-                  key={review.id}
+                  key={JSON.stringify([
+                    review.contentType,
+                    review.contentId,
+                    review.updatedAt,
+                    review.spoiler,
+                  ])}
                   review={review}
                   onOpenTitle={openTitle}
                   handle={profileHandle}

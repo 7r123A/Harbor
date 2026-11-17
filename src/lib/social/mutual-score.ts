@@ -37,3 +37,4 @@ export function mutualScoreTone(score: number): MutualScoreTone {
     label: "Extremely similar",
   };
 }
+export type MutualMatch = { score: number | null; count: number };

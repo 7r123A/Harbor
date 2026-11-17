@@ -159,6 +159,7 @@ async function fixture(harborSignedIn = false, stremioSignedIn = false, kid = fa
     },
     "@/lib/social/open-my-profile": { openMyProfile: async () => false },
     "@/lib/social/notification-open": { openNotificationCenter() {} },
+    "@/lib/social/dm-store": { requestOpenDm() {}, useDmUnreadBadgeCount: () => 0 },
     "@/lib/window": {
       openUrl() {
         throw new Error("Unexpected external sign-in");
@@ -189,6 +190,10 @@ async function fixture(harborSignedIn = false, stremioSignedIn = false, kid = fa
     "@/chrome/sidebar/status-control": { StatusDot: () => null, StatusPicker: () => null },
   };
   const auth = load("lib/theme-auth.ts", dependencies);
+  dependencies["@/components/dm/dm-unread-badge"] = load(
+    "components/dm/dm-unread-badge.tsx",
+    dependencies,
+  );
   dependencies["@/lib/theme-auth"] = auth;
   const menuEvents = load("lib/social/account-menu-open.ts", dependencies);
   dependencies["@/lib/social/account-menu-open"] = menuEvents;

@@ -4,6 +4,7 @@ import type { CSSProperties } from "react";
 import type { Meta } from "@/lib/cinemeta";
 import type { CustomHoverConfig } from "@/lib/custom-hover";
 import { useT } from "@/lib/i18n";
+import { FriendReviewBadges } from "@/components/ratings/friend-review-badges";
 
 export function customHoverPosterProps(
   config: CustomHoverConfig,
@@ -71,6 +72,15 @@ export function CustomHoverOverlay({
     </span>
   );
 
+  const friendReviews = !preview && (
+    <FriendReviewBadges
+      metaId={meta.id}
+      kind={meta.type}
+      className="ms-auto shrink-0 gap-1"
+      avatarSize={22}
+    />
+  );
+
   if (config.overlay === "panel") {
     return (
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 overflow-hidden rounded-b-[var(--poster-radius,12px)]">
@@ -81,7 +91,10 @@ export function CustomHoverOverlay({
               : "translate-y-full opacity-0 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100"
           }`}
         >
-          {info || <span />}
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            {info}
+            {friendReviews}
+          </div>
           {playDisc}
         </div>
       </div>
@@ -96,7 +109,10 @@ export function CustomHoverOverlay({
           : ""
       } ${vis}`}
     >
-      {info}
+      <div className="flex min-w-0 flex-col gap-1.5">
+        {info}
+        {friendReviews}
+      </div>
       {playDisc && (
         <div className="absolute inset-0 flex items-center justify-center">{playDisc}</div>
       )}

@@ -1,8 +1,36 @@
-/** A short, quiet two-note chime for incoming messages during playback. */
+/** Play a local custom DM alert when set, otherwise use Harbor's short chime. */
+import { currentDmCustomSound, currentDmCustomSoundVolume } from "./dm-preferences";
+
 let ctx: AudioContext | null = null;
+let customAudio: HTMLAudioElement | null = null;
+let customAudioUrl: string | null = null;
 
 export function playDmChime(): void {
   if (typeof window === "undefined") return;
+
+  const customSound = currentDmCustomSound();
+  if (customSound) {
+    try {
+      if (!customAudio) customAudio = new Audio();
+      if (customAudioUrl !== customSound.dataUrl) {
+        customAudio.pause();
+        customAudio.src = customSound.dataUrl;
+        customAudioUrl = customSound.dataUrl;
+      }
+      customAudio.currentTime = 0;
+      customAudio.volume = currentDmCustomSoundVolume() / 100;
+      void customAudio.play().catch(() => playDefaultChime());
+      return;
+    } catch {
+      playDefaultChime();
+      return;
+    }
+  }
+
+  playDefaultChime();
+}
+
+function playDefaultChime(): void {
   try {
     const Ctor =
       window.AudioContext ||

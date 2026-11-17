@@ -1,6 +1,8 @@
 import type { RatingMediaType, PublicRating } from "@/lib/ratings/types";
+import { socialGet } from "./client";
+import type { RatingSort, TitleRef } from "./review-rank";
 
-export type QuickSort = "recent" | "liked" | "commented" | "highest" | "lowest";
+export type QuickSort = RatingSort;
 
 export type QuickReview = {
   /** Missing on older backends that do not expose review interactions. */
@@ -18,9 +20,37 @@ export type QuickReview = {
   comments: { count: number };
 };
 
+export function fetchQuickReviews<T>(handle: string, query: string, cursor?: string): Promise<T> {
+  const params = new URLSearchParams(query);
+  if (cursor) params.set("cursor", cursor);
+  return socialGet<T>(`/social/u/${encodeURIComponent(handle)}/quick?${params}`);
+}
+
+export async function findQuickReviewId(
+  handle: string,
+  target: TitleRef,
+): Promise<string | undefined> {
+  const query = new URLSearchParams({ q: target.itemKey, limit: "50" }).toString();
+  const seen = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const { reviews } = await fetchQuickReviews<{
+      reviews: { items: QuickReview[]; nextCursor?: string };
+    }>(handle, query, cursor);
+    const match = reviews.items.find(
+      (review) => review.contentId === target.itemKey && review.contentType === target.mediaType,
+    );
+    if (match?.id) return match.id;
+    cursor = reviews.nextCursor;
+    if (!cursor || seen.has(cursor)) break;
+    seen.add(cursor);
+  } while (cursor);
+  return undefined;
+}
+
 export function reviewFromRating(rating: PublicRating): QuickReview {
   return {
-    id: rating.reviewId,
+    id: rating.reviewId ?? rating.id,
     contentType: rating.mediaType,
     contentId: rating.itemKey,
     score: rating.score,

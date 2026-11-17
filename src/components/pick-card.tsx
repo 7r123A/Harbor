@@ -729,12 +729,15 @@ const PosterCard = memo(function PosterCard({
           )}
         </div>
       )}
-      <div className="-mt-2.5 flex h-[15px] items-center overflow-hidden" data-friend-review-row>
+      <div
+        className="-mt-2 flex h-[22px] items-center overflow-hidden px-px"
+        data-friend-review-row
+      >
         <FriendReviewBadges
           metaId={meta.id}
           kind={meta.type}
           className="relative flex items-center gap-0.5"
-          avatarSize={14}
+          avatarSize={20}
         />
       </div>
     </button>

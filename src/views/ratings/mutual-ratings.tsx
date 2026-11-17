@@ -1,44 +1,33 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { useT } from "@/lib/i18n";
-import { socialGet } from "@/lib/social/client";
 import { reviewPresence, sharedTerms, uniqueTerms } from "@/lib/social/review-compare";
 import { mutualScoreTone } from "@/lib/social/mutual-score";
-
-type Side = { review?: string | null; reviewId?: string | null };
-
-type MutualRow = Side & {
-  itemKey: string;
-  mediaType?: string;
-  title: string;
-  posterUrl?: string;
-  myScore: number;
-  theirScore: number;
-  diff: number;
-  myReview: string | null;
-  theirReview: string | null;
-  myLikes: number;
-  theirLikes: number;
-  myComments: number;
-  theirComments: number;
-};
-
-type MutualResponse = {
-  score: number | null;
-  count: number;
-  reviewedCount: number;
-  page: MutualRow[];
-  nextCursor?: string;
-  total: number;
-};
+import { WithReviewButton } from "@/components/ratings/with-review-button";
+import { ReviewSpoiler } from "@/components/ratings/review-spoiler";
+import {
+  fetchMutualPage,
+  INITIAL_MUTUAL_ROWS,
+  shouldUseMutualHistory,
+  loadMutualHistory,
+  pageMutualHistory,
+  type MutualPage,
+  type MutualRow,
+  type MutualSort,
+} from "@/lib/social/mutual-ratings";
 
 function Comparison({ row }: { row: MutualRow }) {
   const t = useT();
   const [open, setOpen] = useState(false);
-  const presence = reviewPresence(row.myReview, row.theirReview);
-  const shared = sharedTerms(row.myReview, row.theirReview);
-  const mineOnly = uniqueTerms(row.myReview, row.theirReview);
-  const theirsOnly = uniqueTerms(row.theirReview, row.myReview);
+  const [myRevealed, setMyRevealed] = useState(false);
+  const [theirRevealed, setTheirRevealed] = useState(false);
+  const myHidden = row.mySpoiler === true && !myRevealed;
+  const theirHidden = row.theirSpoiler === true && !theirRevealed;
+  const hideSpoilers = (row.myReview && myHidden) || (row.theirReview && theirHidden);
+  const presence = hideSpoilers ? "neither" : reviewPresence(row.myReview, row.theirReview);
+  const shared = presence === "both" ? sharedTerms(row.myReview, row.theirReview) : [];
+  const mineOnly = presence === "both" ? uniqueTerms(row.myReview, row.theirReview) : [];
+  const theirsOnly = presence === "both" ? uniqueTerms(row.theirReview, row.myReview) : [];
   return (
     <li className="rounded-lg bg-canvas/40 ring-1 ring-edge-soft">
       <button
@@ -78,9 +67,13 @@ function Comparison({ row }: { row: MutualRow }) {
               {t("My rating")} · {row.myScore}/10
             </p>
             {row.myReview ? (
-              <p className="mt-1 whitespace-pre-line text-[12.5px] leading-relaxed text-ink-muted">
-                {row.myReview}
-              </p>
+              <div className="mt-1">
+                <ReviewSpoiler hidden={myHidden} onReveal={() => setMyRevealed(true)}>
+                  <p className="whitespace-pre-line break-words text-[12.5px] leading-relaxed text-ink-muted">
+                    {row.myReview}
+                  </p>
+                </ReviewSpoiler>
+              </div>
             ) : (
               <p className="mt-1 text-[12.5px] italic text-ink-subtle">{t("No written review")}</p>
             )}
@@ -90,9 +83,13 @@ function Comparison({ row }: { row: MutualRow }) {
               {t("Their rating")} · {row.theirScore}/10
             </p>
             {row.theirReview ? (
-              <p className="mt-1 whitespace-pre-line text-[12.5px] leading-relaxed text-ink-muted">
-                {row.theirReview}
-              </p>
+              <div className="mt-1">
+                <ReviewSpoiler hidden={theirHidden} onReveal={() => setTheirRevealed(true)}>
+                  <p className="whitespace-pre-line break-words text-[12.5px] leading-relaxed text-ink-muted">
+                    {row.theirReview}
+                  </p>
+                </ReviewSpoiler>
+              </div>
             ) : (
               <p className="mt-1 text-[12.5px] italic text-ink-subtle">{t("No written review")}</p>
             )}
@@ -140,71 +137,98 @@ function Comparison({ row }: { row: MutualRow }) {
   );
 }
 
-export function MutualRatingsCard({ handle, isOwner }: { handle: string; isOwner: boolean }) {
+export function MutualRatings({ handle }: { handle: string }) {
   const t = useT();
-  const [data, setData] = useState<MutualResponse | null>(null);
+  const [serverPage, setServerPage] = useState<MutualPage | null>(null);
+  const [history, setHistory] = useState<MutualRow[] | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
-  const [sort, setSort] = useState<"recent" | "highest" | "difference">("recent");
+  const [sort, setSort] = useState<MutualSort>("recent");
+  const [withReview, setWithReview] = useState(false);
+  const [limit, setLimit] = useState(INITIAL_MUTUAL_ROWS);
+  const [attempt, setAttempt] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [moreFailed, setMoreFailed] = useState(false);
+  const activeRequest = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (isOwner) return;
-    let alive = true;
+    if (history) return;
+    const request = new AbortController();
+    activeRequest.current = request;
     setState("loading");
-    socialGet<MutualResponse>(
-      `/social/u/${encodeURIComponent(handle)}/mutual?sort=${sort}&limit=12`,
-    )
-      .then((body) => {
-        if (!alive) return;
-        setData(body);
+    setLoadingMore(false);
+    setMoreFailed(false);
+    fetchMutualPage(handle, sort, request.signal, undefined, withReview)
+      .catch(async (error: unknown) => {
+        if (request.signal.aborted || !shouldUseMutualHistory(error)) throw error;
+        return loadMutualHistory(handle, request.signal);
+      })
+      .then((result) => {
+        if (request.signal.aborted) return;
+        if (Array.isArray(result)) setHistory(result);
+        else setServerPage(result);
         setState("ready");
       })
       .catch(() => {
-        if (alive) setState("error");
+        if (!request.signal.aborted) setState("error");
       });
-    return () => {
-      alive = false;
-    };
-  }, [handle, isOwner, sort]);
+    return () => request.abort();
+  }, [handle, history, sort, attempt, withReview]);
 
-  // Comparing you with yourself is not a thing.
-  if (isOwner) return null;
-
+  const data = useMemo(
+    () => (history ? pageMutualHistory(history, sort, limit, withReview) : serverPage),
+    [history, limit, serverPage, sort, withReview],
+  );
   const tone = data && data.score != null ? mutualScoreTone(data.score) : null;
   const loadMore = async () => {
-    if (!data?.nextCursor || loadingMore) return;
+    if (history) {
+      setLimit((current) => current + INITIAL_MUTUAL_ROWS);
+      return;
+    }
+    const signal = activeRequest.current?.signal;
+    if (!data?.nextCursor || loadingMore || !signal) return;
     setLoadingMore(true);
+    setMoreFailed(false);
     try {
-      const next = await socialGet<MutualResponse>(
-        `/social/u/${encodeURIComponent(handle)}/mutual?sort=${sort}&limit=12&cursor=${encodeURIComponent(data.nextCursor)}`,
+      const next = await fetchMutualPage(handle, sort, signal, data.nextCursor, withReview);
+      if (signal.aborted) return;
+      setServerPage((current) =>
+        current ? { ...next, page: [...current.page, ...next.page] } : next,
       );
-      setData((current) => (current ? { ...next, page: [...current.page, ...next.page] } : next));
     } catch {
-      setState("error");
+      if (!signal.aborted) setMoreFailed(true);
     } finally {
-      setLoadingMore(false);
+      if (!signal.aborted) setLoadingMore(false);
     }
   };
 
   return (
-    <section
-      aria-label={t("Mutual ratings")}
-      className="mt-3 rounded-lg bg-surface p-5 ring-1 ring-edge-soft"
-    >
+    <section aria-label={t("Mutual ratings")}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-[12px] font-semibold uppercase tracking-[0.12em] text-ink-subtle">
           {t("Mutual ratings")}
         </div>
-        <select
-          value={sort}
-          onChange={(e) => setSort(e.target.value as typeof sort)}
-          aria-label={t("Sort mutual ratings")}
-          className="h-8 rounded-full bg-elevated/60 px-2.5 text-[12px] text-ink-muted outline-none"
-        >
-          <option value="recent">{t("Most recent")}</option>
-          <option value="highest">{t("Highest mutual")}</option>
-          <option value="difference">{t("Biggest differences")}</option>
-        </select>
+        <div className="flex flex-wrap items-center gap-2">
+          <WithReviewButton
+            pressed={withReview}
+            onToggle={() => {
+              setWithReview((value) => !value);
+              setLimit(INITIAL_MUTUAL_ROWS);
+            }}
+          />
+          <select
+            value={sort}
+            onChange={(e) => {
+              setSort(e.target.value as MutualSort);
+              setLimit(INITIAL_MUTUAL_ROWS);
+            }}
+            aria-label={t("Sort mutual ratings")}
+            className="h-8 rounded-full bg-elevated/60 px-2.5 text-[12px] text-ink-muted outline-none"
+          >
+            <option value="recent">{t("Most recent")}</option>
+            <option value="highest">{t("Highest mutual")}</option>
+            <option value="difference">{t("Biggest differences")}</option>
+          </select>
+        </div>
       </div>
 
       {state === "loading" && (
@@ -214,9 +238,12 @@ export function MutualRatingsCard({ handle, isOwner }: { handle: string; isOwner
       )}
 
       {state === "error" && (
-        <p className="py-4 text-[12.5px] text-ink-muted">
-          {t("Mutual ratings could not be loaded.")}
-        </p>
+        <div role="alert" className="flex items-center gap-3 py-4 text-[12.5px] text-ink-muted">
+          <span>{t("Mutual ratings could not be loaded.")}</span>
+          <button type="button" className="text-accent" onClick={() => setAttempt((n) => n + 1)}>
+            {t("Retry")}
+          </button>
+        </div>
       )}
 
       {state === "ready" && data && (
@@ -254,10 +281,25 @@ export function MutualRatingsCard({ handle, isOwner }: { handle: string; isOwner
             </div>
           )}
 
+          {withReview && data.count > 0 && data.total === 0 && (
+            <p className="mt-4 text-[12.5px] text-ink-muted">
+              {t("None of your mutual ratings include a written review.")}
+            </p>
+          )}
           {data.page.length > 0 && (
             <ul className="mt-4 grid gap-2">
               {data.page.map((row) => (
-                <Comparison key={`${row.mediaType}:${row.itemKey}`} row={row} />
+                <Comparison
+                  key={JSON.stringify([
+                    row.mediaType,
+                    row.itemKey,
+                    row.myAt,
+                    row.theirAt,
+                    row.mySpoiler,
+                    row.theirSpoiler,
+                  ])}
+                  row={row}
+                />
               ))}
             </ul>
           )}
@@ -266,7 +308,12 @@ export function MutualRatingsCard({ handle, isOwner }: { handle: string; isOwner
               <p className="mt-2 text-[11.5px] text-ink-subtle">
                 {t("Showing {shown} of {total}", { shown: data.page.length, total: data.total })}
               </p>
-              {data.nextCursor && (
+              {moreFailed && (
+                <p role="alert" className="mt-2 text-[12px] text-danger">
+                  {t("Could not load more ratings.")}
+                </p>
+              )}
+              {(history || data.nextCursor) && (
                 <button
                   type="button"
                   onClick={() => void loadMore()}
@@ -274,7 +321,7 @@ export function MutualRatingsCard({ handle, isOwner }: { handle: string; isOwner
                   className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-elevated/50 text-[12.5px] font-medium text-ink-muted transition-colors enabled:hover:text-ink disabled:opacity-60"
                 >
                   {loadingMore && <Loader2 size={13} className="animate-spin" />}
-                  {t("Load more")}
+                  {moreFailed ? t("Retry") : t("Load more")}
                 </button>
               )}
             </>

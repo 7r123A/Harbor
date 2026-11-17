@@ -1,5 +1,5 @@
 import type { PublicRating, RatingMediaType } from "@/lib/ratings/types";
-import { currentAuthor } from "@/lib/theme-auth";
+import { captureSessionScope, currentAuthor } from "@/lib/theme-auth";
 import { fetchFriends, type Friend } from "./friends";
 import { fetchUserRatings } from "./ratings-api";
 import { socialGet } from "./client";
@@ -12,6 +12,8 @@ import {
   type TitleRef,
 } from "./review-rank";
 import { loadUserDirectory } from "./user-directory";
+import { getMutualMatch } from "./mutual-ratings";
+import type { MutualMatch } from "./mutual-score";
 
 /**
  * Harbor now publishes a review hub at GET /social/reviews, which filters by title on the
@@ -20,7 +22,6 @@ import { loadUserDirectory } from "./user-directory";
  * the panel is never worse than it was before the route existed.
  */
 const HUB_PAGE = 50;
-const HUB_PAGE_CAP = 6;
 
 type HubReview = {
   id: string;
@@ -36,6 +37,7 @@ type HubReview = {
   author: { handle: string; displayName?: string; avatarUrl?: string; verified?: boolean } | null;
   reactions?: { count: number; viewerReacted?: boolean };
   comments?: { count: number };
+  match?: MutualMatch;
 };
 
 let hubAvailable = true;
@@ -59,6 +61,7 @@ function ratingFromHub(item: HubReview): TitleRating | null {
       ? { count: item.reactions.count || 0, mine: item.reactions.viewerReacted === true }
       : undefined,
     comments: item.comments ? { count: item.comments.count || 0 } : undefined,
+    match: item.match,
   };
 }
 
@@ -72,12 +75,13 @@ async function loadHubTitleRatings(
   scope: "friends" | "all",
   selfHandle: string | undefined,
   signedOut: boolean,
+  includeMatch: boolean,
 ): Promise<TitleRatingsSnapshot | null> {
   if (!hubAvailable) return null;
   const ratings: TitleRating[] = [];
   let cursor: string | undefined;
-  let complete = false;
-  for (let page = 0; page < HUB_PAGE_CAP; page += 1) {
+  const seen = new Set<string>();
+  for (;;) {
     const query = new URLSearchParams({
       contentType: target.mediaType,
       contentId: target.itemKey,
@@ -85,6 +89,7 @@ async function loadHubTitleRatings(
       sort: "newest",
       limit: String(HUB_PAGE),
     });
+    if (includeMatch && !signedOut) query.set("includeMatch", "1");
     if (cursor) query.set("cursor", cursor);
     let data: { items?: HubReview[]; nextCursor?: string };
     try {
@@ -103,13 +108,14 @@ async function loadHubTitleRatings(
       const rating = ratingFromHub(item);
       if (rating) ratings.push(rating);
     }
-    complete = !data.nextCursor || data.nextCursor === cursor;
-    if (complete) break;
+    if (!data.nextCursor) break;
+    if (seen.has(data.nextCursor)) throw new Error("Repeated title reviews cursor");
+    seen.add(data.nextCursor);
     cursor = data.nextCursor;
   }
   return {
     ratings: mergeTitleRatings(ratings, target, selfHandle),
-    complete,
+    complete: true,
     scanned: ratings.length,
     signedOut,
     source: "hub",
@@ -241,14 +247,18 @@ export type TitleRatingsSnapshot = {
   signedOut: boolean;
   /** "hub" is the server-side review list; "scan" is the older per-profile fallback. */
   source?: "hub" | "scan";
+  matchesIncomplete?: boolean;
 };
 
 /** Friends' ratings of one title, which is what the avatar stack and the Friends tab show. */
-export async function loadFriendTitleRatings(target: TitleRef): Promise<TitleRatingsSnapshot> {
+export async function loadFriendTitleRatings(
+  target: TitleRef,
+  includeMatch = false,
+): Promise<TitleRatingsSnapshot> {
   const self = currentAuthor();
   if (!self?.handle) return { ratings: [], complete: true, scanned: 0, signedOut: true };
 
-  const hub = await loadHubTitleRatings(target, "friends", self.handle, false);
+  const hub = await loadHubTitleRatings(target, "friends", self.handle, false, includeMatch);
   if (hub) return hub;
 
   let friends: Friend[];
@@ -274,9 +284,15 @@ export async function loadFriendTitleRatings(target: TitleRef): Promise<TitleRat
  * Everyone: your friends plus the public community graph. This is deliberately loaded only when
  * the Everyone tab is opened, because it costs one history scan per person.
  */
-export async function loadCommunityTitleRatings(target: TitleRef): Promise<TitleRatingsSnapshot> {
+async function loadCommunityTitleRatings(target: TitleRef): Promise<TitleRatingsSnapshot> {
   const self = currentAuthor();
-  const hub = await loadHubTitleRatings(target, "all", self?.handle ?? undefined, !self?.handle);
+  const hub = await loadHubTitleRatings(
+    target,
+    "all",
+    self?.handle ?? undefined,
+    !self?.handle,
+    true,
+  );
   if (hub) return hub;
 
   const authors = new Map<string, AuthorMeta>();
@@ -325,6 +341,39 @@ export async function loadCommunityTitleRatings(target: TitleRef): Promise<Title
     scanned: pool.length,
     signedOut,
     source: "scan",
+  };
+}
+
+/** Publish the title's reviews and match scores together, even on older servers. */
+export async function loadTitleReviewsWithMatches(
+  target: TitleRef,
+  scope: "friends" | "everyone",
+): Promise<TitleRatingsSnapshot> {
+  const viewer = currentAuthor();
+  const isCurrent = captureSessionScope();
+  const snapshot =
+    scope === "friends"
+      ? await loadFriendTitleRatings(target, true)
+      : await loadCommunityTitleRatings(target);
+  if (!isCurrent()) throw new Error("Account changed");
+  if (
+    !viewer ||
+    snapshot.signedOut ||
+    snapshot.ratings.every((rating) => rating.match !== undefined)
+  ) {
+    return snapshot;
+  }
+  const matches = await Promise.allSettled(
+    snapshot.ratings.map((rating) => rating.match ?? getMutualMatch(viewer.id, rating.handle)),
+  );
+  if (!isCurrent()) throw new Error("Account changed");
+  return {
+    ...snapshot,
+    ratings: snapshot.ratings.map((rating, i) => {
+      const match = matches[i];
+      return match.status === "fulfilled" ? { ...rating, match: match.value } : rating;
+    }),
+    matchesIncomplete: matches.some((match) => match.status === "rejected"),
   };
 }
 

@@ -81,6 +81,7 @@ function confirmationHarness() {
     },
     "@/lib/social/friends": friends,
     "@/lib/social/friend-command": { friendCommand },
+    "@/lib/social/share-dm": { requestShareToDm: unexpected },
     "@/lib/dialog": {
       confirmDialog: unexpected,
     },

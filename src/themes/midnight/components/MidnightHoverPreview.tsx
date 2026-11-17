@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { FriendReviewBadges } from "@/components/ratings/friend-review-badges";
 import type { Meta } from "@/lib/cinemeta";
 import {
   assemblePreviewData,
@@ -960,18 +961,23 @@ export function MidnightHoverPreview() {
             <h3 className="midnight-preview-title">{name}</h3>
             {data.chip && <span className="midnight-preview-chip">{t(data.chip)}</span>}
           </div>
-          {chips.length > 0 && (
-            <div className="midnight-preview-chips">
-              {chips.map((chip) => (
-                <span key={chip} className="midnight-preview-pill">
-                  {/* A duration is digits plus a Latin word: loose inside an RTL line the digits
-                      read as neutral and the word leads, so "123 min" painted as "min 123".
-                      bdi lets each fact pick its own direction without turning the pill. */}
-                  <bdi>{chip}</bdi>
-                </span>
-              ))}
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {chips.length > 0 && (
+              <div className="midnight-preview-chips">
+                {chips.map((chip) => (
+                  <span key={chip} className="midnight-preview-pill">
+                    <bdi>{chip}</bdi>
+                  </span>
+                ))}
+              </div>
+            )}
+            <FriendReviewBadges
+              metaId={data.meta.id}
+              kind={data.meta.type}
+              className="ms-auto shrink-0 gap-1"
+              avatarSize={22}
+            />
+          </div>
           {language.synopsis && <p className="midnight-preview-synopsis">{language.synopsis}</p>}
           <div className="midnight-preview-actions">
             <button type="button" className="midnight-preview-open" onClick={openCard}>

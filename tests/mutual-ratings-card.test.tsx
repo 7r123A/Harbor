@@ -7,9 +7,9 @@ import * as React from "react";
 import * as jsx from "react/jsx-runtime";
 import { createRoot } from "react-dom/client";
 
-function loadMutualRatingsCard(socialGet: (path: string) => Promise<unknown>) {
+function loadMutualRatings(socialGet: (path: string) => Promise<unknown>) {
   const source = readFileSync(
-    new URL("../src/views/profile/mutual-ratings-card.tsx", import.meta.url),
+    new URL("../src/views/ratings/mutual-ratings.tsx", import.meta.url),
     "utf8",
   );
   const { outputText } = ts.transpileModule(source, {
@@ -29,7 +29,42 @@ function loadMutualRatingsCard(socialGet: (path: string) => Promise<unknown>) {
         (key: string, values: Record<string, string | number> = {}) =>
           key.replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? name)),
     },
-    "@/lib/social/client": { socialGet },
+    "@/lib/social/mutual-ratings": {
+      INITIAL_MUTUAL_ROWS: 20,
+      fetchMutualPage: (
+        handle: string,
+        sort: string,
+        _signal: AbortSignal,
+        cursor?: string,
+        withReview?: boolean,
+      ) => {
+        const query = new URLSearchParams({ sort });
+        if (cursor) query.set("cursor", cursor);
+        if (withReview) query.set("withReview", "1");
+        return socialGet(`/social/u/${handle}/mutual?${query}`);
+      },
+      shouldUseMutualHistory: () => false,
+    },
+    "@/components/ratings/with-review-button": {
+      WithReviewButton: ({ pressed, onToggle }: { pressed: boolean; onToggle: () => void }) =>
+        React.createElement(
+          "button",
+          { "aria-pressed": pressed, onClick: onToggle },
+          "With review",
+        ),
+    },
+    "@/components/ratings/review-spoiler": {
+      ReviewSpoiler: ({
+        hidden,
+        children,
+        onReveal,
+      }: {
+        hidden: boolean;
+        children: React.ReactNode;
+        onReveal: () => void;
+      }) =>
+        hidden ? React.createElement("button", { onClick: onReveal }, "Show spoiler") : children,
+    },
     "@/lib/social/review-compare": {
       reviewPresence: (mine?: string | null, theirs?: string | null) =>
         mine && theirs ? "both" : mine ? "mine-only" : theirs ? "theirs-only" : "neither",
@@ -57,7 +92,7 @@ function loadMutualRatingsCard(socialGet: (path: string) => Promise<unknown>) {
     module.exports,
   );
   return module.exports as {
-    MutualRatingsCard: React.ComponentType<{ handle: string; isOwner: boolean }>;
+    MutualRatings: React.ComponentType<{ handle: string }>;
   };
 }
 
@@ -85,7 +120,7 @@ function mountHarness() {
 test("visitor sees all rateable types and expands both, one-sided, and absent reviews", async () => {
   const h = mountHarness();
   const requests: string[] = [];
-  const { MutualRatingsCard } = loadMutualRatingsCard(async (path) => {
+  const { MutualRatings } = loadMutualRatings(async (path) => {
     requests.push(path);
     return {
       score: 82,
@@ -103,6 +138,7 @@ test("visitor sees all rateable types and expands both, one-sided, and absent re
           diff: 1,
           myReview: "My common opinion",
           theirReview: "Their common thought",
+          theirSpoiler: true,
           myLikes: 0,
           theirLikes: 0,
           myComments: 0,
@@ -156,7 +192,7 @@ test("visitor sees all rateable types and expands both, one-sided, and absent re
 
   try {
     await React.act(async () => {
-      h.root.render(React.createElement(MutualRatingsCard, { handle: "friend", isOwner: false }));
+      h.root.render(React.createElement(MutualRatings, { handle: "friend" }));
       await Promise.resolve();
     });
     const body = h.dom.window.document.body;
@@ -189,6 +225,12 @@ test("visitor sees all rateable types and expands both, one-sided, and absent re
     };
     await expandTitle("Fixture anime");
     assert.match(body.textContent || "", /My common opinion/);
+    assert.doesNotMatch(body.textContent || "", /Their common thought|Words both reviews use/);
+    const reveal = [...body.querySelectorAll("button")].find(
+      (button) => button.textContent === "Show spoiler",
+    );
+    assert.ok(reveal);
+    await React.act(() => reveal.click());
     assert.match(body.textContent || "", /Their common thought/);
     assert.match(body.textContent || "", /Words both reviews use: common/);
     assert.match(body.textContent || "", /Words only your review uses: mine-only/);
@@ -201,31 +243,32 @@ test("visitor sees all rateable types and expands both, one-sided, and absent re
     assert.match(body.textContent || "", /Only they wrote a review for this title/);
     await expandTitle("Fixture manga");
     assert.ok((body.textContent?.match(/No written review/g) ?? []).length >= 2);
+    const filter = [...body.querySelectorAll("button")].find(
+      (button) => button.textContent === "With review",
+    );
+    assert.ok(filter);
+    await React.act(() => filter.click());
+    assert.match(requests.at(-1) || "", /withReview=1/);
+    assert.match(body.textContent || "", /82%/);
   } finally {
     await h.close();
   }
 });
 
-test("owner has no self-comparison and a visitor with no mutual ratings sees an empty state, not 0%", async () => {
+test("a visitor with no mutual ratings sees an empty state without a percentage", async () => {
   const h = mountHarness();
   let requests = 0;
-  const { MutualRatingsCard } = loadMutualRatingsCard(async () => {
+  const { MutualRatings } = loadMutualRatings(async () => {
     requests += 1;
     return { score: null, count: 0, reviewedCount: 0, total: 0, page: [] };
   });
 
   try {
     await React.act(async () => {
-      h.root.render(React.createElement(MutualRatingsCard, { handle: "me", isOwner: true }));
+      h.root.render(React.createElement(MutualRatings, { handle: "friend" }));
       await Promise.resolve();
     });
-    assert.equal(h.dom.window.document.querySelector("section[aria-label='Mutual ratings']"), null);
-    assert.equal(requests, 0);
-
-    await React.act(async () => {
-      h.root.render(React.createElement(MutualRatingsCard, { handle: "friend", isOwner: false }));
-      await Promise.resolve();
-    });
+    assert.equal(requests, 1);
     assert.match(h.dom.window.document.body.textContent || "", /Not enough shared ratings yet/);
     assert.match(h.dom.window.document.body.textContent || "", /0 mutual ratings/);
     assert.doesNotMatch(h.dom.window.document.body.textContent || "", /0%/);

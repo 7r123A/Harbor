@@ -1,37 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
-import { MessageSquare, RefreshCw, Users, X } from "lucide-react";
+import { MessageSquare, RefreshCw, X } from "lucide-react";
 import { ModalShell, useModalExit } from "@/components/modal-shell";
 import { useT } from "@/lib/i18n";
 import { authToken } from "@/lib/theme-auth";
 import type { RatingTarget } from "@/lib/ratings/types";
-import {
-  loadCommunityTitleRatings,
-  loadFriendTitleRatings,
-  type TitleRatingsSnapshot,
-} from "@/lib/social/title-reviews";
+import { loadTitleReviewsWithMatches, type TitleRatingsSnapshot } from "@/lib/social/title-reviews";
 import { ReviewerQuickMenu } from "./reviewer-quick-menu";
-import {
-  foldHandle,
-  sortTitleRatings,
-  type RatingSort,
-  type TitleRef,
-} from "@/lib/social/review-rank";
-import { Avatar } from "@/views/profile/profile-bits";
+import { sortTitleRatings, type RatingSort, type TitleRef } from "@/lib/social/review-rank";
 import { ReviewCard } from "./review-card";
+import { ReviewSortControls } from "./review-sort-controls";
+import { WithReviewButton } from "./with-review-button";
 
 type Scope = "friends" | "everyone";
 
-function useTitleRatings(target: TitleRef, scope: Scope, enabled: boolean) {
+function useTitleRatings(target: TitleRef, scope: Scope) {
   const [state, setState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [snapshot, setSnapshot] = useState<TitleRatingsSnapshot | null>(null);
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    if (!enabled) return;
     let live = true;
     setState("loading");
-    const load = scope === "friends" ? loadFriendTitleRatings : loadCommunityTitleRatings;
-    load(target)
+    loadTitleReviewsWithMatches(target, scope)
       .then((next) => {
         if (!live) return;
         setSnapshot(next);
@@ -43,7 +33,7 @@ function useTitleRatings(target: TitleRef, scope: Scope, enabled: boolean) {
     return () => {
       live = false;
     };
-  }, [enabled, scope, target, attempt]);
+  }, [scope, target, attempt]);
 
   return { state, snapshot, retry: () => setAttempt((n) => n + 1) };
 }
@@ -79,45 +69,6 @@ function Tab({
   );
 }
 
-const SORTS: RatingSort[] = ["newest", "highest", "lowest"];
-
-function SortControls({
-  value,
-  onChange,
-}: {
-  value: RatingSort;
-  onChange: (v: RatingSort) => void;
-}) {
-  const t = useT();
-  const labels: Record<RatingSort, string> = {
-    newest: t("Newest"),
-    highest: t("Highest"),
-    lowest: t("Lowest"),
-  };
-  return (
-    <div
-      role="radiogroup"
-      aria-label={t("Sort reviews")}
-      className="ms-auto flex items-center gap-0.5 rounded-full bg-elevated p-0.5"
-    >
-      {SORTS.map((sort) => (
-        <button
-          key={sort}
-          type="button"
-          role="radio"
-          aria-checked={value === sort}
-          onClick={() => onChange(sort)}
-          className={`h-7 rounded-full px-2.5 text-[11.5px] font-medium transition-colors ${
-            value === sort ? "bg-surface text-ink shadow-sm" : "text-ink-subtle hover:text-ink"
-          }`}
-        >
-          {labels[sort]}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 export function TitleReviewsPanel({
   target,
   onClose,
@@ -129,8 +80,8 @@ export function TitleReviewsPanel({
   const signedIn = !!authToken();
   const { closing, close } = useModalExit(onClose);
   const [tab, setTab] = useState<Scope>(signedIn ? "friends" : "everyone");
-  const [sort, setSort] = useState<RatingSort>("newest");
-  const [friendFilter, setFriendFilter] = useState<string | null>(null);
+  const [sort, setSort] = useState<RatingSort>("recent");
+  const [withReview, setWithReview] = useState(false);
   // Only this panel opens the review-rich quick menu. Everywhere else a username still
   // navigates to the full profile, which is what people expect on a profile page.
   const [quickHandle, setQuickHandle] = useState<string | null>(null);
@@ -141,37 +92,24 @@ export function TitleReviewsPanel({
     [target.itemKey, target.mediaType],
   );
 
-  const friends = useTitleRatings(ref, "friends", true);
-  const everyone = useTitleRatings(ref, "everyone", tab === "everyone");
+  const friends = useTitleRatings(ref, "friends");
+  const everyone = useTitleRatings(ref, "everyone");
   const active = tab === "friends" ? friends : everyone;
   const snapshot = active.snapshot;
 
-  const friendChoices = useMemo(() => {
-    const seen = new Set<string>();
-    const out: Array<{ handle: string; alias: string; avatarUrl?: string }> = [];
-    for (const rating of friends.snapshot?.ratings ?? []) {
-      const key = foldHandle(rating.handle);
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      out.push({ handle: rating.handle, alias: rating.alias, avatarUrl: rating.avatarUrl });
-    }
-    return out;
-  }, [friends.snapshot]);
-
   const reviews = useMemo(() => {
-    const list = snapshot?.ratings ?? [];
-    const scoped =
-      tab === "friends" && friendFilter
-        ? list.filter((rating) => foldHandle(rating.handle) === friendFilter)
-        : list;
-    return sortTitleRatings(scoped, sort);
-  }, [snapshot, tab, friendFilter, sort]);
+    const list = (snapshot?.ratings ?? []).filter(
+      (review) => !withReview || !!review.review?.trim(),
+    );
+    return sortTitleRatings(list, sort);
+  }, [snapshot, sort, withReview]);
 
   const average = useMemo(() => {
-    if (!reviews.length) return null;
-    const sum = reviews.reduce((total, review) => total + review.score, 0);
-    return Math.round((sum / reviews.length) * 10) / 10;
-  }, [reviews]);
+    const ratings = snapshot?.ratings ?? [];
+    if (!ratings.length) return null;
+    const sum = ratings.reduce((total, review) => total + review.score, 0);
+    return Math.round((sum / ratings.length) * 10) / 10;
+  }, [snapshot]);
 
   const title =
     tab === "friends"
@@ -220,7 +158,11 @@ export function TitleReviewsPanel({
                 <>
                   <span aria-hidden>·</span>
                   <span className="font-semibold text-ink-muted">
-                    {average}/10 {t("average")}
+                    {tab === "friends"
+                      ? t("Friends average score")
+                      : t("Harbor users average score")}
+                    {" · "}
+                    {average}/10
                   </span>
                 </>
               )}
@@ -254,51 +196,13 @@ export function TitleReviewsPanel({
             {t("Everyone")}
           </Tab>
         </div>
-        {tab === "everyone" && reviews.length > 1 && (
-          <SortControls value={sort} onChange={setSort} />
-        )}
       </div>
-
-      {tab === "friends" && friendChoices.length > 1 && (
-        <div className="harbor-scroll flex items-center gap-1.5 overflow-x-auto border-b border-edge-soft px-4 py-2">
-          <button
-            type="button"
-            aria-pressed={friendFilter === null}
-            onClick={() => setFriendFilter(null)}
-            className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-[11.5px] font-medium transition-colors ${
-              friendFilter === null
-                ? "bg-ink text-canvas"
-                : "bg-elevated/70 text-ink-muted hover:text-ink"
-            }`}
-          >
-            <Users size={11} />
-            {t("All")}
-          </button>
-          {friendChoices.map((friend) => {
-            const key = foldHandle(friend.handle);
-            const activeFriend = friendFilter === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                aria-pressed={activeFriend}
-                onClick={() => setFriendFilter(activeFriend ? null : key)}
-                title={friend.alias}
-                className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full py-0.5 pe-2.5 ps-0.5 text-[11.5px] font-medium transition-colors ${
-                  activeFriend
-                    ? "bg-accent/15 text-ink ring-1 ring-inset ring-accent/40"
-                    : "bg-elevated/60 text-ink-muted hover:text-ink"
-                }`}
-              >
-                <span className="inline-flex h-6 w-6 shrink-0 overflow-hidden rounded-full ring-1 ring-edge-soft">
-                  <Avatar src={friend.avatarUrl} size={24} alias={friend.alias} />
-                </span>
-                <span className="max-w-[9rem] truncate">{friend.alias}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
+      <div className="border-b border-edge-soft px-4 py-2">
+        <ReviewSortControls value={sort} onChange={setSort} compact />
+      </div>
+      <div className="flex border-b border-edge-soft px-4 py-2">
+        <WithReviewButton pressed={withReview} onToggle={() => setWithReview((v) => !v)} />
+      </div>
 
       <div className="harbor-scroll min-h-[220px] flex-1 overflow-y-auto p-4">
         {(active.state === "loading" || active.state === "idle") && (
@@ -318,7 +222,9 @@ export function TitleReviewsPanel({
                 </div>
               </div>
             ))}
-            <p className="py-1 text-center text-[12px] text-ink-subtle">{t("Loading reviews…")}</p>
+            <p className="py-1 text-center text-[12px] text-ink-subtle">
+              {signedIn ? t("Loading reviews and match scores…") : t("Loading reviews…")}
+            </p>
           </div>
         )}
 
@@ -334,6 +240,12 @@ export function TitleReviewsPanel({
               {t("Try again")}
             </button>
           </div>
+        )}
+
+        {active.state === "ready" && snapshot?.matchesIncomplete && (
+          <p className="mb-3 text-[12px] text-ink-subtle">
+            {t("Some match scores could not be loaded.")}
+          </p>
         )}
 
         {active.state === "ready" && reviews.length === 0 && (

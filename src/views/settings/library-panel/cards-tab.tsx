@@ -292,7 +292,7 @@ export function CardsTab() {
           label={t("Peek at a title on hover")}
           leading={<Eye size={18} strokeWidth={2} />}
           sub={t(
-            "Rest the cursor on a poster to peek at the rating, story, and quick actions without opening it. Off by default.",
+            "Rest the cursor on a poster to peek at the rating, story, and quick actions without opening it.",
           )}
           value={settings.hoverPreviewEnabled}
           onChange={(v) => update({ hoverPreviewEnabled: v })}
@@ -314,7 +314,7 @@ export function CardsTab() {
                   )
                 }
               />
-              {(settings.cardHoverStyle === "default" || settings.cardHoverStyle === "marquee") && (
+              {settings.cardHoverStyle === "default" && (
                 <SettingRow
                   wide
                   label={t("Open preview")}

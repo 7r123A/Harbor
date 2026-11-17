@@ -1,6 +1,8 @@
+import { DmUnreadBadge } from "@/components/dm/dm-unread-badge";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Minus, SquarePen, X } from "lucide-react";
+import harborMarkUrl from "@/assets/harbor-logo-test.svg";
 import { useT } from "@/lib/i18n";
 import { subscribeAuthor } from "@/lib/theme-auth";
 import { openDmConversation } from "@/lib/social/dm";
@@ -8,11 +10,16 @@ import {
   refreshDm,
   startDmPolling,
   subscribeDmIncoming,
+  subscribeDmToastPreview,
   subscribeOpenDm,
   useDmState,
   type DmIncoming,
 } from "@/lib/social/dm-store";
-import { currentDmNotifyMode, hydrateDmPrefsFromServer } from "@/lib/social/dm-preferences";
+import {
+  currentDmSoundEnabled,
+  currentDmToastEnabled,
+  hydrateDmPrefsFromServer,
+} from "@/lib/social/dm-preferences";
 import { currentStatus } from "@/lib/social/presence";
 import { playDmChime } from "@/lib/social/dm-chime";
 import { dmPreview } from "@/lib/social/dm-format";
@@ -129,7 +136,28 @@ function usePlaybackActive(): boolean {
   return active;
 }
 
-type ToastState = { event: DmIncoming; key: number };
+type ToastState = { event: DmIncoming; key: number; previewOnly?: boolean };
+
+function createPreviewEvent(body: string): DmIncoming {
+  const at = new Date().toISOString();
+  const id = `dm-preview-${Date.now()}`;
+  return {
+    conversation: {
+      id: "dm-preview-conversation",
+      other: {
+        id: "dm-preview-harbor",
+        handle: "harbor",
+        displayName: "Harbor",
+        avatarUrl: harborMarkUrl,
+      },
+      unread: 1,
+      muted: false,
+      at,
+      lastMessage: { id, body, at, mine: false },
+    },
+    message: { id, body, at, mine: false },
+  };
+}
 
 /** A speech bubble with three live dots: reads as messaging even at rest. */
 export function DmGlyph({ size = 21 }: { size?: number }) {
@@ -178,6 +206,37 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
   const [composing, setComposing] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
 
+  useEffect(() => {
+    if (
+      !import.meta.env.DEV ||
+      new URLSearchParams(window.location.search).get("dmPreviewTest") !== "1"
+    ) {
+      return;
+    }
+
+    const messages = [
+      "Hi! I found your profile through a review. What did you think of the ending?",
+      "Hey, I’m new here. Any shows you’d recommend?",
+      "Your rating caught my eye. Want to compare a few favorites?",
+    ];
+    let index = 0;
+    const showPreview = () => {
+      const body = messages[index++ % messages.length];
+      if (currentDmToastEnabled()) {
+        setToast({
+          event: createPreviewEvent(body),
+          key: Date.now(),
+          previewOnly: true,
+        });
+      }
+      if (currentDmSoundEnabled()) playDmChime();
+    };
+
+    showPreview();
+    const timer = window.setInterval(showPreview, 3_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const openRef = useRef(open);
   const selectedRef = useRef(selected);
   openRef.current = open;
@@ -211,9 +270,22 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
     [],
   );
 
-  // Incoming messages follow the owner's notification mode, conversation mute,
-  // and Do Not Disturb. Silent/DND still update the unread badge: the alert is
-  // what is suppressed, never the message.
+  useEffect(
+    () =>
+      subscribeDmToastPreview(() =>
+        setToast({
+          event: createPreviewEvent(
+            "Hi! I found your profile through a review. What did you think of the ending?",
+          ),
+          key: Date.now(),
+          previewOnly: true,
+        }),
+      ),
+    [],
+  );
+
+  // Incoming messages follow the owner's local toast/sound toggles, conversation
+  // mute, and Do Not Disturb. The unread count still updates when alerts are off.
   useEffect(
     () =>
       subscribeDmIncoming((event) => {
@@ -226,10 +298,8 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
         ) {
           return;
         }
-        const mode = currentDmNotifyMode();
-        if (mode === "silent") return;
-        if (mode === "preview") setToast({ event, key: Date.now() });
-        playDmChime();
+        if (currentDmToastEnabled()) setToast({ event, key: Date.now() });
+        if (currentDmSoundEnabled()) playDmChime();
       }),
     [],
   );
@@ -273,10 +343,9 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
     await refreshDm({ silent: true });
   }, []);
 
-  if (!dm.authed) return null;
+  if (!dm.authed && !toast?.previewOnly) return null;
 
   const unread = dm.unread;
-  const unreadLabel = unread > 99 ? "99+" : String(unread);
 
   const bottomBase = "var(--harbor-music-dock, 0px) + var(--harbor-viewport-bottom, 0px)";
   const panelBottom = playing
@@ -304,11 +373,7 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
               <span className="text-[14px] font-semibold tracking-tight text-ink">
                 {t("Messages")}
               </span>
-              {unread > 0 && (
-                <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold tabular-nums text-canvas">
-                  {unreadLabel}
-                </span>
-              )}
+              {unread > 0 && <DmUnreadBadge count={unread} />}
               <div className="ms-auto flex items-center gap-1">
                 <button
                   type="button"
@@ -380,24 +445,38 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
             className="animate-panel-in fixed end-4 z-[230] w-[min(340px,calc(100vw-2rem))] rounded-xl bg-surface shadow-[0_12px_36px_-12px_rgba(0,0,0,0.6)] ring-1 ring-edge-soft"
             style={{ top: "calc(5rem + var(--harbor-viewport-bottom, 0px))" }}
           >
-            <button
-              type="button"
-              onClick={() => {
-                openConversation(toast.event.conversation.id);
-                setToast(null);
-              }}
-              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 pe-9 text-start transition-colors hover:bg-elevated"
-            >
-              <DmAvatar user={toast.event.conversation.other} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] font-semibold text-ink">
-                  {toast.event.conversation.other?.displayName ?? t("New message")}
+            {toast.previewOnly ? (
+              <div className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 pe-9 text-start">
+                <DmAvatar user={toast.event.conversation.other} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-semibold text-ink">
+                    {toast.event.conversation.other?.displayName ?? t("New message")}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[12px] text-ink-subtle">
+                    {dmPreview(toast.event.message.body, t("New message"))}
+                  </span>
                 </span>
-                <span className="mt-0.5 block truncate text-[12px] text-ink-subtle">
-                  {dmPreview(toast.event.message.body, t("New message"))}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  openConversation(toast.event.conversation.id);
+                  setToast(null);
+                }}
+                className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 pe-9 text-start transition-colors hover:bg-elevated"
+              >
+                <DmAvatar user={toast.event.conversation.other} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-semibold text-ink">
+                    {toast.event.conversation.other?.displayName ?? t("New message")}
+                  </span>
+                  <span className="mt-0.5 block truncate text-[12px] text-ink-subtle">
+                    {dmPreview(toast.event.message.body, t("New message"))}
+                  </span>
                 </span>
-              </span>
-            </button>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => setToast(null)}

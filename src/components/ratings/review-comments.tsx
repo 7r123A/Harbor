@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Loader2, Reply } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { authToken } from "@/lib/theme-auth";
 import { parseQuotedBody, ratingQuoteLength } from "@/lib/ratings/quote";
@@ -22,11 +22,13 @@ import {
   type ReviewCommentApiRow,
 } from "@/lib/social/review-comment-api";
 import type { TitleRef } from "@/lib/social/review-rank";
+import { useReviewEngagement } from "@/lib/social/review-engagement";
 
 function fromReviewComment(row: ReviewCommentApiRow): Comment {
   const handle = row.author?.handle || "?";
   return {
     id: row.id,
+    parentId: row.parentId || undefined,
     body: row.body,
     at: row.at,
     edited: row.edited,
@@ -35,6 +37,114 @@ function fromReviewComment(row: ReviewCommentApiRow): Comment {
     authorAvatarUrl: row.author?.avatarUrl,
     authorVerified: row.author?.verified,
   };
+}
+
+type CommentNode = { comment: Comment; replies: CommentNode[] };
+
+function commentTree(comments: Comment[]): CommentNode[] {
+  const nodes = new Map(
+    comments.map((comment) => [comment.id, { comment, replies: [] as CommentNode[] }]),
+  );
+  const roots: CommentNode[] = [];
+  for (const node of nodes.values()) {
+    const parent = node.comment.parentId ? nodes.get(node.comment.parentId) : undefined;
+    if (parent && parent.comment.id !== node.comment.id) parent.replies.push(node);
+    else roots.push(node);
+  }
+  return roots;
+}
+
+function ReviewCommentNode({
+  node,
+  signedIn,
+  replyingTo,
+  sending,
+  onReply,
+  onSubmit,
+}: {
+  node: CommentNode;
+  signedIn: boolean;
+  replyingTo: string | null;
+  sending: boolean;
+  onReply: (id: string | null) => void;
+  onSubmit: (text: string, parentId: string) => Promise<ComposeIssue>;
+}) {
+  const t = useT();
+  const { comment } = node;
+  const body = parseQuotedBody(comment.body).text;
+  return (
+    <li className="flex flex-col gap-2">
+      <div className="flex items-start gap-2">
+        <UserHoverCard handle={comment.authorHandle}>
+          <button
+            type="button"
+            onClick={() => requestOpenProfile(comment.authorHandle)}
+            aria-label={t("Open {alias} profile", {
+              alias: comment.authorAlias || comment.authorHandle,
+            })}
+            className="shrink-0 rounded-full"
+          >
+            <Avatar
+              src={comment.authorAvatarUrl}
+              size={24}
+              alias={comment.authorAlias || comment.authorHandle}
+            />
+          </button>
+        </UserHoverCard>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <UserHoverCard handle={comment.authorHandle}>
+              <button
+                type="button"
+                onClick={() => requestOpenProfile(comment.authorHandle)}
+                className="truncate text-[12px] font-semibold text-ink hover:text-accent"
+              >
+                {comment.authorAlias || `@${comment.authorHandle}`}
+              </button>
+            </UserHoverCard>
+            <span className="text-[11.5px] text-ink-subtle">{timeAgo(comment.at)}</span>
+          </div>
+          <Body text={body} />
+          {signedIn && (
+            <button
+              type="button"
+              onClick={() => onReply(replyingTo === comment.id ? null : comment.id)}
+              aria-expanded={replyingTo === comment.id}
+              className="mt-1 inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-[11.5px] font-medium text-ink-subtle transition-colors hover:bg-elevated/70 hover:text-ink"
+            >
+              <Reply size={13} /> {replyingTo === comment.id ? t("Cancel") : t("Reply")}
+            </button>
+          )}
+          {replyingTo === comment.id && (
+            <div className="mt-1">
+              <CommentCompose
+                placeholder={t("Leave a comment on this review.")}
+                onSubmit={(raw) => onSubmit(raw, comment.id)}
+                sending={sending}
+                disabled={!signedIn}
+                sources={[]}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+      {node.replies.length > 0 && (
+        <ul className="ms-3 flex flex-col gap-2 border-s-2 border-edge-soft ps-3">
+          {node.replies.map((reply) => (
+            <ReviewCommentNode
+              key={reply.comment.id}
+              node={reply}
+              signedIn={signedIn}
+              replyingTo={replyingTo}
+              sending={sending}
+              onReply={onReply}
+              onSubmit={onSubmit}
+            />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
 }
 
 function Body({ text }: { text: string }) {
@@ -77,13 +187,17 @@ export function ReviewComments({
 }) {
   const t = useT();
   const signedIn = !!authToken();
+  const { value: engagement, update } = useReviewEngagement(reviewId);
+  const threadVersion = engagement.threadVersion ?? 0;
   const [state, setState] = useState<"loading" | "ready" | "empty" | "error">("loading");
   const [comments, setComments] = useState<Comment[]>([]);
   const [nextCursor, setNextCursor] = useState<string | undefined>();
   const [serverCount, setServerCount] = useState<number | null>(null);
   const [sending, setSending] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const roots = useMemo(() => commentTree(comments), [comments]);
 
   useEffect(() => {
     let live = true;
@@ -109,11 +223,11 @@ export function ReviewComments({
     return () => {
       live = false;
     };
-  }, [handle, target, reviewId]);
+  }, [handle, target, reviewId, threadVersion]);
 
   useEffect(() => {
-    onCount?.(reviewId ? (serverCount ?? comments.length) : comments.length);
-  }, [comments.length, onCount, reviewId, serverCount]);
+    if (state === "ready" || state === "empty") onCount?.(serverCount ?? comments.length);
+  }, [comments.length, onCount, serverCount, state]);
 
   const more = async () => {
     if (!nextCursor || loadingMore) return;
@@ -135,7 +249,7 @@ export function ReviewComments({
     }
   };
 
-  const submit = async (raw: string): Promise<ComposeIssue> => {
+  const submit = async (raw: string, parentId?: string): Promise<ComposeIssue> => {
     if (!signedIn) return "signin";
     const quote = reviewId ? null : reviewQuote(handle, target, score);
     const budget = COMMENT_MAX - (quote ? ratingQuoteLength(quote) : 0);
@@ -145,10 +259,15 @@ export function ReviewComments({
     try {
       const body = stripUrls(raw.trim());
       const created = reviewId
-        ? fromReviewComment(await createReviewComment(reviewId, body))
-        : await replyToReview(handle, target, score, body);
+        ? fromReviewComment(await createReviewComment(reviewId, body, parentId))
+        : await replyToReview(handle, target, score, body, parentId);
       setComments((cur) => [created, ...cur]);
-      if (reviewId) setServerCount((count) => (count ?? comments.length) + 1);
+      setReplyingTo(null);
+      if (reviewId) {
+        const count = (serverCount ?? comments.length) + 1;
+        setServerCount(count);
+        update({ comments: count, threadChanged: true });
+      }
       setState("ready");
       return null;
     } catch (error) {
@@ -177,44 +296,17 @@ export function ReviewComments({
 
       {comments.length > 0 && (
         <ul className="flex flex-col gap-2">
-          {comments.map((comment) => {
-            const body = parseQuotedBody(comment.body).text;
-            return (
-              <li key={comment.id} className="flex items-start gap-2">
-                <UserHoverCard handle={comment.authorHandle}>
-                  <button
-                    type="button"
-                    onClick={() => requestOpenProfile(comment.authorHandle)}
-                    aria-label={t("Open {alias} profile", {
-                      alias: comment.authorAlias || comment.authorHandle,
-                    })}
-                    className="shrink-0 rounded-full"
-                  >
-                    <Avatar
-                      src={comment.authorAvatarUrl}
-                      size={24}
-                      alias={comment.authorAlias || comment.authorHandle}
-                    />
-                  </button>
-                </UserHoverCard>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <UserHoverCard handle={comment.authorHandle}>
-                      <button
-                        type="button"
-                        onClick={() => requestOpenProfile(comment.authorHandle)}
-                        className="truncate text-[12px] font-semibold text-ink hover:text-accent"
-                      >
-                        {comment.authorAlias || `@${comment.authorHandle}`}
-                      </button>
-                    </UserHoverCard>
-                    <span className="text-[11.5px] text-ink-subtle">{timeAgo(comment.at)}</span>
-                  </div>
-                  <Body text={body} />
-                </div>
-              </li>
-            );
-          })}
+          {roots.map((node) => (
+            <ReviewCommentNode
+              key={node.comment.id}
+              node={node}
+              signedIn={signedIn}
+              replyingTo={replyingTo}
+              sending={sending}
+              onReply={setReplyingTo}
+              onSubmit={submit}
+            />
+          ))}
         </ul>
       )}
 
@@ -233,7 +325,13 @@ export function ReviewComments({
       {loadError && <p className="mt-1 text-[12px] text-danger">{loadError}</p>}
 
       <div className="mt-2">
-        <CommentCompose onSubmit={submit} sending={sending} disabled={!signedIn} sources={[]} />
+        <CommentCompose
+          placeholder={t("Leave a comment on this review.")}
+          onSubmit={submit}
+          sending={sending}
+          disabled={!signedIn}
+          sources={[]}
+        />
       </div>
     </div>
   );

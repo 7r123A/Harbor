@@ -22,7 +22,7 @@ function loadReviewComments(dependencies: Record<string, unknown>) {
   const mocks: Record<string, unknown> = {
     react: React,
     "react/jsx-runtime": jsx,
-    "lucide-react": { Loader2: () => null },
+    "lucide-react": { Loader2: () => null, Reply: () => null },
     "@/lib/i18n": { useT: () => (key: string) => key },
     ...dependencies,
   };
@@ -49,6 +49,7 @@ test("review comments show server counts, load the next cursor, and reconcile a 
 
   const pageCalls: Array<string | undefined> = [];
   const countUpdates: number[] = [];
+  const engagementUpdates: unknown[] = [];
   const { ReviewComments } = loadReviewComments({
     "@/lib/theme-auth": { authToken: () => "fixture-token" },
     "@/lib/ratings/quote": {
@@ -65,6 +66,12 @@ test("review comments show server counts, load the next cursor, and reconcile a 
     },
     "@/views/profile/user-hover-card": { UserHoverCard: ({ children }: any) => children },
     "@/lib/social/open-profile": { requestOpenProfile: () => {} },
+    "@/lib/social/review-engagement": {
+      useReviewEngagement: () => ({
+        value: {},
+        update: (patch: unknown) => engagementUpdates.push(patch),
+      }),
+    },
     "@/views/profile/text-safety": {
       COMMENT_MAX: 1000,
       segmentProfanity: (text: string) => [{ text, masked: false }],
@@ -141,6 +148,7 @@ test("review comments show server counts, load the next cursor, and reconcile a 
     });
     assert.match(dom.window.document.body.textContent || "", /A reply/);
     assert.equal(countUpdates.at(-1), 4);
+    assert.deepEqual(engagementUpdates, [{ comments: 4, threadChanged: true }]);
   } finally {
     await React.act(() => root.unmount());
     dom.window.close();

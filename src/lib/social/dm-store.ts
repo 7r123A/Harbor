@@ -26,6 +26,7 @@ let state: DmState = {
 };
 const listeners = new Set<() => void>();
 const incomingListeners = new Set<(event: DmIncoming) => void>();
+const previewListeners = new Set<() => void>();
 
 let inFlight: Promise<void> | null = null;
 let initialLoaded = false;
@@ -56,11 +57,30 @@ export function useDmState(): DmState {
   return useSyncExternalStore(subscribeDm, getDmState, getDmState);
 }
 
+function getDmUnreadBadgeCount(): number {
+  return state.unread;
+}
+
+export function useDmUnreadBadgeCount(): number {
+  return useSyncExternalStore(subscribeDm, getDmUnreadBadgeCount, getDmUnreadBadgeCount);
+}
+
 export function subscribeDmIncoming(fn: (event: DmIncoming) => void): () => void {
   incomingListeners.add(fn);
   return () => {
     incomingListeners.delete(fn);
   };
+}
+
+export function subscribeDmToastPreview(fn: () => void): () => void {
+  previewListeners.add(fn);
+  return () => {
+    previewListeners.delete(fn);
+  };
+}
+
+export function requestDmToastPreview(): void {
+  for (const fn of previewListeners) fn();
 }
 
 export function dmConversationById(id: string | null): DmConversation | null {

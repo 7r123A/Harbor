@@ -459,6 +459,10 @@ export function parseStoredSettings(raw: string | null): {
         typeof parsed.malSyncIndicator === "boolean"
           ? parsed.malSyncIndicator
           : (legacySyncIndicator ?? DEFAULT.malSyncIndicator),
+      hoverPreviewEnabled:
+        parsed._hoverPreviewOnByDefault !== true || parsed.hoverPreviewEnabled !== false,
+      _hoverPreviewOnByDefault: true,
+      cardHoverStyle: parsed.cardHoverStyle === "custom" ? "custom" : "default",
       searchTmdbTopMatch: parsed.searchTmdbTopMatch !== false,
       metadataAddonOrder: Array.isArray(parsed.metadataAddonOrder)
         ? [
@@ -575,8 +579,8 @@ export function parseStoredSettings(raw: string | null): {
         ...parsed.letterboxd,
       },
       preferredSubLangs: (parsed.preferredSubLangs ?? DEFAULT.preferredSubLangs).map(languageName),
-      preferredAudioLangs: (parsed.preferredAudioLangs ?? DEFAULT.preferredAudioLangs).map((lang) =>
-        lang === ORIGINAL_AUDIO_LANG ? lang : languageName(lang),
+      preferredAudioLangs: (parsed.preferredAudioLangs ?? DEFAULT.preferredAudioLangs).map(
+        (lang) => (lang === ORIGINAL_AUDIO_LANG ? lang : languageName(lang)),
       ),
       castAlwaysTranscode: parsed.castAlwaysTranscode ?? DEFAULT.castAlwaysTranscode,
       mangaUpscaleQuality: parsed.mangaUpscaleQuality === "best" ? "best" : "fast",

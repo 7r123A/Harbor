@@ -76,10 +76,12 @@ export async function replyToReview(
   target: TitleRef,
   score: number,
   text: string,
+  parentId?: string,
 ): Promise<Comment> {
   const created = await postComment(
     handle,
     composeQuotedBody(reviewQuote(handle, target, score), text),
+    parentId,
   );
   cache.delete(keyOf(handle, target));
   return created;

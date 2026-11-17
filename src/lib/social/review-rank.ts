@@ -1,5 +1,6 @@
 import { parseQuotedBody } from "@/lib/ratings/quote";
 import type { PublicRating, RatingMediaType } from "@/lib/ratings/types";
+import type { MutualMatch } from "./mutual-score";
 
 /** The exact title a review belongs to: an item key is only unique inside its media type. */
 export type TitleRef = { itemKey: string; mediaType: RatingMediaType };
@@ -20,9 +21,10 @@ export type TitleRating = {
   reviewId?: string;
   reactions?: { count: number; mine: boolean };
   comments?: { count: number };
+  match?: MutualMatch;
 };
 
-export type RatingSort = "newest" | "highest" | "lowest";
+export type RatingSort = "recent" | "liked" | "commented" | "highest" | "lowest";
 
 export function foldHandle(handle: string | null | undefined): string {
   return (handle ?? "").trim().toLowerCase();
@@ -59,6 +61,9 @@ export function titleRatingFrom(
     review: review || undefined,
     spoiler: rating.spoiler || undefined,
     at: rating.at,
+    reviewId: rating.reviewId ?? rating.id,
+    reactions: rating.reactions ? { ...rating.reactions } : undefined,
+    comments: rating.comments ? { ...rating.comments } : undefined,
   };
 }
 
@@ -101,7 +106,12 @@ export function mergeTitleRatings(
 
 export function sortTitleRatings(ratings: readonly TitleRating[], sort: RatingSort): TitleRating[] {
   const list = [...ratings];
-  if (sort === "highest") list.sort((a, b) => b.score - a.score || timeOf(b.at) - timeOf(a.at));
+  if (sort === "liked" || sort === "commented") {
+    const count = (rating: TitleRating) =>
+      sort === "liked" ? (rating.reactions?.count ?? 0) : (rating.comments?.count ?? 0);
+    list.sort((a, b) => count(b) - count(a) || timeOf(b.at) - timeOf(a.at));
+  } else if (sort === "highest")
+    list.sort((a, b) => b.score - a.score || timeOf(b.at) - timeOf(a.at));
   else if (sort === "lowest") list.sort((a, b) => a.score - b.score || timeOf(b.at) - timeOf(a.at));
   else list.sort((a, b) => timeOf(b.at) - timeOf(a.at));
   return list;

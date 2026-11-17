@@ -2,6 +2,7 @@ import { socialGet, socialPost } from "@/lib/social/client";
 
 export type ReviewCommentApiRow = {
   id: string;
+  parentId?: string | null;
   body: string;
   at: string;
   edited?: boolean;
@@ -14,16 +15,19 @@ export type ReviewCommentPage = {
   total: number;
 };
 
-export function loadReviewCommentPage(reviewId: string, cursor?: string) {
+export function loadReviewCommentPage(
+  reviewId: string,
+  cursor?: string,
+): Promise<ReviewCommentPage> {
   const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
   return socialGet<ReviewCommentPage>(
     `/social/reviews/${encodeURIComponent(reviewId)}/comments${query}`,
   );
 }
 
-export function createReviewComment(reviewId: string, body: string) {
+export function createReviewComment(reviewId: string, body: string, parentId?: string) {
   return socialPost<ReviewCommentApiRow>(
     `/social/reviews/${encodeURIComponent(reviewId)}/comments`,
-    { body },
+    { body, ...(parentId ? { parentId } : {}) },
   );
 }

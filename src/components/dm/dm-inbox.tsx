@@ -1,3 +1,4 @@
+import { DmUnreadBadge } from "@/components/dm/dm-unread-badge";
 import { useMemo, useState } from "react";
 import { Search, SquarePen, BellOff } from "lucide-react";
 import { useT } from "@/lib/i18n";
@@ -136,11 +137,7 @@ export function DmInbox({
                           {c.lastMessage?.mine && !c.lastMessage.deleted ? `${t("You")}: ` : ""}
                           {preview}
                         </span>
-                        {c.unread > 0 && (
-                          <span className="inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold tabular-nums text-canvas">
-                            {c.unread > 99 ? "99+" : c.unread}
-                          </span>
-                        )}
+                        {c.unread > 0 && <DmUnreadBadge count={c.unread} />}
                       </span>
                     </span>
                   </button>

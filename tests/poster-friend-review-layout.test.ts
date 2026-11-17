@@ -12,7 +12,7 @@ test("poster cards reserve and bottom-align title space before a close friend ro
   assert.match(posterCard, /flex min-h-9 flex-col justify-end/);
   assert.match(
     posterCard,
-    /className="-mt-2\.5 flex h-\[15px\] items-center overflow-hidden"\s+data-friend-review-row/,
+    /className="-mt-2 flex h-\[22px\] items-center overflow-hidden px-px"\s+data-friend-review-row/,
   );
   assert.ok(
     posterCard.indexOf("!settings.hidePosterTitles") < posterCard.indexOf("data-friend-review-row"),
@@ -26,6 +26,6 @@ test("TV card friend row is below, not overlaid on, the artwork", () => {
   assert.ok(rowStart > buttonEnd, "friend row is a sibling after the TV artwork button");
   assert.match(
     tvCard,
-    /className="-mt-2\.5 flex h-\[15px\] items-center overflow-hidden"\s+data-friend-review-row/,
+    /className="-mt-2 flex h-\[22px\] items-center overflow-hidden px-px"\s+data-friend-review-row/,
   );
 });

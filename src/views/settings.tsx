@@ -98,6 +98,9 @@ const AwardIconsPanel = lazy(() =>
 const WebhooksPanel = lazy(() =>
   import("./settings/webhooks-panel").then((m) => ({ default: m.WebhooksPanel })),
 );
+const DmNotificationsPanel = lazy(() =>
+  import("./settings/dm-notifications-panel").then((m) => ({ default: m.DmNotificationsPanel })),
+);
 const BugReportPanel = lazy(() =>
   import("./settings/bug-report-panel").then((m) => ({ default: m.BugReportPanel })),
 );
@@ -146,6 +149,7 @@ const SECTION_PRELOAD: Partial<Record<SectionId, () => Promise<unknown>>> = {
   badges: () => import("./settings/stream-badges-panel"),
   awardIcons: () => import("./settings/award-icons-panel"),
   webhooks: () => import("./settings/webhooks-panel"),
+  dmNotifications: () => import("./settings/dm-notifications-panel"),
   bug: () => import("./settings/bug-report-panel"),
   support: () => import("./settings/support-panel"),
   licenses: () => import("./settings/licenses-panel"),
@@ -272,6 +276,10 @@ const SECTION_META: Record<SectionId, { label: string; sub: string }> = {
   webhooks: {
     label: "Webhooks",
     sub: "Push upcoming releases to Discord, Telegram, or your desktop. Pick which calendars feed the notifications.",
+  },
+  dmNotifications: {
+    label: "Direct messages",
+    sub: "Choose how Harbor alerts you about incoming direct messages.",
   },
   bug: {
     label: "Report a bug",
@@ -736,6 +744,7 @@ export function Settings({ visible = true }: { visible?: boolean }) {
                       {active === "awardIcons" && <AwardIconsPanel />}
 
                       {active === "webhooks" && <WebhooksPanel />}
+                      {active === "dmNotifications" && <DmNotificationsPanel />}
 
                       {active === "bug" && <BugReportPanel />}
                       {active === "support" && <SupportPanel />}

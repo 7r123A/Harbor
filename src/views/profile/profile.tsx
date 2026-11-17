@@ -42,7 +42,6 @@ import type { FavoriteKind } from "./use-favorites";
 import type { PublicRating } from "@/lib/ratings/types";
 import { ratingQuoteFrom, type RatingQuote } from "@/lib/ratings/quote";
 import { RatingsCard } from "./ratings-card";
-import { MutualRatingsCard } from "./mutual-ratings-card";
 import { UserRatings } from "@/views/ratings/user-ratings";
 import { ImportModal } from "@/views/ratings/import/import-modal";
 import { WatchNowCard } from "./watch-now-card";
@@ -229,6 +228,10 @@ export function ProfileView({
   if (state === "empty" || !summary) return <ProfileEmpty handle={handle} onBack={goBack} />;
 
   const locked = summary.private && !summary.isOwner;
+  const mutualHandle =
+    viewerSignedIn && !summary.isOwner && !locked && summary.friendStatus !== "blocked"
+      ? summary.handle
+      : undefined;
 
   const ownerAvatar =
     summary.isOwner || isNuvioPrimaryMatch
@@ -307,16 +310,14 @@ export function ProfileView({
       />
     ),
     ratings: (
-      <>
-        <RatingsCard
-          ratings={summary.ratings}
-          isOwner={summary.isOwner}
-          onViewAll={() => setShowRatings(true)}
-          onImport={summary.isOwner ? () => setImportingRatings(true) : undefined}
-          onOpenMeta={onOpenMeta}
-        />
-        <MutualRatingsCard handle={handle} isOwner={summary.isOwner} />
-      </>
+      <RatingsCard
+        ratings={summary.ratings}
+        isOwner={summary.isOwner}
+        mutualHandle={mutualHandle}
+        onViewAll={() => setShowRatings(true)}
+        onImport={summary.isOwner ? () => setImportingRatings(true) : undefined}
+        onOpenMeta={onOpenMeta}
+      />
     ),
     canvas: c.hasCanvas ? (
       <CanvasCard
@@ -596,6 +597,7 @@ export function ProfileView({
               handle={handle}
               alias={summary.alias}
               isOwner={summary.isOwner}
+              mutualHandle={mutualHandle}
               onOpenMeta={onOpenMeta}
               onClose={() => setShowRatings(false)}
               onComment={viewerSignedIn ? commentOnRating : undefined}
