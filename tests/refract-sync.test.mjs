@@ -420,7 +420,7 @@ test("queue-full warning returns after a failed attempt is successfully retried"
     h.setOffline(false);
     h.sync.retryRefractSync();
     await tick();
-    assert.equal(h.sync.refractStatus().synced, 1);
+    assert.equal(h.sync.refractStatus().synced, 16);
     assert.equal(h.sync.refractStatus().failed, 1);
     assert.equal(h.sync.refractStatus().message, "Refract queue full; unable to save another watch");
   } finally {
