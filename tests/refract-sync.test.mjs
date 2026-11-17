@@ -355,3 +355,41 @@ test("a same-key queue reset ignores late write completion without suppressing a
     h.cleanup();
   }
 });
+
+test("account replacement during an in-flight write cannot mark the new queue as synced", async () => {
+  const h = harness();
+  try {
+    let finish;
+    let started;
+    const writing = new Promise((resolve) => {
+      started = resolve;
+    });
+    h.setMovieWrite(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+          started();
+        }),
+    );
+    h.sync.enqueueRefractWatch(movieEvent());
+    await writing;
+
+    h.sync.resetRefractSync();
+    h.setKey("rfk_replacement_fixture");
+    finish();
+    await tick();
+    assert.equal(h.sync.refractStatus().pending, 0);
+    assert.equal(h.sync.refractStatus().synced, 0);
+
+    h.setMovieWrite(async (...args) => {
+      h.calls.push({ kind: "movie", args });
+    });
+    h.sync.enqueueRefractWatch(movieEvent("tmdb:movie:56"));
+    await tick();
+    assert.equal(h.calls.length, 1);
+    assert.equal(h.calls[0].args[0], "rfk_replacement_fixture");
+    assert.equal(h.sync.refractStatus().synced, 1);
+  } finally {
+    h.cleanup();
+  }
+});
