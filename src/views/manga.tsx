@@ -48,7 +48,6 @@ import { MangaSourcesView } from "./manga/manga-sources-panel";
 import { MangaUniverses, UniversesCta } from "./manga/manga-universes";
 import { AnilistMangaRows } from "./manga/anilist-manga-rows";
 import { MangaHiddenRows } from "./manga/manga-row-visibility";
-import { BecauseYouWatched } from "./manga/because-you-watched";
 import { useMangaFavorites } from "@/lib/manga-favorites";
 import { mangaLists } from "@/lib/manga-lists";
 
@@ -292,31 +291,7 @@ export function MangaView() {
           featured={featured}
           onOpen={(id) => setMode({ screen: "detail", mangaId: id })}
         />
-        <div className="mt-8">
-          <MangaContinue onResume={resume} />
-        </div>
-        <MangaHiddenRows />
-        <LazyMount minHeight={280}>
-          <AnilistMangaRows onOpen={openMangaByTitle} />
-        </LazyMount>
-        <LazyMount minHeight={280}>
-          <BecauseYouWatched key={activeMangaSourceId()} onOpen={openMangaItem} />
-        </LazyMount>
-        <div className="mt-8">
-          <LazyMount minHeight={300}>
-            <MangaRail
-              key={activeMangaSourceId()}
-              title={t("Popular Manga")}
-              subtitle={t("Most read right now")}
-              collapsibleKey="harbor.manga.popularRowOpen"
-              hideKey="popular"
-              scrollKey="manga:Popular Manga"
-              load={() => popularManga(0)}
-              onOpen={openMangaItem}
-            />
-          </LazyMount>
-        </div>
-        <div className="mb-9 mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <button
             type="button"
             onClick={() => setMode({ screen: "collections" })}
@@ -352,6 +327,27 @@ export function MangaView() {
           </button>
           <UniversesCta onClick={() => setMode({ screen: "universes" })} />
           <LibraryCta onClick={() => setMode({ screen: "library" })} />
+        </div>
+        <div className="mt-8">
+          <MangaContinue onResume={resume} />
+        </div>
+        <MangaHiddenRows />
+        <LazyMount minHeight={280}>
+          <AnilistMangaRows onOpen={openMangaByTitle} />
+        </LazyMount>
+        <div className="mt-8">
+          <LazyMount minHeight={300}>
+            <MangaRail
+              key={activeMangaSourceId()}
+              title={t("Popular Manga")}
+              subtitle={t("Most read right now")}
+              collapsibleKey="harbor.manga.popularRowOpen"
+              hideKey="popular"
+              scrollKey="manga:Popular Manga"
+              load={() => popularManga(0)}
+              onOpen={openMangaItem}
+            />
+          </LazyMount>
         </div>
         <div className="mb-6 mt-3 flex items-center justify-between gap-4">
           <h2 className="text-[22px] font-medium tracking-tight text-ink">{t("Browse manga")}</h2>
