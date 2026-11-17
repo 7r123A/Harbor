@@ -189,6 +189,7 @@ test("Library tab removal uses the bookmark operation and preserves History", as
     filmClosure: (ids: string[]) => new Set(ids),
     evictWatchlistAggregate() {},
     setStremio() {},
+    setStremioItems() {},
     setLocalEntries() {},
     setTrakt() {},
     setRawCount() {},

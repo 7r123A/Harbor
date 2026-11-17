@@ -18,71 +18,93 @@ function load(path, mocks = {}) {
   return exports;
 }
 
-const local = (id, imdbId) => ({ id, imdbId, type: "movie", name: "Fixture", addedAt: 1 });
+const local = (id, imdbId, type = "movie") => ({
+  id,
+  imdbId,
+  type,
+  name: "Fixture",
+  addedAt: 1,
+});
 
-test("watched local entries are filtered from Watchlist but remain in the merged data", () => {
-  const view = load("src/lib/watchlist-watched.ts", {
-    "./movie-watched": {
-      isMovieWatchedLocal: (id, altIds) => id === "tmdb:movie:1" || (altIds ?? []).includes("tt1"),
-    },
+const movie = (state = {}) => ({
+  _id: "tt1",
+  type: "movie",
+  name: "Fixture",
+  removed: false,
+  temp: false,
+  _ctime: "2026-01-01T00:00:00Z",
+  _mtime: "2026-01-02T00:00:00Z",
+  state: {
+    duration: 100,
+    timeOffset: 0,
+    timesWatched: 0,
+    flaggedWatched: 0,
+    ...state,
+  },
+});
+
+const series = (state = {}) => ({
+  ...movie(state),
+  _id: "tt2",
+  type: "series",
+  state: { duration: 100, timeOffset: 0, timesWatched: 0, flaggedWatched: 0, ...state },
+});
+
+function view(mocks = {}) {
+  return load("src/lib/watchlist-watched.ts", {
+    "./stremio": { CW_FINISHED_RATIO: 0.9 },
+    "./movie-watched": { isMovieWatchedLocal: () => false },
     "./watched-flag": { isWatchedFlagged: () => false },
+    ...mocks,
   });
+}
 
+test("an in-progress movie is not finished, a completed movie is", () => {
+  const v = view();
+  assert.deepEqual(v.collectStremioFinishedIds([movie({ timeOffset: 50 })]), new Set());
+  assert.deepEqual(v.collectStremioFinishedIds([movie({ timeOffset: 95 })]), new Set(["tt1"]));
+  assert.deepEqual(v.collectStremioFinishedIds([movie({ timesWatched: 1 })]), new Set(["tt1"]));
+});
+
+test("series are not finished just because one video was watched", () => {
+  const v = view();
+  assert.deepEqual(v.collectStremioFinishedIds([series({ timesWatched: 3 })]), new Set());
+});
+
+test("watched local movies are filtered from Watchlist", () => {
+  const v = view({
+    "./movie-watched": { isMovieWatchedLocal: (id) => id === "tmdb:movie:1" },
+  });
   const entry = local("tmdb:movie:1", "tt1");
-  const card = {
-    meta: { id: "tmdb:movie:1", type: "movie" },
-    localId: "tmdb:movie:1",
-  };
-
-  assert.equal(view.isMergedWatchlistCardWatched(card, [entry], new Set()), true);
+  const card = { meta: { id: "tmdb:movie:1", type: "movie" }, localId: "tmdb:movie:1" };
+  assert.equal(v.isMergedWatchlistCardFinished(card, [entry], new Set(), new Set()), true);
 });
 
-test("watched Stremio ids filter a local card merged under another id form", () => {
-  const view = load("src/lib/watchlist-watched.ts", {
-    "./movie-watched": { isMovieWatchedLocal: () => false },
-    "./watched-flag": { isWatchedFlagged: () => false },
-  });
-
-  const entry = local("tmdb:movie:2", "tt2");
-  const card = {
-    meta: { id: "tmdb:movie:2", type: "movie" },
-    localId: "tmdb:movie:2",
-    stremioId: "tt2",
-  };
-
-  assert.equal(view.isMergedWatchlistCardWatched(card, [entry], new Set(["tt2"])), true);
+test("lazy finished series are filtered from Watchlist", () => {
+  const v = view();
+  const card = { meta: { id: "tt2", type: "series" }, stremioId: "tt2" };
+  assert.equal(v.isMergedWatchlistCardFinished(card, [], new Set(), new Set(["tt2"])), true);
+  assert.equal(v.isMergedWatchlistCardFinished(card, [], new Set(), new Set()), false);
 });
 
-test("unwatched cards stay visible", () => {
-  const view = load("src/lib/watchlist-watched.ts", {
-    "./movie-watched": { isMovieWatchedLocal: () => false },
-    "./watched-flag": { isWatchedFlagged: () => false },
-  });
-
-  assert.equal(
-    view.isMergedWatchlistCardWatched(
-      { meta: { id: "tt3", type: "movie" }, stremioId: "tt3" },
-      [],
-      new Set(),
-    ),
-    false,
-  );
+test("series whole-show watched flags are honoured synchronously", () => {
+  const v = view({ "./watched-flag": { isWatchedFlagged: (id) => id === "tt2" } });
+  const card = { meta: { id: "tt2", type: "series" }, stremioId: "tt2" };
+  assert.equal(v.isMergedWatchlistCardFinished(card, [], new Set(), new Set()), true);
 });
 
-test("series watched flags are honoured", () => {
-  const view = load("src/lib/watchlist-watched.ts", {
-    "./movie-watched": { isMovieWatchedLocal: () => false },
-    "./watched-flag": { isWatchedFlagged: (id) => id === "tt4" },
+test("in-progress movies are not in History; finished movies are", () => {
+  const history = load("src/views/library/history-merge.ts", {
+    "@/lib/stremio": {
+      CW_FINISHED_RATIO: 0.9,
+      episodeFromVideoId: () => null,
+      libraryMetaType: (type) => type,
+    },
+    "./shared": { parseTs: (value) => (value ? Date.parse(value) : null) },
   });
-
-  assert.equal(
-    view.isMergedWatchlistCardWatched(
-      { meta: { id: "tt4", type: "series" }, stremioId: "tt4" },
-      [],
-      new Set(),
-    ),
-    true,
-  );
+  assert.equal(history.filterHistory([movie({ timeOffset: 50 })]).length, 0);
+  assert.equal(history.filterHistory([movie({ timeOffset: 95 })]).length, 1);
+  assert.equal(history.filterHistory([movie({ timesWatched: 1 })]).length, 1);
 });
 
 function simklFixture(state) {
