@@ -115,6 +115,11 @@ function projectSeasonEpisode(
     lang,
   );
 
+  // TVDB order renumbers episodes (absolute/DVD order), so the panel renders
+  // these instead of the raw episode number when they are set.
+  const displayNumber = e.orderNumber ?? e.episodeNumber;
+  const displaySeason = e.orderSeason ?? e.seasonNumber;
+
   return match
     ? {
         ...match,
@@ -122,6 +127,8 @@ function projectSeasonEpisode(
         ...(!unaired && img && img !== match.thumbnail && match.thumbnail
           ? { thumbnailFallback: match.thumbnail }
           : {}),
+        displayNumber,
+        displaySeason,
         ...(title != null ? { title } : {}),
         ...(synopsis != null ? { synopsis } : {}),
         titleLanguage:
@@ -163,6 +170,8 @@ function projectSeasonEpisode(
               ? e.overviewLanguage
               : e.overviewEnLanguage,
         thumbnail: img ?? null,
+        displayNumber,
+        displaySeason,
         airdate,
         length: e.runtime ?? null,
         imdbSeason: e.seasonNumber,
@@ -478,7 +487,6 @@ export function useAnimeTvdbPanel(
           ? undefined
           : (imdbMap?.get(`${e.seasonNumber}:${e.episodeNumber}`) ??
             (abs != null ? imdbMap?.get(`1:${abs}`) : undefined));
-
         const id = match?.id ?? -e.id;
         if (seenId.has(id)) continue;
         seenId.add(id);
