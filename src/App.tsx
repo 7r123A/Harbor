@@ -169,6 +169,8 @@ import { anchorFromElement, openAccountMenu } from "@/lib/social/account-menu-op
 import { getUnreadCount, subscribeUnread } from "@/lib/social/unread-bridge";
 import { fetchMe } from "@/lib/account/identity";
 import { ThemeChromeBridge } from "@/components/theme-chrome-bridge";
+import { DmLauncher } from "@/components/dm/dm-launcher";
+import { ShareToDmHost } from "@/components/share-to-dm";
 import type { MetaType } from "@/lib/cinemeta";
 import { profileMediaMeta } from "@/lib/social/profile-media-meta";
 import { useDiscordPresence } from "@/lib/discord/use-discord-presence";
@@ -1859,6 +1861,8 @@ function Shell({ onReady }: { onReady?: () => void }) {
               <MusicSurprisePrompt />
             </Suspense>
           )}
+          <DmLauncher playing={playerActive} />
+          <ShareToDmHost />
           {!playerActive && <WindowResizeEdges />}
           {!playerActive && !pickerTop && !immersive && !chromeHidden && <QueueBasket />}
           <HybridTitleBar suppressed={playerActive || immersive || chromeHidden} />

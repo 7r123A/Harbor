@@ -8,7 +8,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { Ban, Check, Plus } from "lucide-react";
+import { Ban, Check, Plus, Send } from "lucide-react";
 import { Play } from "@/components/icons/play-filled";
 import { animePlayEpisode } from "./detail/anime-play-episode";
 import {
@@ -127,6 +127,7 @@ import { MOVIE_GENRES, TV_GENRES } from "@/lib/feed/tags";
 import { useScrollMemory, useView, type PlayEpisode } from "@/lib/view";
 import { prefetchSegments } from "@/lib/skip-intro";
 import { useT } from "@/lib/i18n";
+import { requestShareToDm } from "@/lib/social/share-dm";
 import { emitListToast } from "@/components/lists/list-toast";
 import { DropShowConfirmModal } from "@/components/drop-show-confirm-modal";
 import { useCanDropShow } from "@/lib/drop-show-eligibility";
@@ -2971,6 +2972,24 @@ export function DetailView({
                     name={title || meta.name}
                     poster={poster}
                   />
+                )}
+                {!liveContext && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      requestShareToDm({
+                        type: "title",
+                        id: meta.id,
+                        title: title || meta.name,
+                        poster: poster || undefined,
+                      })
+                    }
+                    title={t("Send to a friend")}
+                    aria-label={t("Send to a friend")}
+                    className="flex h-12 items-center gap-2 rounded-full bg-canvas/80 px-5 text-[14px] font-medium text-ink-muted transition-colors hover:bg-canvas/95 hover:text-ink"
+                  >
+                    <Send size={16} /> {t("Send to a friend")}
+                  </button>
                 )}
                 {liveContext && (
                   <button

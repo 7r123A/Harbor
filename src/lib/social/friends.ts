@@ -1,12 +1,15 @@
 import { socialGet, socialPost } from "./client";
+import type { PresenceStatus } from "./presence";
 
 export type FriendEdge = { id: string; status: string };
 export type Friend = {
+  id?: string;
   handle: string;
   alias: string;
   avatarUrl?: string;
   slogan?: string;
   online?: boolean;
+  presence?: PresenceStatus;
   status?: string;
 };
 export type PendingRequest = {
