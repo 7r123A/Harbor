@@ -17,7 +17,9 @@ const MAX_ENTRIES = 80;
 
 export type CatalogLoad<T> = { value: T; ok: boolean };
 
-type Entry<T> = { v: CatalogLoad<T>; t: number; ttl: number };
+// `retryAt` is set when a background refresh of a good row fails, so the stale
+// row keeps its own deadline while refreshes back off like a failed row would.
+type Entry<T> = { v: CatalogLoad<T>; t: number; ttl: number; retryAt?: number };
 
 const rows = new Map<string, Entry<unknown>>();
 const inflight = new Map<string, Promise<CatalogLoad<unknown>>>();
@@ -41,6 +43,7 @@ function refresh<T>(key: string, load: () => Promise<CatalogLoad<T>>): Promise<C
       const prev = rows.get(key);
       // A failed background refresh keeps the last good row while it may still be served.
       if (!v.ok && prev?.v.ok && Date.now() - prev.t < staleLimit(prev)) {
+        prev.retryAt = Date.now() + FAIL_TTL_MS;
         return prev.v as CatalogLoad<T>;
       }
       lruSet(rows, key, { v, t: Date.now(), ttl: v.ok ? TTL_MS : FAIL_TTL_MS }, MAX_ENTRIES);
@@ -53,6 +56,42 @@ function refresh<T>(key: string, load: () => Promise<CatalogLoad<T>>): Promise<C
   return p;
 }
 
+// A stale hit resolves at once, so the caller's lanes move on without waiting for
+// its refresh. Background refreshes get their own bound, matching the six catalog
+// lanes, so a sweep over many stale rows cannot fire one request per row at once.
+const BACKGROUND_LANES = 6;
+let backgroundActive = 0;
+const backgroundQueue: (() => void)[] = [];
+const backgroundKeys = new Set<string>();
+
+function pumpBackground(): void {
+  while (backgroundActive < BACKGROUND_LANES && backgroundQueue.length > 0) {
+    backgroundQueue.shift()?.();
+  }
+}
+
+function refreshInBackground<T>(key: string, load: () => Promise<CatalogLoad<T>>): void {
+  if (inflight.has(key) || backgroundKeys.has(key)) return;
+  backgroundKeys.add(key);
+  backgroundQueue.push(() => {
+    const current = rows.get(key);
+    // A foreground load may have refreshed the row while this one waited.
+    if (current && Date.now() - current.t < current.ttl) {
+      backgroundKeys.delete(key);
+      return;
+    }
+    backgroundActive += 1;
+    void refresh(key, load)
+      .catch(() => {})
+      .finally(() => {
+        backgroundKeys.delete(key);
+        backgroundActive -= 1;
+        pumpBackground();
+      });
+  });
+  pumpBackground();
+}
+
 export function cachedCatalogRow<T>(
   key: string,
   load: () => Promise<CatalogLoad<T>>,
@@ -62,7 +101,9 @@ export function cachedCatalogRow<T>(
     const age = Date.now() - hit.t;
     if (age < hit.ttl) return Promise.resolve(hit.v);
     if (age < staleLimit(hit)) {
-      void refresh(key, load).catch(() => {});
+      if (hit.retryAt === undefined || Date.now() >= hit.retryAt) {
+        refreshInBackground(key, load);
+      }
       return Promise.resolve(hit.v);
     }
   }

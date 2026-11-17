@@ -168,6 +168,68 @@ test("a failed background refresh keeps the last good catalog row", () =>
     assert.equal((await catalogCache.cachedCatalogRow("keep", load)).value, "good");
   }));
 
+test("a failed background refresh backs off before the next one", () =>
+  withClock(7_000_000, async (advance) => {
+    let ok = true;
+    let loads = 0;
+    const load = async () => (++loads, { value: ok ? "good" : null, ok });
+    await catalogCache.cachedCatalogRow("backoff", load);
+    ok = false;
+    advance(11 * 60 * 1000);
+    await catalogCache.cachedCatalogRow("backoff", load);
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(loads, 2);
+
+    // Within the backoff the stale row is served without another request.
+    for (let i = 0; i < 3; i += 1) {
+      assert.equal((await catalogCache.cachedCatalogRow("backoff", load)).value, "good");
+    }
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(loads, 2);
+
+    advance(16 * 1000);
+    ok = true;
+    assert.equal((await catalogCache.cachedCatalogRow("backoff", load)).value, "good");
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(loads, 3);
+    assert.equal((await catalogCache.cachedCatalogRow("backoff", load)).value, "good");
+  }));
+
+test("background refreshes of stale rows run at most six at a time", () =>
+  withClock(8_000_000, async (advance) => {
+    const keys = Array.from({ length: 10 }, (_, i) => `bounded-${i}`);
+    for (const key of keys)
+      await catalogCache.cachedCatalogRow(key, async () => ({ value: 0, ok: true }));
+    advance(11 * 60 * 1000);
+
+    let active = 0;
+    let peak = 0;
+    let started = 0;
+    const gates: (() => void)[] = [];
+    const load = () => {
+      started += 1;
+      active += 1;
+      peak = Math.max(peak, active);
+      return new Promise<{ value: number; ok: boolean }>((resolve) =>
+        gates.push(() => {
+          active -= 1;
+          resolve({ value: 1, ok: true });
+        }),
+      );
+    };
+    for (const key of keys) {
+      // The stale value still comes back at once.
+      assert.equal((await catalogCache.cachedCatalogRow(key, load)).value, 0);
+    }
+    assert.equal(started, 6);
+    while (gates.length > 0) {
+      gates.shift()?.();
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    assert.equal(started, 10);
+    assert.equal(peak, 6);
+  }));
+
 test("a failed catalog row is retried after its short backoff, never served stale", () =>
   withClock(9_000_000, async (advance) => {
     let loads = 0;

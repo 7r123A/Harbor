@@ -8,6 +8,7 @@ type Entry = AnimeArt & { t: number };
 const KEY = "harbor.anime.art.v2";
 const CAP = 1000;
 const TTL = 60 * 24 * 60 * 60 * 1000;
+const RESTAMP_MS = 24 * 60 * 60 * 1000;
 const mem = new Map<string, Entry>();
 let loaded = false;
 
@@ -70,8 +71,11 @@ export function saveAnimeArt(key: string | undefined | null, art: AnimeArt): voi
     backdrops: art.backdrops?.length ? art.backdrops : prev?.backdrops,
     t: Date.now(),
   };
+  // Unchanged art is still re-stamped once a day, so artwork in use keeps its
+  // TTL on the next load without a write on every resolve.
   if (
     prev &&
+    next.t - prev.t < RESTAMP_MS &&
     next.bg === prev.bg &&
     next.logo === prev.logo &&
     sameList(next.backdrops, prev.backdrops)

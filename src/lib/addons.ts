@@ -382,16 +382,24 @@ export function withDebridKeys(addons: Addon[], keys: DebridKeySet): Addon[] {
 // install, configure and refresh flows keep calling fetchManifestAt directly.
 const MANIFEST_TTL_MS = 10 * 60 * 1000;
 const manifestMemo = new Map<string, { at: number; manifest: Addon["manifest"] }>();
+let manifestGeneration = 0;
 
 if (typeof window !== "undefined") {
-  window.addEventListener("harbor:addons-changed", () => manifestMemo.clear());
+  window.addEventListener("harbor:addons-changed", () => {
+    manifestGeneration += 1;
+    manifestMemo.clear();
+  });
 }
 
 async function cachedManifest(transportUrl: string): Promise<Addon["manifest"]> {
   const hit = manifestMemo.get(transportUrl);
   if (hit && Date.now() - hit.at < MANIFEST_TTL_MS) return hit.manifest;
+  const generation = manifestGeneration;
   const manifest = await fetchManifestAt(transportUrl);
-  manifestMemo.set(transportUrl, { at: Date.now(), manifest });
+  // An addon change that landed while this fetch was pending makes its result stale.
+  if (generation === manifestGeneration) {
+    manifestMemo.set(transportUrl, { at: Date.now(), manifest });
+  }
   return manifest;
 }
 
