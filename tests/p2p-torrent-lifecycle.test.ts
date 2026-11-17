@@ -38,6 +38,11 @@ test("selecting a torrent file starts discovery and prefetch while the player bo
   assert.match(select, /spawn_stream_prime\(handle\.clone\(\), file_idx\)/);
 });
 
+test("starting playback reuses the prewarmed magnet add", () => {
+  assert.match(resolve, /prewarmP2pStream\(stream\)/);
+  assert.match(resolve, /prewarmed\s*\?\s*await prewarmed/);
+});
+
 test("the local HTTP stream request starts a paused torrent on demand", () => {
   assert.match(streamRoute, /if handle\.is_paused\(\)/);
   assert.match(streamRoute, /session\.unpause\(&handle\)\.await/);

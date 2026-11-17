@@ -6,7 +6,6 @@ import {
   isHostedTorrentServerUrl,
   trackersFromSources,
 } from "@/lib/torrent/stremio-stream";
-import type { ScoredStream } from "./types";
 
 /** A source focused or hovered this long is likely about to be played. */
 export const INTENT_PREWARM_DELAY_MS = 400;
@@ -33,6 +32,14 @@ const inflight = new Map<string, Promise<AddResult | null>>();
 const abandonTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 export type PrewarmOptions = { abandonAfterMs?: number };
+
+/** The minimum a stream must expose to be prewarmed. */
+export type PrewarmSource = {
+  infoHash?: string | null;
+  url?: string | null;
+  fileIdx?: number;
+  sources?: string[];
+};
 
 function keyOf(stream: { infoHash?: string | null } | null | undefined): string | null {
   const hash = stream?.infoHash?.trim().toLowerCase();
@@ -74,7 +81,7 @@ function abandonKey(key: string): void {
  * was prewarmed moments ago.
  */
 export function prewarmP2pStream(
-  stream: ScoredStream,
+  stream: PrewarmSource,
   options?: PrewarmOptions,
 ): Promise<AddResult | null> | null {
   if (typeof window === "undefined") return null;
