@@ -376,7 +376,7 @@ export const DEFAULT: Settings = {
   autoSkipOutro: false,
   autoSkipAd: false,
   showSkipButton: true,
-  skipButtonHideSec: 0,
+  skipButtonHideSec: 10,
   trackBlockWords: ["commentary"],
   forcedSubsWhenNativeAudio: false,
   tmdbLanguage: "",

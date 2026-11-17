@@ -147,6 +147,7 @@ const coverage: Record<string, string> = {
   "70s": "70-an",
   "70s Auteurs": "Sineas 70-an",
   "8 seconds": "8 detik",
+  "10 seconds": "10 detik",
   "8-0-4-1. Half the passes, kinder to weaker cards.":
     "8-0-4-1. Separuh jumlah lintasan, lebih ringan untuk kartu yang lebih lemah.",
   "8-character key": "Kunci 8 karakter",

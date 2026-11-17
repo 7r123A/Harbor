@@ -627,6 +627,7 @@ const coverage: Record<string, string> = {
   "70s": "70년대",
   "70s Auteurs": "70년대 작가주의 영화",
   "8 seconds": "8초",
+  "10 seconds": "10초",
   "8-0-4-1. Half the passes, kinder to weaker cards.":
     "8-0-4-1. 패스 수가 절반이라 저사양 그래픽 카드에 더 적합합니다.",
   "8-character key": "8자 키",

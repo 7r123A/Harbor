@@ -204,7 +204,6 @@ export function parseStoredSettings(raw: string | null): {
       _pickerLayoutStremio?: boolean;
       _pickerLayoutStremioV2?: boolean;
       _stremioDeeplinkOnByDefault?: boolean;
-      _skipButtonHideSecV2?: boolean;
       _anilistSyncOnV1?: boolean;
       /** Legacy shared toggle, now split per tracker. */
       syncIndicator?: boolean;
@@ -285,16 +284,6 @@ export function parseStoredSettings(raw: string | null): {
     }
     if (typeof parsed.contentAdvisoryShowIgnore !== "boolean") {
       parsed.contentAdvisoryShowIgnore = true;
-    }
-    if (!parsed._skipButtonHideSecV2) {
-      if (
-        parsed.skipButtonHideSec === 10 ||
-        parsed.skipButtonHideSec === 20 ||
-        parsed.skipButtonHideSec == null
-      ) {
-        parsed.skipButtonHideSec = 14;
-      }
-      parsed._skipButtonHideSecV2 = true;
     }
     if (!parsed._anilistSyncOnV1) {
       parsed.anilistAutoSync = true;
