@@ -7,7 +7,8 @@ function harness() {
   const loads: any[] = [];
   let plays = 0,
     pauses = 0,
-    resolves = 0;
+    resolves = 0,
+    prefetches = 0;
   let resolve = async () => ({ ms: 600000, finished: false });
   const settings = { resumePrompt: false, resumePlayback: true };
   const bridge = {
@@ -38,7 +39,11 @@ function harness() {
     "@/lib/settings": { useSettings: () => ({ settings }) },
     "@/lib/stremio": { cloudWriteId: (id: string) => id },
     "./use-stremio-sync": { videoIdFor: () => "tt100:1:1" },
+    "@/lib/perf/playback-trace": { markPlaybackTrace() {} },
     "@/lib/player/resume-start": {
+      prefetchResumeStart: () => {
+        prefetches++;
+      },
       resolveStartMs: () => {
         resolves++;
         return resolve();
@@ -61,6 +66,9 @@ function harness() {
     },
     get pauses() {
       return pauses;
+    },
+    get prefetches() {
+      return prefetches;
     },
     get resolves() {
       return resolves;
@@ -183,4 +191,32 @@ test("unmount before resume resolution prevents any playback side effects", asyn
   await flushPromises();
   assert.equal(h.loads.length, 0);
   assert.equal(h.plays, 0);
+});
+
+test("resume lookup starts before the bridge is ready without loading early", async () => {
+  const h = harness();
+  h.args.bridgeReady = false;
+  h.render();
+  await flushPromises();
+  assert.equal(h.prefetches, 1);
+  assert.equal(h.resolves, 0);
+  assert.equal(h.loads.length, 0);
+  h.args.bridgeReady = true;
+  h.render();
+  await flushPromises();
+  assert.equal(h.prefetches, 1);
+  assert.equal(h.loads[0].startAtSec, 600);
+});
+
+test("explicit starts, live streams and disabled resume do not prefetch cloud progress", () => {
+  for (const mode of ["explicit", "live", "restart", "disabled"]) {
+    const h = harness();
+    h.args.bridgeReady = false;
+    if (mode === "explicit") h.args.src.startPositionMs = 1000;
+    if (mode === "live") h.args.src.live = true;
+    if (mode === "restart") h.args.src.startFromZero = true;
+    if (mode === "disabled") h.settings.resumePlayback = false;
+    h.render();
+    assert.equal(h.prefetches, 0, mode);
+  }
 });

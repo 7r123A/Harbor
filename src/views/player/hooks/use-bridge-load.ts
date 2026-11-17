@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import type { PlayerBridge } from "@/lib/player/bridge";
 import { cloudWriteId } from "@/lib/stremio";
-import { resolveStartMs } from "@/lib/player/resume-start";
+import { prefetchResumeStart, resolveStartMs } from "@/lib/player/resume-start";
 import type { PlayerSrc } from "@/lib/view";
 import { videoIdFor } from "./use-stremio-sync";
 import { useSettings } from "@/lib/settings";
@@ -72,6 +72,35 @@ export function useBridgeLoad(params: {
       releaseStreamProxy(sessionId);
     };
   }, [src.proxySessionId]);
+
+  // Start the account lookup while the native player is being prepared. The
+  // resolver shares this request and still chooses the position before load.
+  useEffect(() => {
+    if (
+      isLivePlaybackSrc(src) ||
+      src.startFromZero ||
+      src.startPositionMs != null ||
+      (!settings.resumePlayback && !settings.resumePrompt)
+    ) {
+      return;
+    }
+    prefetchResumeStart({
+      metaId: src.meta.id,
+      authKey,
+      imdbId: src.imdbId ?? null,
+      imdbVerified: src.imdbIdVerified === true,
+    });
+  }, [
+    sourceIdentity,
+    authKey,
+    src.meta.id,
+    src.imdbId,
+    src.imdbIdVerified,
+    src.startFromZero,
+    src.startPositionMs,
+    settings.resumePlayback,
+    settings.resumePrompt,
+  ]);
 
   useEffect(() => {
     if (!bridgeReady) return;

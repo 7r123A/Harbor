@@ -49,7 +49,9 @@ export function resumeLibraryGetOne(authKey: string, id: string): Promise<Librar
   }
   const now = Date.now();
   const cached = account.get(id);
-  if (cached && now - cached.at < REMOTE_CACHE_TTL_MS) return cached.promise;
+  if (cached && (!cached.settled || now - cached.at < REMOTE_CACHE_TTL_MS)) {
+    return cached.promise;
+  }
   const entry: RemoteEntry = {
     at: now,
     promise: Promise.resolve(null),
@@ -58,6 +60,7 @@ export function resumeLibraryGetOne(authKey: string, id: string): Promise<Librar
   entry.promise = libraryGetOne(authKey, id)
     .catch(() => null)
     .finally(() => {
+      entry.at = Date.now();
       entry.settled = true;
     });
   account.set(id, entry);
