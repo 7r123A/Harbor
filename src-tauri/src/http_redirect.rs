@@ -41,6 +41,15 @@ fn validate_hop(current: &Url, next: &Url) -> Result<(), &'static str> {
     Ok(())
 }
 
+async fn validate_public(url: &Url, public_only: bool) -> Result<(), &'static str> {
+    if !public_only {
+        return Ok(());
+    }
+    crate::http_fetch::validate_target(url, false)
+        .await
+        .map_err(|_| "blocked internal target")
+}
+
 /// The client must have automatic redirects disabled. Keep origin-bound headers
 /// on same-origin hops, but never restore them after leaving that origin.
 pub(crate) async fn send_get(
@@ -48,12 +57,32 @@ pub(crate) async fn send_get(
     builder: RequestBuilder,
     credential_origin: &str,
 ) -> Result<Response, &'static str> {
+    send_get_checked(client, builder, credential_origin, false).await
+}
+
+/// Same as `send_get`, but also refuses loopback, link-local and private
+/// targets on every hop. Use it when the URL came from an add-on.
+pub(crate) async fn send_get_public(
+    client: &Client,
+    builder: RequestBuilder,
+    credential_origin: &str,
+) -> Result<Response, &'static str> {
+    send_get_checked(client, builder, credential_origin, true).await
+}
+
+async fn send_get_checked(
+    client: &Client,
+    builder: RequestBuilder,
+    credential_origin: &str,
+    public_only: bool,
+) -> Result<Response, &'static str> {
     let origin = Url::parse(credential_origin).map_err(|_| "invalid request origin")?;
     let mut request = builder.build().map_err(|_| "invalid upstream request")?;
     if request.method() != Method::GET {
         return Err("redirect helper requires GET");
     }
     validate_hop(&origin, request.url())?;
+    validate_public(request.url(), public_only).await?;
     if !same_origin(&origin, request.url()) {
         strip_cross_origin_headers(request.headers_mut());
     }
@@ -78,6 +107,7 @@ pub(crate) async fn send_get(
             .join(location.to_str().map_err(|_| "invalid redirect")?)
             .map_err(|_| "invalid redirect")?;
         validate_hop(response.url(), &next)?;
+        validate_public(&next, public_only).await?;
         request = next_request;
         if !same_origin(response.url(), &next) {
             strip_cross_origin_headers(request.headers_mut());
@@ -271,6 +301,19 @@ mod tests {
             .unwrap_err(),
             "too many redirects"
         );
+    }
+
+    #[tokio::test]
+    async fn public_fetch_refuses_internal_targets_before_requesting() {
+        let server = serve(echo()).await;
+        let client = client();
+        let result = send_get_public(
+            &client,
+            request(&client, &format!("{}/echo", server.url)),
+            &server.url,
+        )
+        .await;
+        assert!(matches!(result, Err("blocked internal target")));
     }
 
     #[test]
