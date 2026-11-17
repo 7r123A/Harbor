@@ -561,11 +561,6 @@ const PosterCard = memo(function PosterCard({
             : ""
         }`}
       >
-        <FriendReviewBadges
-          metaId={meta.id}
-          kind={meta.type}
-          className="relative z-20 mb-1 flex w-full items-center gap-1 px-0.5"
-        />
         <Poster
           src={posterSrc}
           seed={meta.id}
@@ -732,6 +727,14 @@ const PosterCard = memo(function PosterCard({
           )}
         </div>
       )}
+      <div className="mt-1 flex h-[18px] items-center overflow-hidden px-0.5" data-friend-review-row>
+        <FriendReviewBadges
+          metaId={meta.id}
+          kind={meta.type}
+          className="relative flex items-center gap-1"
+          avatarSize={16}
+        />
+      </div>
     </button>
   );
 });
