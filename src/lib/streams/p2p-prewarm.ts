@@ -22,7 +22,7 @@ type PrewarmDeps = {
 };
 
 const defaultDeps: PrewarmDeps = {
-  add: torrentEngineAdd,
+  add: (magnet, trackers, fileIdx) => torrentEngineAdd(magnet, trackers, fileIdx, "prewarm"),
   abandon: scheduleAbandonedTorrentRemoval,
 };
 

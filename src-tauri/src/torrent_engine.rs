@@ -849,7 +849,9 @@ pub async fn torrent_engine_add(
     magnet: String,
     trackers: Vec<String>,
     file_idx: Option<usize>,
+    origin: Option<String>,
 ) -> Result<AddResult, String> {
+    let origin = origin.as_deref().unwrap_or("unknown");
     let session = ensure_session(&app).await?;
     run_session(&session, async {
         if let Some(info_hash) = dht_boot::info_hash_from_magnet(&magnet) {
@@ -899,7 +901,7 @@ pub async fn torrent_engine_add(
         let files_took = files_started.elapsed();
         if let Ok(result) = &result {
             eprintln!(
-                "[torrent-engine] add timing: hash={} seeded_peers={} seed_ms={} add_ms={} files_ms={} total_ms={}",
+                "[torrent-engine] add timing: origin={origin} hash={} seeded_peers={} seed_ms={} add_ms={} files_ms={} total_ms={}",
                 result.info_hash,
                 seeded_peers,
                 seed_took.as_millis(),

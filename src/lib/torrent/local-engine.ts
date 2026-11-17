@@ -91,6 +91,8 @@ export async function torrentEngineAdd(
   magnet: string,
   trackers: string[],
   fileIdx?: number,
+  /** Who asked for this add; appears in engine diagnostics. */
+  origin?: string,
 ): Promise<AddResult | null> {
   if (!isTauri) return null;
   try {
@@ -99,6 +101,7 @@ export async function torrentEngineAdd(
       magnet,
       trackers,
       fileIdx: typeof fileIdx === "number" && fileIdx >= 0 ? fileIdx : null,
+      origin: origin ?? null,
     });
     schedulePostStartReconciliation();
     return added;

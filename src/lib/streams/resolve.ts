@@ -370,6 +370,7 @@ async function tryLocalEngine(
         magnetFromHash(stream.infoHash),
         trackersFromSources(stream.sources),
         addIdx,
+        "resolve",
       );
   if (!added) return null;
   const releaseAbortCleanup = registerAbortCleanup(added, signal);
