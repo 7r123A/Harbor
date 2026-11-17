@@ -128,12 +128,13 @@ pub struct AudioInfo {
     pub language: Option<String>,
     /// Bits per second as the container reports it; 0 when it does not (common in MKV).
     pub bitrate: u64,
+    /// Samples per second; 0 when the probe does not say.
+    pub sample_rate: u32,
 }
 
 impl AudioInfo {
     /// The rate this track can reach when it is copied: its reported rate, or else the highest
-    /// its codec allows in the streams Harbor copies (AC-3 640k, E-AC-3 6144k, MP3 320k, AAC
-    /// 6-channel 576k).
+    /// its codec allows in the streams Harbor copies (AC-3 640k, E-AC-3 6144k, MP3 320k).
     fn copied_bitrate(&self) -> u64 {
         if self.bitrate > 0 {
             return self.bitrate;
@@ -142,7 +143,13 @@ impl AudioInfo {
             "ac3" => 640_000,
             "eac3" => 6_144_000,
             "mp3" => 320_000,
-            _ => 576_000,
+            // AAC: a frame of 1024 samples carries at most 6144 bits per channel (the decoder's
+            // input buffer), so 6 bits per sample per channel. An unknown sample rate counts as
+            // 96 kHz, the highest in AAC's sampling-frequency table.
+            _ => {
+                let rate = if self.sample_rate > 0 { self.sample_rate } else { 96_000 };
+                6 * u64::from(self.channels.max(1)) * u64::from(rate)
+            }
         }
     }
 }
@@ -251,6 +258,8 @@ struct ProbeStream {
     #[serde(default)]
     channels: Option<u32>,
     #[serde(default)]
+    sample_rate: Option<String>,
+    #[serde(default)]
     bit_rate: Option<String>,
     #[serde(default)]
     tags: HashMap<String, String>,
@@ -325,6 +334,7 @@ pub(crate) fn parse_probe(json: &str) -> Result<MediaProbe, String> {
                 channels: s.channels.unwrap_or(2),
                 language: s.tags.get("language").cloned().filter(|l| l != "und"),
                 bitrate: s.bit_rate.as_deref().and_then(|b| b.parse().ok()).unwrap_or(0),
+                sample_rate: s.sample_rate.as_deref().and_then(|r| r.parse().ok()).unwrap_or(0),
             }),
             "subtitle" => probe.subtitles.push(SubtitleInfo {
                 index: s.index,
@@ -1429,6 +1439,15 @@ mod tests {
         // One whose rate is unknown is announced at its codec's ceiling, never below it.
         let p = plan_with(&music("eac3", ""), &original, DeviceLimits::default());
         assert_eq!(p.bandwidth, 6_144_000 * 11 / 10);
+        // Six-channel AAC at 48 kHz with no reported rate (it may be 768 kbit/s or more) counts at
+        // 6 bits per sample per channel: 1728 kbit/s.
+        let p = plan_with(&music("aac", r#","sample_rate":"48000""#), &original, DeviceLimits::default());
+        assert!(p.output.join(" ").contains("-c:a copy"), "{:?}", p.output);
+        assert_eq!(p.bandwidth, 1_728_000 * 11 / 10);
+        assert!(p.bandwidth > 768_000);
+        // Without a sample rate either, the highest one (96 kHz) is assumed.
+        let p = plan_with(&music("aac", ""), &original, DeviceLimits::default());
+        assert_eq!(p.bandwidth, 3_456_000 * 11 / 10);
         // Re-encoded audio counts what the encoder makes: AC-3 5.1 at 640k.
         let surround = CastOptions { audio_mode: "surround".into(), ..Default::default() };
         let p = plan_with(&music("truehd", ""), &surround, DeviceLimits::default());
