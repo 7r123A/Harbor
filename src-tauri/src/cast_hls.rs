@@ -231,17 +231,20 @@ async fn handle_preflight() -> Response {
 }
 
 fn master_playlist(variant: &Variant) -> String {
+    // An audio-only stream has no picture to describe.
+    let picture = if variant.width > 0 && variant.height > 0 {
+        format!(",RESOLUTION={}x{},FRAME-RATE={:.3}", variant.width, variant.height, variant.fps)
+    } else {
+        String::new()
+    };
     format!(
         "#EXTM3U\n\
          #EXT-X-VERSION:3\n\
          #EXT-X-INDEPENDENT-SEGMENTS\n\
-         #EXT-X-STREAM-INF:BANDWIDTH={bw},AVERAGE-BANDWIDTH={bw},CODECS=\"{codecs}\",RESOLUTION={w}x{h},FRAME-RATE={fps:.3}\n\
+         #EXT-X-STREAM-INF:BANDWIDTH={bw},AVERAGE-BANDWIDTH={bw},CODECS=\"{codecs}\"{picture}\n\
          variant.m3u8\n",
         bw = variant.bandwidth,
         codecs = variant.codecs,
-        w = variant.width,
-        h = variant.height,
-        fps = variant.fps,
     )
 }
 
@@ -797,6 +800,9 @@ mod tests {
         let body = master_playlist(&Variant { codecs: "avc1.640029,ac-3".into(), ..variant() });
         assert!(body.contains("CODECS=\"avc1.640029,ac-3\",RESOLUTION=1920x1080,FRAME-RATE=23.976"));
         assert!(body.ends_with("variant.m3u8\n"));
+        let audio = master_playlist(&Variant { codecs: "mp4a.40.2".into(), width: 0, height: 0, ..variant() });
+        assert!(audio.contains("CODECS=\"mp4a.40.2\"\nvariant.m3u8"), "{audio}");
+        assert!(!audio.contains("RESOLUTION") && !audio.contains("FRAME-RATE"), "{audio}");
     }
 
     #[test]

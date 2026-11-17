@@ -649,11 +649,15 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         _ => video.is_some_and(|v| v.interlaced),
     };
     let aspect = options.aspect_ratio();
-    let burning = input.burn_sub.is_some() || input.burn_bitmap.is_some();
+    // The probe found streams but no film picture: a music file, or one whose only picture is its
+    // cover art (left out of `video` by `parse_probe`). Nothing is mapped or encoded as video then;
+    // mapping "the first video stream" would send the cover art as the film.
+    let audio_only = input.probe.is_some() && video.is_none();
+    let burning = !audio_only && (input.burn_sub.is_some() || input.burn_bitmap.is_some());
     // Forcing the tone mapper only does something if the picture goes through the encoder.
-    let tonemap_forced = options.tonemap == "on";
-    let mut encode_video =
-        forced || input.force_video_encode || burning || deinterlace || aspect.is_some() || tonemap_forced;
+    let tonemap_forced = !audio_only && options.tonemap == "on";
+    let mut encode_video = !audio_only
+        && (forced || input.force_video_encode || burning || deinterlace || aspect.is_some() || tonemap_forced);
     if forced {
         reasons.push("forced conversion".into());
     }
@@ -668,6 +672,12 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         }
         if v.height > max_height {
             reasons.push(format!("{}p above {}p", v.height, max_height));
+            encode_video = true;
+        }
+        // Only when the probe knows the rate: many MKV streams report 0.
+        let source_kbps = v.bitrate / 1000;
+        if let Some(limit) = limits.max_video_kbps.filter(|limit| v.bitrate > 0 && source_kbps > u64::from(*limit)) {
+            reasons.push(format!("{source_kbps} kbit/s above {limit} kbit/s"));
             encode_video = true;
         }
         if v.hdr && !native_hevc {
@@ -689,7 +699,12 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         reasons.push("interlaced".into());
     }
 
-    let video_map = video.map(|v| format!("0:{}", v.index)).unwrap_or_else(|| "0:v:0?".into());
+    // Without a probe nothing is known, so the first video stream is taken if there is one.
+    let video_map = match video {
+        Some(v) => Some(format!("0:{}", v.index)),
+        None if audio_only => None,
+        None => Some("0:v:0?".to_string()),
+    };
     // The video map is decided below: an overlaid picture subtitle maps a filter graph output.
     let audio_map = format!("0:a:{}?", input.audio_ordinal);
 
@@ -807,7 +822,8 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
             output.extend([
                 "-filter_complex".into(),
                 format!(
-                    "[{video_map}]{}[base];[0:{sub_index}]{shift}scale={out_w}:{out_h}:force_original_aspect_ratio=decrease[sub];[base][sub]overlay=x=(W-w)/2:y=H-h:eof_action=pass,format=yuv420p[vout]",
+                    "[{}]{}[base];[0:{sub_index}]{shift}scale={out_w}:{out_h}:force_original_aspect_ratio=decrease[sub];[base][sub]overlay=x=(W-w)/2:y=H-h:eof_action=pass,format=yuv420p[vout]",
+                    video_map.as_deref().unwrap_or("0:v:0?"),
                     vf.join(",")
                 ),
             ]);
@@ -858,6 +874,9 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         summary.video = encoder.into();
         summary.hardware = (encoder != "libx264").then(|| caps.hardware_label().unwrap_or("GPU").to_string());
         summary.output_height = out_h;
+    } else if audio_only {
+        output.push("-vn".into());
+        summary.video = "none".into();
     } else {
         output.extend(["-c:v".into(), "copy".into()]);
         // A copied stream keeps its own level: announce what it declares, or what its size and
@@ -916,10 +935,16 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         }
     }
 
-    output.extend(["-map".into(), video_out_map.unwrap_or(video_map), "-map".into(), audio_map]);
+    if let Some(map) = video_out_map.or(video_map) {
+        output.extend(["-map".into(), map]);
+    }
+    output.extend(["-map".into(), audio_map]);
     output.extend(["-map_metadata", "-1", "-map_chapters", "-1", "-sn", "-dn"].map(String::from));
 
-    let bandwidth = if encode_video {
+    let bandwidth = if audio_only {
+        // The highest audio rate the plan can produce (AC-3 5.1 at 640k), with container overhead.
+        700_000
+    } else if encode_video {
         (target_kbps as u64 * 1500).max(2_500_000)
     } else {
         video.map(|v| v.bitrate).filter(|b| *b > 0).unwrap_or(8_000_000).saturating_add(640_000)
@@ -928,10 +953,11 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         pre_input,
         output,
         summary,
-        hls_codecs: format!("{hls_video_codec},{hls_audio_codec}"),
+        hls_codecs: if audio_only { hls_audio_codec.to_string() } else { format!("{hls_video_codec},{hls_audio_codec}") },
         hls_fmp4,
-        width: if encode_video { out_w } else { src_w.max(2) },
-        height: if encode_video { out_h } else { src_h.max(2) },
+        // No picture, no size: the master playlist then leaves RESOLUTION and FRAME-RATE out.
+        width: if audio_only { 0 } else if encode_video { out_w } else { src_w.max(2) },
+        height: if audio_only { 0 } else if encode_video { out_h } else { src_h.max(2) },
         fps,
         bandwidth,
     }
@@ -1314,9 +1340,47 @@ mod tests {
         assert!(args.contains("-maxrate 4500k"), "{args}");
         assert!(args.contains("-c:a aac -b:a 192k -ac 2"), "{args}");
         assert_eq!(p.summary.output_height, 720);
+        // A 720p H.264 file within the size limit but at 20 Mbit/s is re-encoded to the device's rate.
+        let fast = parse_probe(
+            r#"{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","pix_fmt":"yuv420p","width":1280,"height":720,"avg_frame_rate":"24/1","bit_rate":"20000000"},
+               {"index":1,"codec_type":"audio","codec_name":"aac","channels":2}],"format":{"duration":"100"}}"#,
+        )
+        .unwrap();
+        let p = plan_with(&fast, &CastOptions::default(), limits);
+        assert_ne!(p.summary.video, "copy");
+        assert!(p.summary.reasons.iter().any(|r| r == "20000 kbit/s above 3000 kbit/s"), "{:?}", p.summary.reasons);
+        assert!(p.output.join(" ").contains("-maxrate 4500k"), "{:?}", p.output);
+        // A stream that reports no rate (most MKV) is not judged by it.
+        let unknown = copy_probe("h264", 1280, 720, "24/1", None);
+        assert_eq!(plan_with(&unknown, &CastOptions::default(), limits).summary.video, "copy");
         // Without limits the same film is copied and keeps its surround track.
         let free = plan_with(&probe, &CastOptions { audio_mode: "original".into(), ..Default::default() }, DeviceLimits::default());
         assert!(free.output.join(" ").contains("-c:v copy") && free.output.join(" ").contains("-c:a copy"));
+    }
+
+    #[test]
+    fn an_audio_file_never_sends_its_cover_art_as_video() {
+        // A music file whose only picture is its cover: no video map, no video codec in CODECS.
+        let probe = parse_probe(
+            r#"{"streams":[{"index":0,"codec_type":"audio","codec_name":"flac","channels":2},
+               {"index":1,"codec_type":"video","codec_name":"mjpeg","width":600,"height":600,"disposition":{"attached_pic":1}}],"format":{"duration":"240"}}"#,
+        )
+        .unwrap();
+        assert!(probe.video.is_none());
+        // Settings that would otherwise send the picture through the encoder change nothing.
+        let options = CastOptions { force_conversion: true, tonemap: "on".into(), aspect: "16:9".into(), ..Default::default() };
+        let p = build_plan(
+            &PlanInput { probe: Some(&probe), options: &options, audio_ordinal: 0, burn_sub: None, burn_bitmap: Some(3), force_video_encode: true, limits: DeviceLimits::default() },
+            &FfmpegCaps::default(),
+        );
+        let args = p.output.join(" ");
+        assert!(args.contains("-vn") && !args.contains("-c:v") && !args.contains("0:v"), "{args}");
+        assert!(args.contains("-map 0:a:0?") && !args.contains("-filter_complex"), "{args}");
+        assert_eq!(p.hls_codecs, "mp4a.40.2");
+        assert_eq!((p.width, p.height, p.summary.video.as_str()), (0, 0, "none"));
+        // Without a probe nothing is known, so the first video stream, if any, is still taken.
+        let unknown = plan(None, &CastOptions::default(), &FfmpegCaps::default());
+        assert!(unknown.output.join(" ").contains("0:v:0?"), "{:?}", unknown.output);
     }
 
     #[test]
