@@ -113,6 +113,7 @@ export function EpisodeStrip({
       seriesImdbId,
       reviewsImdbId,
       cinemetaVideos,
+      showSeason,
     ],
   );
   const epByNumber = useMemo(() => {
