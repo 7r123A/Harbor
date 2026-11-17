@@ -12,10 +12,7 @@ import {
   useDmState,
   type DmIncoming,
 } from "@/lib/social/dm-store";
-import {
-  currentDmNotifyMode,
-  hydrateDmPrefsFromServer,
-} from "@/lib/social/dm-preferences";
+import { currentDmNotifyMode, hydrateDmPrefsFromServer } from "@/lib/social/dm-preferences";
 import { currentStatus } from "@/lib/social/presence";
 import { playDmChime } from "@/lib/social/dm-chime";
 import { dmPreview } from "@/lib/social/dm-format";
@@ -111,9 +108,7 @@ function usePlaybackActive(): boolean {
   useEffect(() => {
     const sync = () => {
       const videos = Array.from(document.querySelectorAll("video"));
-      setActive(
-        videos.some((video) => !video.paused && !video.ended && video.readyState >= 2),
-      );
+      setActive(videos.some((video) => !video.paused && !video.ended && video.readyState >= 2));
     };
     sync();
     document.addEventListener("play", sync, true);
@@ -154,8 +149,20 @@ export function DmGlyph({ size = 21 }: { size?: number }) {
         strokeLinejoin="round"
       />
       <circle className="harbor-dm-dot" cx="8.6" cy="10.2" r="1.1" fill="currentColor" />
-      <circle className="harbor-dm-dot harbor-dm-dot-2" cx="12" cy="10.2" r="1.1" fill="currentColor" />
-      <circle className="harbor-dm-dot harbor-dm-dot-3" cx="15.4" cy="10.2" r="1.1" fill="currentColor" />
+      <circle
+        className="harbor-dm-dot harbor-dm-dot-2"
+        cx="12"
+        cy="10.2"
+        r="1.1"
+        fill="currentColor"
+      />
+      <circle
+        className="harbor-dm-dot harbor-dm-dot-3"
+        cx="15.4"
+        cy="10.2"
+        r="1.1"
+        fill="currentColor"
+      />
     </svg>
   );
 }
@@ -279,7 +286,6 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
   return (
     <>
       <style>{GLASS_CSS}</style>
-      
 
       {open &&
         createPortal(

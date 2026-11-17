@@ -1,10 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { currentAuthor, subscribeAuthor } from "@/lib/theme-auth";
-import {
-  listDmConversations,
-  type DmConversation,
-  type DmLastMessage,
-} from "./dm";
+import { listDmConversations, type DmConversation, type DmLastMessage } from "./dm";
 
 export type DmState = {
   authed: boolean;
@@ -86,14 +82,17 @@ function detectIncoming(rows: DmConversation[]): void {
     if (!initialLoaded || !last || last.mine) continue;
     // A new message id is enough; a conversation that first appears already unread
     // is a genuinely new thread, not a replay of old history.
-    if (prev ? prev !== last.id : conv.unread > 0) notifyIncoming({ conversation: conv, message: last });
+    if (prev ? prev !== last.id : conv.unread > 0)
+      notifyIncoming({ conversation: conv, message: last });
   }
-  for (const id of [...lastSeenMessage.keys()]) {
+  for (const id of lastSeenMessage.keys()) {
     if (!seen.has(id)) lastSeenMessage.delete(id);
   }
 }
 
-export async function refreshDm(opts: { silent?: boolean; signal?: AbortSignal } = {}): Promise<void> {
+export async function refreshDm(
+  opts: { silent?: boolean; signal?: AbortSignal } = {},
+): Promise<void> {
   if (!currentAuthor()) {
     initialLoaded = false;
     lastSeenMessage.clear();

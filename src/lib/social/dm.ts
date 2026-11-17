@@ -137,10 +137,9 @@ export async function deleteDmMessage(messageId: string): Promise<{ ok: boolean 
 
 /** One emoji per call, toggled by the caller. Idempotent on the server. */
 export async function reactToDmMessage(messageId: string, emoji: string): Promise<DmMessage> {
-  return socialPost<DmMessage>(
-    `/social/dm/messages/${encodeURIComponent(messageId)}/reaction`,
-    { emoji },
-  );
+  return socialPost<DmMessage>(`/social/dm/messages/${encodeURIComponent(messageId)}/reaction`, {
+    emoji,
+  });
 }
 
 export async function unreactToDmMessage(messageId: string, emoji: string): Promise<DmMessage> {
@@ -160,7 +159,9 @@ export async function setDmMuted(
   muted: boolean,
 ): Promise<{ ok: boolean; muted: boolean }> {
   const path = `/social/dm/conversations/${encodeURIComponent(conversationId)}/mute`;
-  return muted ? socialPost<{ ok: boolean; muted: boolean }>(path) : socialDelete<{ ok: boolean; muted: boolean }>(path);
+  return muted
+    ? socialPost<{ ok: boolean; muted: boolean }>(path)
+    : socialDelete<{ ok: boolean; muted: boolean }>(path);
 }
 
 export async function hideDmConversation(conversationId: string): Promise<{ ok: boolean }> {
@@ -174,6 +175,9 @@ export async function searchDmUsers(
   signal?: AbortSignal,
 ): Promise<DmDirectoryUser[]> {
   const q = new URLSearchParams({ q: query.trim(), limit: "12", sort: "relevance" });
-  const res = await socialGet<{ users: DmDirectoryUser[] }>(`/social/users?${q.toString()}`, signal);
+  const res = await socialGet<{ users: DmDirectoryUser[] }>(
+    `/social/users?${q.toString()}`,
+    signal,
+  );
   return Array.isArray(res.users) ? res.users : [];
 }
