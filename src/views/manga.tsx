@@ -60,7 +60,7 @@ type Mode =
   | { screen: "universes" }
   | { screen: "sources" }
   | { screen: "downloads"; from?: string }
-  | { screen: "browse-extension"; source: SuwayomiSource }
+  | { screen: "browse-extension"; source: SuwayomiSource; baseUrl?: string; from?: string }
   | { screen: "detail"; mangaId: string; downloadRequest?: number }
   | {
       screen: "reader";
@@ -145,7 +145,8 @@ export function MangaView() {
       if (m.screen === "browse") return;
       e.preventDefault();
       if (m.screen === "reader") setMode({ screen: "detail", mangaId: m.mangaId });
-      else if (m.screen === "downloads" && m.from) setMode({ screen: "detail", mangaId: m.from });
+      else if ((m.screen === "downloads" || m.screen === "browse-extension") && m.from)
+        setMode({ screen: "detail", mangaId: m.from });
       else setMode({ screen: "browse" });
     };
     window.addEventListener("harbor:local-back", onLocalBack);
@@ -397,6 +398,9 @@ export function MangaView() {
             onBack={() => setMode({ screen: "browse" })}
             onResume={resume}
             onOpenDownloads={() => setMode({ screen: "downloads", from: mode.mangaId })}
+            onBrowseExtension={(source, baseUrl) =>
+              setMode({ screen: "browse-extension", source, baseUrl, from: mode.mangaId })
+            }
             onOpenManga={(id) => setMode({ screen: "detail", mangaId: id })}
             scrollRoot={detailScrollRef}
             onRead={(chapters, index, manga) =>
@@ -465,9 +469,11 @@ export function MangaView() {
           className="flex-1 overflow-y-auto overflow-x-hidden px-12 pb-16 pt-24"
         >
           <BrowseResults
-            config={{ baseUrl: activeMangaSource()?.baseUrl ?? "" }}
+            config={{ baseUrl: mode.baseUrl ?? activeMangaSource()?.baseUrl ?? "" }}
             source={mode.source}
-            onBack={() => setMode({ screen: "browse" })}
+            onBack={() =>
+              setMode(mode.from ? { screen: "detail", mangaId: mode.from } : { screen: "browse" })
+            }
             onOpen={(item) => setMode({ screen: "detail", mangaId: item.id })}
             scrollRef={browseExtensionScrollRef}
           />

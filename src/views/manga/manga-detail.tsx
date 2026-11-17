@@ -53,6 +53,7 @@ import {
 import { TopMangaModal } from "./top-manga-modal";
 import { decodeMangaId } from "@/lib/manga/sources/suwayomi/model";
 import { suwayomiBaseForSource } from "@/lib/manga/sources/suwayomi/auth-registry";
+import type { SuwayomiSource } from "@/lib/manga/sources/suwayomi/provider";
 import { cachedSuwayomiSources } from "./manga-browse/langs";
 import { sourceDisplayName } from "./manga-browse/all-extensions";
 import { pushActivityHint } from "@/lib/discord/activity-hint";
@@ -179,6 +180,7 @@ export function MangaDetail({
   onBack,
   onOpenManga,
   onOpenDownloads,
+  onBrowseExtension,
   scrollRoot,
   downloadRequest,
 }: {
@@ -192,6 +194,7 @@ export function MangaDetail({
   onBack: () => void;
   onOpenManga: (id: string) => void;
   onOpenDownloads?: () => void;
+  onBrowseExtension: (source: SuwayomiSource, baseUrl: string) => void;
   scrollRoot?: React.RefObject<HTMLElement | null>;
   downloadRequest?: number;
 }) {
@@ -208,7 +211,12 @@ export function MangaDetail({
   const [backdrop, setBackdrop] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [topMangaOpen, setTopMangaOpen] = useState(false);
-  const [extInfo, setExtInfo] = useState<{ name: string; icon?: string } | null>(null);
+  const [extInfo, setExtInfo] = useState<{
+    name: string;
+    icon?: string;
+    source: SuwayomiSource;
+    baseUrl: string;
+  } | null>(null);
   const chaptersRef = useRef<HTMLDivElement>(null);
   const focusedDownloadRequest = useRef<number | undefined>(undefined);
   const focusChapters = () => {
@@ -248,7 +256,13 @@ export function MangaDetail({
       .then((list) => {
         if (!alive) return;
         const source = list.find((s) => s.id === parsed.sourceId);
-        if (source) setExtInfo({ name: sourceDisplayName(source), icon: source.iconUrl });
+        if (source)
+          setExtInfo({
+            name: sourceDisplayName(source),
+            icon: source.iconUrl,
+            source,
+            baseUrl: base,
+          });
       })
       .catch(() => {});
     return () => {
@@ -481,9 +495,11 @@ export function MangaDetail({
 
               <div className="flex flex-wrap items-center gap-2">
                 {extInfo && (
-                  <span
+                  <button
+                    type="button"
                     title={t("Source extension")}
-                    className="inline-flex items-center gap-1.5 rounded-full bg-elevated/60 px-3 py-1 text-[13px] font-medium text-ink ring-1 ring-edge-soft backdrop-blur-sm"
+                    onClick={() => onBrowseExtension(extInfo.source, extInfo.baseUrl)}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-elevated/60 px-3 py-1 text-[13px] font-medium text-ink ring-1 ring-edge-soft backdrop-blur-sm transition-colors hover:bg-elevated hover:ring-edge active:scale-[0.98] motion-reduce:active:scale-100"
                   >
                     {extInfo.icon && (
                       <img
@@ -496,7 +512,7 @@ export function MangaDetail({
                       />
                     )}
                     {extInfo.name}
-                  </span>
+                  </button>
                 )}
                 {pills.map((p) => (
                   <span
