@@ -22,6 +22,10 @@ const seekSteps: Record<string, string> = {
     "व्यवहार में तय स्पीड स्टेप जितना प्लेबैक धीमा करता है (डिफ़ॉल्ट 0.25x).",
   "Speed playback up by the Speed step set under Behavior (0.25x by default).":
     "व्यवहार में तय स्पीड स्टेप जितना प्लेबैक तेज़ करता है (डिफ़ॉल्ट 0.25x).",
+  "Down step": "धीमा करने का कदम",
+  "Up step": "तेज़ करने का कदम",
+  "1 second": "1 सेकंड",
+  "{n} seconds": "{n} सेकंड",
 };
 
 export default seekSteps;

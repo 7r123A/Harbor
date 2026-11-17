@@ -22,6 +22,10 @@ const seekSteps: Record<string, string> = {
     "「動作」で設定した速度の刻みだけ再生を遅くします（既定は 0.25x）。",
   "Speed playback up by the Speed step set under Behavior (0.25x by default).":
     "「動作」で設定した速度の刻みだけ再生を速くします（既定は 0.25x）。",
+  "Down step": "下げる刻み",
+  "Up step": "上げる刻み",
+  "1 second": "1秒",
+  "{n} seconds": "{n}秒",
 };
 
 export default seekSteps;

@@ -22,6 +22,10 @@ const seekSteps: Record<string, string> = {
     "按“行为”中设置的速度步长减慢播放（默认 0.25x）。",
   "Speed playback up by the Speed step set under Behavior (0.25x by default).":
     "按“行为”中设置的速度步长加快播放（默认 0.25x）。",
+  "Down step": "减速步长",
+  "Up step": "加速步长",
+  "1 second": "1 秒",
+  "{n} seconds": "{n} 秒",
 };
 
 export default seekSteps;

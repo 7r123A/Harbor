@@ -22,6 +22,11 @@ const seekSteps: Record<string, string> = {
     "يبطئ التشغيل بمقدار خطوة السرعة المحددة في السلوك (0.25x افتراضيًا).",
   "Speed playback up by the Speed step set under Behavior (0.25x by default).":
     "يسرّع التشغيل بمقدار خطوة السرعة المحددة في السلوك (0.25x افتراضيًا).",
+  "Down step": "خطوة الإبطاء",
+  "Up step": "خطوة التسريع",
+  "1 second": "ثانية واحدة",
+  "{n} seconds": "{n} ثانية",
+  "{n} seconds#few": "{n} ثوانٍ",
 };
 
 export default seekSteps;

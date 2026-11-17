@@ -22,6 +22,10 @@ const seekSteps: Record<string, string> = {
     "Oynatmayı Davranış altında ayarlanan hız adımı kadar yavaşlatır (varsayılan 0,25x).",
   "Speed playback up by the Speed step set under Behavior (0.25x by default).":
     "Oynatmayı Davranış altında ayarlanan hız adımı kadar hızlandırır (varsayılan 0,25x).",
+  "Down step": "Azaltma adımı",
+  "Up step": "Artırma adımı",
+  "1 second": "1 saniye",
+  "{n} seconds": "{n} saniye",
 };
 
 export default seekSteps;

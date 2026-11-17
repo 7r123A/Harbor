@@ -15,6 +15,7 @@ import { isPlayerInteractionLocked } from "@/lib/player/interaction-lock";
 import { HOLD_SPEED_DELAY_MS, holdSpeedRate } from "@/lib/player/hold-speed";
 import { tracePlayback } from "@/lib/player/pause-trace";
 import { round2 } from "../player-utils";
+import { slowSpeedToggleRate, stepPlaybackRate } from "@/lib/seek-step";
 import { SFX } from "@/lib/sfx";
 
 export function useKeyboardShortcuts(params: {
@@ -459,14 +460,14 @@ export function useKeyboardShortcuts(params: {
       }
       if (match("playerSpeedDown")) {
         e.preventDefault();
-        const r = Math.max(0.25, +(snap.rate - speedDownStep).toFixed(2));
+        const r = stepPlaybackRate(snap.rate, -speedDownStep);
         bridgeRef.current?.setRate(r);
         writePlayerPrefs(metaId, { rate: r });
         return;
       }
       if (match("playerSpeedUp")) {
         e.preventDefault();
-        const r = Math.min(3, +(snap.rate + speedUpStep).toFixed(2));
+        const r = stepPlaybackRate(snap.rate, speedUpStep);
         bridgeRef.current?.setRate(r);
         writePlayerPrefs(metaId, { rate: r });
         return;
@@ -474,7 +475,7 @@ export function useKeyboardShortcuts(params: {
       if (match("playerHalfSpeed")) {
         e.preventDefault();
         if (e.repeat) return;
-        const r = Math.abs(snap.rate - halfSpeedRate) < 0.001 ? 1 : halfSpeedRate;
+        const r = slowSpeedToggleRate(snap.rate, halfSpeedRate);
         bridgeRef.current?.setRate(r);
         writePlayerPrefs(metaId, { rate: r });
         return;

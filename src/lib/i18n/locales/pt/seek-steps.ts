@@ -22,6 +22,10 @@ const seekSteps: Record<string, string> = {
     "Reduz a velocidade pelo Passo da velocidade definido em Comportamento (0,25x por padrão).",
   "Speed playback up by the Speed step set under Behavior (0.25x by default).":
     "Aumenta a velocidade pelo Passo da velocidade definido em Comportamento (0,25x por padrão).",
+  "Down step": "Passo para diminuir",
+  "Up step": "Passo para aumentar",
+  "1 second": "1 segundo",
+  "{n} seconds": "{n} segundos",
 };
 
 export default seekSteps;

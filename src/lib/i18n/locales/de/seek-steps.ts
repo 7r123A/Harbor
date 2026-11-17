@@ -22,6 +22,10 @@ const seekSteps: Record<string, string> = {
     "Verlangsamt die Wiedergabe um den unter Verhalten festgelegten Tempo-Schritt (standardmäßig 0,25x).",
   "Speed playback up by the Speed step set under Behavior (0.25x by default).":
     "Beschleunigt die Wiedergabe um den unter Verhalten festgelegten Tempo-Schritt (standardmäßig 0,25x).",
+  "Down step": "Schritt langsamer",
+  "Up step": "Schritt schneller",
+  "1 second": "1 Sekunde",
+  "{n} seconds": "{n} Sekunden",
 };
 
 export default seekSteps;

@@ -22,6 +22,10 @@ const seekSteps: Record<string, string> = {
     "Memperlambat pemutaran sebesar Langkah kecepatan di Perilaku (bawaan 0,25x).",
   "Speed playback up by the Speed step set under Behavior (0.25x by default).":
     "Mempercepat pemutaran sebesar Langkah kecepatan di Perilaku (bawaan 0,25x).",
+  "Down step": "Langkah turun",
+  "Up step": "Langkah naik",
+  "1 second": "1 detik",
+  "{n} seconds": "{n} detik",
 };
 
 export default seekSteps;

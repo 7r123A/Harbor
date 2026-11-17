@@ -22,6 +22,10 @@ const seekSteps: Record<string, string> = {
     "Giảm tốc độ phát theo Bước tốc độ trong phần Hành vi (mặc định 0,25x).",
   "Speed playback up by the Speed step set under Behavior (0.25x by default).":
     "Tăng tốc độ phát theo Bước tốc độ trong phần Hành vi (mặc định 0,25x).",
+  "Down step": "Bước giảm",
+  "Up step": "Bước tăng",
+  "1 second": "1 giây",
+  "{n} seconds": "{n} giây",
 };
 
 export default seekSteps;
