@@ -127,10 +127,11 @@ async fn expire_session_torrents(dir: &std::path::Path, retention_hours: u64) ->
     };
     let now = std::time::SystemTime::now();
     let max_age = Duration::from_secs(retention_hours.saturating_mul(3600));
-    let live: Vec<(String, Vec<std::path::PathBuf>)> = session.with_torrents(|torrents| {
+    let live: Vec<(String, bool, Vec<std::path::PathBuf>)> = session.with_torrents(|torrents| {
         torrents
             .map(|(_id, handle)| {
                 let info_hash = format!("{:?}", handle.info_hash());
+                let paused = handle.is_paused();
                 let paths = handle
                     .with_metadata(|m| {
                         m.file_infos
@@ -139,14 +140,15 @@ async fn expire_session_torrents(dir: &std::path::Path, retention_hours: u64) ->
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                (info_hash, paths)
+                (info_hash, paused, paths)
             })
             .collect()
     });
 
     let mut expired = 0_u64;
-    for (info_hash, paths) in live {
-        if paths.is_empty() {
+    for (info_hash, paused, paths) in live {
+        // A playing or downloading torrent is never expired; its files are in use.
+        if !paused || paths.is_empty() {
             continue;
         }
         let stale = if retention_hours == 0 {
@@ -197,6 +199,10 @@ fn spawn_cache_sweeper(app: AppHandle) -> CacheSweeper {
                     );
                 }
                 let cancelled_for_sweep = cancelled_for_task.clone();
+                // Never delete the cache of a torrent that is still streaming:
+                // the sweep only sees file names, so map the active torrents to
+                // their first-level cache entries and pass them as protected.
+                let protected = active_cache_roots();
                 let result = tokio::task::spawn_blocking(move || {
                     if CACHE_SWEEP_RUNNING
                         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -210,6 +216,7 @@ fn spawn_cache_sweeper(app: AppHandle) -> CacheSweeper {
                         retention,
                         max_gb,
                         &cancelled_for_sweep,
+                        &protected,
                     ))
                 })
                 .await;
@@ -256,6 +263,35 @@ fn current_side_dht() -> Option<Dht> {
         .side_dht
         .clone()
         .filter(|dht| !dht.cancellation_token().is_cancelled())
+}
+
+/// First path component of every active torrent's files: the engine cache
+/// sweep can then skip those entries instead of deleting data a player is using.
+fn active_cache_roots() -> Vec<String> {
+    let Some(session) = current_session() else {
+        return Vec::new();
+    };
+    session.with_torrents(|torrents| {
+        torrents
+            .filter(|(_id, handle)| !handle.is_paused())
+            .flat_map(|(_id, handle)| {
+                handle
+                    .with_metadata(|metadata| {
+                        metadata
+                            .file_infos
+                            .iter()
+                            .filter_map(|file| {
+                                file.relative_filename
+                                    .iter()
+                                    .next()
+                                    .map(|part| part.to_string_lossy().into_owned())
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>()
+    })
 }
 
 async fn seed_side_dht(magnet: &str) -> (Vec<SocketAddr>, Duration) {
@@ -371,6 +407,14 @@ async fn new_session(
                 dump_interval: None,
             }),
             trackers: trackers::as_url_set(),
+            // Restored (paused) torrents have no per-add peer options, so the
+            // session defaults must already use the streaming cadence: short
+            // connect attempts and a read/write timeout that fails a stuck peer.
+            peer_opts: Some(PeerConnectionOptions {
+                connect_timeout: Some(Duration::from_secs(3)),
+                read_write_timeout: Some(Duration::from_secs(10)),
+                keep_alive_interval: None,
+            }),
             listen_port_range: if full { Some(16881..16931) } else { None },
             enable_upnp_port_forwarding: full,
             ..Default::default()
@@ -498,6 +542,14 @@ async fn init(app: AppHandle, cancellation: CancellationToken) -> Result<(), Str
         "DHT_QUERIES_PER_SECOND",
         crate::p2p_android::DHT_QUERIES_PER_SECOND,
     );
+    // 128 peers per torrent plus DHT sockets can exhaust the default descriptor
+    // limit once several torrents stream at the same time.
+    #[cfg(unix)]
+    {
+        if let Err(error) = librqbit::try_increase_nofile_limit() {
+            eprintln!("[torrent-engine] could not raise the file descriptor limit: {error:#}");
+        }
+    }
     let cfg = read_config(&app);
     let dir = engine_dir(&app, &cfg)?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -823,7 +875,7 @@ pub async fn torrent_engine_add(
                 read_write_timeout: Some(Duration::from_secs(10)),
                 keep_alive_interval: None,
             }),
-            force_tracker_interval: Some(Duration::from_secs(300)),
+            force_tracker_interval: Some(Duration::from_secs(120)),
             ..Default::default()
         };
         let add_call_started = Instant::now();
@@ -892,7 +944,7 @@ pub(crate) async fn ensure_added(
                         read_write_timeout: Some(Duration::from_secs(10)),
                         keep_alive_interval: None,
                     }),
-                    force_tracker_interval: Some(Duration::from_secs(300)),
+                    force_tracker_interval: Some(Duration::from_secs(120)),
                     ..Default::default()
                 };
                 let added = timeout(
