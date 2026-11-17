@@ -112,6 +112,7 @@ export default defineConfig(({ mode }) => {
           "**/.diag/**",
           "**/_private/**",
           "**/harbor-install-recovery/**",
+          "**/*.tmpdir/**",
         ],
       },
       proxy: Object.fromEntries(
