@@ -126,6 +126,25 @@ pub struct AudioInfo {
     pub codec: String,
     pub channels: u32,
     pub language: Option<String>,
+    /// Bits per second as the container reports it; 0 when it does not (common in MKV).
+    pub bitrate: u64,
+}
+
+impl AudioInfo {
+    /// The rate this track can reach when it is copied: its reported rate, or else the highest
+    /// its codec allows in the streams Harbor copies (AC-3 640k, E-AC-3 6144k, MP3 320k, AAC
+    /// 6-channel 576k).
+    fn copied_bitrate(&self) -> u64 {
+        if self.bitrate > 0 {
+            return self.bitrate;
+        }
+        match self.codec.as_str() {
+            "ac3" => 640_000,
+            "eac3" => 6_144_000,
+            "mp3" => 320_000,
+            _ => 576_000,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -305,6 +324,7 @@ pub(crate) fn parse_probe(json: &str) -> Result<MediaProbe, String> {
                 codec: s.codec_name.to_ascii_lowercase(),
                 channels: s.channels.unwrap_or(2),
                 language: s.tags.get("language").cloned().filter(|l| l != "und"),
+                bitrate: s.bit_rate.as_deref().and_then(|b| b.parse().ok()).unwrap_or(0),
             }),
             "subtitle" => probe.subtitles.push(SubtitleInfo {
                 index: s.index,
@@ -911,7 +931,9 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
             _ => channels <= 2 && codec == "aac",
         };
     let hls_audio_codec;
+    let audio_bps: u64;
     if copy_audio {
+        audio_bps = audio.map_or(192_000, AudioInfo::copied_bitrate);
         output.extend(["-c:a".into(), "copy".into()]);
         hls_audio_codec = match codec {
             "ac3" => "ac-3",
@@ -929,10 +951,12 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         }
         if surround {
             output.extend(["-c:a", "ac3", "-b:a", "640k", "-ac", "6"].map(String::from));
+            audio_bps = 640_000;
             hls_audio_codec = "ac-3";
             summary.audio = "AC-3 5.1".into();
         } else {
             output.extend(["-c:a", "aac", "-b:a", "192k", "-ac", "2"].map(String::from));
+            audio_bps = 192_000;
             hls_audio_codec = "mp4a.40.2";
             summary.audio = "AAC 2.0".into();
         }
@@ -944,14 +968,16 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
     output.extend(["-map".into(), audio_map]);
     output.extend(["-map_metadata", "-1", "-map_chapters", "-1", "-sn", "-dn"].map(String::from));
 
-    let bandwidth = if audio_only {
-        // The highest audio rate the plan can produce (AC-3 5.1 at 640k), with container overhead.
-        700_000
+    // BANDWIDTH is the peak rate of the variant: the video's (the encoder's maxrate, or what a
+    // copied stream reports), plus the audio actually sent, plus about 10% for the container.
+    let video_bps = if audio_only {
+        0
     } else if encode_video {
         (target_kbps as u64 * 1500).max(2_500_000)
     } else {
-        video.map(|v| v.bitrate).filter(|b| *b > 0).unwrap_or(8_000_000).saturating_add(640_000)
+        video.map(|v| v.bitrate).filter(|b| *b > 0).unwrap_or(8_000_000)
     };
+    let bandwidth = video_bps.saturating_add(audio_bps).saturating_mul(11) / 10;
     CastPlan {
         pre_input,
         output,
@@ -1381,9 +1407,40 @@ mod tests {
         assert!(args.contains("-map 0:a:0?") && !args.contains("-filter_complex"), "{args}");
         assert_eq!(p.hls_codecs, "mp4a.40.2");
         assert_eq!((p.width, p.height, p.summary.video.as_str()), (0, 0, "none"));
+        assert_eq!(p.bandwidth, 192_000 * 11 / 10, "re-encoded to AAC 192k");
         // Without a probe nothing is known, so the first video stream, if any, is still taken.
         let unknown = plan(None, &CastOptions::default(), &FfmpegCaps::default());
         assert!(unknown.output.join(" ").contains("0:v:0?"), "{:?}", unknown.output);
+    }
+
+    #[test]
+    fn bandwidth_counts_the_audio_actually_sent() {
+        let music = |codec: &str, rate: &str| {
+            parse_probe(&format!(
+                r#"{{"streams":[{{"index":0,"codec_type":"audio","codec_name":"{codec}","channels":6{rate}}}],"format":{{"duration":"240"}}}}"#
+            ))
+            .unwrap()
+        };
+        let original = CastOptions { audio_mode: "original".into(), ..Default::default() };
+        // A copied 1536 kbit/s E-AC-3 track is announced at its own rate.
+        let p = plan_with(&music("eac3", r#","bit_rate":"1536000""#), &original, DeviceLimits::default());
+        assert!(p.output.join(" ").contains("-c:a copy"), "{:?}", p.output);
+        assert_eq!(p.bandwidth, 1_536_000 * 11 / 10);
+        // One whose rate is unknown is announced at its codec's ceiling, never below it.
+        let p = plan_with(&music("eac3", ""), &original, DeviceLimits::default());
+        assert_eq!(p.bandwidth, 6_144_000 * 11 / 10);
+        // Re-encoded audio counts what the encoder makes: AC-3 5.1 at 640k.
+        let surround = CastOptions { audio_mode: "surround".into(), ..Default::default() };
+        let p = plan_with(&music("truehd", ""), &surround, DeviceLimits::default());
+        assert_eq!(p.bandwidth, 640_000 * 11 / 10);
+        // With a copied picture, its reported rate and the copied audio add up.
+        let film = parse_probe(
+            r#"{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","pix_fmt":"yuv420p","width":1920,"height":1080,"avg_frame_rate":"24/1","bit_rate":"9000000"},
+               {"index":1,"codec_type":"audio","codec_name":"eac3","channels":6,"bit_rate":"1536000"}],"format":{"duration":"100"}}"#,
+        )
+        .unwrap();
+        let p = plan_with(&film, &original, DeviceLimits::default());
+        assert_eq!(p.bandwidth, (9_000_000 + 1_536_000) * 11 / 10);
     }
 
     #[test]
