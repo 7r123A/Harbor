@@ -285,6 +285,7 @@ test("a bulk history action exceeding remaining capacity is rejected without par
     assert.equal(h.sync.refractStatus().failed, 1);
     assert.equal(h.sync.refractStatus().failureDetails[0].sourceId, episodeEvent().id);
     assert.match(h.sync.refractStatus().failureDetails[0].reason, /queue full/);
+    assert.equal(h.sync.refractStatus().message, "Refract queue full; unable to save another watch");
   } finally {
     h.cleanup();
   }
