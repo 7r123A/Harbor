@@ -99,11 +99,22 @@ impl TorrentStreams {
         Interleave { all: all.into() }
     }
 
-    pub(crate) fn blocking_pieces(&self, lengths: &Lengths) -> Vec<ValidPieceIndex> {
-        self.streams
-            .iter()
-            .filter_map(|s| s.value().current_piece(lengths).map(|p| p.id))
-            .collect()
+    /// The piece each active stream is blocked on plus the next `ahead` pieces
+    /// of its priority queue. Used to widen stall recovery beyond the single
+    /// piece the reader is currently waiting for.
+    pub(crate) fn urgent_pieces(&self, lengths: &Lengths, ahead: usize) -> Vec<ValidPieceIndex> {
+        let mut out = Vec::new();
+        for stream in self.streams.iter() {
+            for (seen, piece) in stream.value().queue(lengths).enumerate() {
+                if seen > ahead {
+                    break;
+                }
+                if !out.contains(&piece) {
+                    out.push(piece);
+                }
+            }
+        }
+        out
     }
 
     pub(crate) fn wake_streams_on_piece_completed(

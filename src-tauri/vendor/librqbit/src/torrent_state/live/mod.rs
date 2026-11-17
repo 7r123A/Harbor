@@ -1278,12 +1278,24 @@ impl PeerHandler {
             .map(|r| r.flatten())
     }
 
-    /// Duplicate the blocking piece to another peer without cancelling the
-    /// original request. The first completion wins; late duplicate chunks are
-    /// ignored by the write path once the piece is complete.
+    /// Widen stall recovery for the pieces a reader is blocked on: duplicate a
+    /// slow urgent piece to another peer without cancelling the original
+    /// request. The first completion wins; late duplicate chunks are ignored by
+    /// the write path once the piece is complete.
+    ///
+    /// A stalled head costs the viewer seconds, while a duplicate costs at most a
+    /// few megabytes of wasted bandwidth for a piece that is needed anyway, so
+    /// hedge quickly and broadly. Each attempt goes to a different peer, which
+    /// also re-requests the whole block set instead of waiting for the peer
+    /// read/write timeout to give up on a stalled connection.
     fn try_hedge_blocking_piece(&self) -> Option<ValidPieceIndex> {
-        const BLOCKING_HEDGE: Duration = Duration::from_millis(750);
-        let blocking = self.state.streams.blocking_pieces(&self.state.lengths);
+        const BLOCKING_HEDGE: Duration = Duration::from_millis(350);
+        const HEDGE_AHEAD_PIECES: usize = 2;
+        const MAX_HEDGES: usize = 3;
+        let blocking = self
+            .state
+            .streams
+            .urgent_pieces(&self.state.lengths, HEDGE_AHEAD_PIECES);
         if blocking.is_empty() {
             return None;
         }
@@ -1296,13 +1308,13 @@ impl PeerHandler {
         };
 
         let mut g = self.state.lock_write("try_hedge_blocking_piece");
-        let (idx, original) = g
+        let (idx, original, hedge_count) = g
             .inflight_pieces
             .iter_mut()
             .filter(|(p, r)| {
                 r.peer != self.addr
                     && blocking.contains(p)
-                    && r.hedged.len() < 2
+                    && r.hedged.len() < MAX_HEDGES
                     && !r.hedged.contains(&self.addr)
                     && peer_bf.get(p.get_usize()).map(|v| *v).unwrap_or(false)
                     && r.started.elapsed() >= BLOCKING_HEDGE
@@ -1310,12 +1322,12 @@ impl PeerHandler {
             .max_by_key(|(_, r)| r.started.elapsed())
             .map(|(p, r)| {
                 r.hedged.push(self.addr);
-                (*p, r.peer)
+                (*p, r.peer, r.hedged.len())
             })?;
         if cfg!(debug_assertions) {
             eprintln!(
-                "[p2p-hedge] piece {} original {} hedge {}",
-                idx, original, self.addr
+                "[p2p-hedge] piece {} original {} hedge {} copies={}",
+                idx, original, self.addr, hedge_count
             );
         }
         Some(idx)
