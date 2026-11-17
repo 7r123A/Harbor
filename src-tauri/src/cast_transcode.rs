@@ -115,6 +115,8 @@ pub struct VideoInfo {
     pub bitrate: u64,
     /// Sample (pixel) aspect ratio when it is not square, e.g. 16:15 for a PAL DVD.
     pub sar: Option<(u32, u32)>,
+    /// The level the stream declares (H.264: 41 for 4.1; H.265: general_level_idc, 153 for 5.1).
+    pub level: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -222,6 +224,8 @@ struct ProbeStream {
     #[serde(default)]
     sample_aspect_ratio: Option<String>,
     #[serde(default)]
+    level: Option<i64>,
+    #[serde(default)]
     color_transfer: Option<String>,
     #[serde(default)]
     field_order: Option<String>,
@@ -293,6 +297,7 @@ pub(crate) fn parse_probe(json: &str) -> Result<MediaProbe, String> {
                     interlaced: matches!(field_order, "tt" | "bb" | "tb" | "bt"),
                     bitrate: s.bit_rate.and_then(|b| b.parse().ok()).unwrap_or(0),
                     sar: parse_sar(s.sample_aspect_ratio.as_deref()),
+                    level: s.level.and_then(|l| u32::try_from(l).ok()).filter(|l| *l > 0),
                 });
             }
             "audio" => probe.audio.push(AudioInfo {
@@ -479,9 +484,20 @@ pub struct PlanInput<'a> {
     pub burn_sub: Option<&'a (String, String)>,
     /// Absolute index of an embedded picture subtitle stream to overlay.
     pub burn_bitmap: Option<u32>,
-    /// The caller already knows the receiver cannot take the source as it is.
+    /// The caller already knows the receiver cannot take the source's video as it is.
     pub force_video_encode: bool,
-    pub force_audio_encode: bool,
+    /// What the receiver's device profile rules out.
+    pub limits: DeviceLimits,
+}
+
+/// Limits from the receiver's device profile (`cast-resolve.ts`), on top of the quality setting:
+/// a Nest Hub stops at 720p, an older TV takes only stereo AAC.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DeviceLimits {
+    pub max_height: Option<u32>,
+    pub max_video_kbps: Option<u32>,
+    pub force_aac: bool,
+    pub force_stereo: bool,
 }
 
 fn even(v: f64) -> u32 {
@@ -534,22 +550,90 @@ fn fill_crop(src_w: u32, src_h: u32, aspect: (u32, u32)) -> Option<(String, u32,
     Some((format!("crop={w}:{h}"), w, h))
 }
 
-/// The CODECS name the HLS playlist announces: High profile, level 4.1 up to 1080p, 5.1 above.
-/// Receivers check it before loading, so a 4K stream announced as 4.1 is refused.
-fn h264_codec_string(height: u32) -> &'static str {
-    if height > 1080 { "avc1.640033" } else { "avc1.640029" }
+/// H.264 levels and the limits that pick one (ITU-T H.264 Table A-1, High profile bit rates):
+/// (level_idc, max macroblocks per frame, max macroblocks per second, max kbit/s, max CPB kbit).
+const H264_LEVELS: &[(u32, u64, u64, u64, u64)] = &[
+    (30, 1_620, 40_500, 12_500, 12_500),
+    (31, 3_600, 108_000, 17_500, 17_500),
+    (32, 5_120, 216_000, 25_000, 25_000),
+    (40, 8_192, 245_760, 25_000, 31_250),
+    (41, 8_192, 245_760, 62_500, 78_125),
+    (42, 8_704, 522_240, 62_500, 78_125),
+    (50, 22_080, 589_824, 168_750, 168_750),
+    (51, 36_864, 983_040, 300_000, 300_000),
+    (52, 36_864, 2_073_600, 300_000, 300_000),
+    (60, 139_264, 4_177_920, 300_000, 300_000),
+    (61, 139_264, 8_355_840, 600_000, 600_000),
+    (62, 139_264, 16_711_680, 1_000_000, 1_000_000),
+];
+
+/// H.265 levels by luma picture size and luma sample rate (ITU-T H.265 Table A.8):
+/// (general_level_idc, max luma samples per picture, max luma samples per second).
+const HEVC_LEVELS: &[(u32, u64, u64)] = &[
+    (30, 36_864, 552_960),
+    (60, 122_880, 3_686_400),
+    (63, 245_760, 7_372_800),
+    (90, 552_960, 16_588_800),
+    (93, 983_040, 33_177_600),
+    (120, 2_228_224, 66_846_720),
+    (123, 2_228_224, 133_693_440),
+    (150, 8_912_896, 267_386_880),
+    (153, 8_912_896, 534_773_760),
+    (156, 8_912_896, 1_069_547_520),
+    (180, 35_651_584, 1_069_547_520),
+    (183, 35_651_584, 2_139_095_040),
+    (186, 35_651_584, 4_278_190_080),
+];
+
+/// The lowest H.264 level a picture of this size and frame rate fits, within the peak bit rate
+/// and buffer when they are known. 1080p60 needs 4.2, not the 4.1 that suffices at 30.
+fn h264_level(width: u32, height: u32, fps: f64, kbps: Option<u32>, buffer_kbit: Option<u32>) -> u32 {
+    let frame = u64::from(width.div_ceil(16)) * u64::from(height.div_ceil(16));
+    let rate = (frame as f64 * fps).ceil() as u64;
+    H264_LEVELS
+        .iter()
+        .find(|(_, max_frame, max_rate, max_kbps, max_cpb)| {
+            frame <= *max_frame
+                && rate <= *max_rate
+                && kbps.is_none_or(|k| u64::from(k) <= *max_kbps)
+                && buffer_kbit.is_none_or(|b| u64::from(b) <= *max_cpb)
+        })
+        .map_or(62, |level| level.0)
 }
 
-/// Main 10 for 10-bit (HDR) sources, Main for 8-bit ones; level 5.1 above 1080p, 4.1 up to it.
-fn hevc_codec_string(video: &VideoInfo) -> String {
+/// The lowest H.265 level a picture of this size and frame rate fits.
+fn hevc_level(width: u32, height: u32, fps: f64) -> u32 {
+    let picture = u64::from(width) * u64::from(height);
+    let rate = (picture as f64 * fps).ceil() as u64;
+    HEVC_LEVELS
+        .iter()
+        .find(|(_, max_picture, max_rate)| picture <= *max_picture && rate <= *max_rate)
+        .map_or(186, |level| level.0)
+}
+
+/// `-level` for the encoders that take it as text: 42 becomes "4.2".
+fn level_arg(level_idc: u32) -> String {
+    format!("{}.{}", level_idc / 10, level_idc % 10)
+}
+
+/// The CODECS name the HLS playlist announces for H.264 High at `level_idc`. Receivers check it
+/// before loading, so it must not claim less than the stream needs.
+fn h264_codec_string(level_idc: u32) -> String {
+    format!("avc1.6400{level_idc:02X}")
+}
+
+/// Main 10 for 10-bit (HDR) sources, Main for 8-bit ones, at `level_idc` (Main tier).
+fn hevc_codec_string(video: &VideoInfo, level_idc: u32) -> String {
     let profile = if video.pix_fmt.contains("10") || video.pix_fmt.contains("12") || video.hdr { "2.4" } else { "1.6" };
-    let level = if video.height > 1080 { 153 } else { 123 };
-    format!("hvc1.{profile}.L{level}.B0")
+    format!("hvc1.{profile}.L{level_idc}.B0")
 }
 
 pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
     let options = input.options;
-    let (max_height, target_kbps) = options.quality();
+    let limits = input.limits;
+    let (quality_height, quality_kbps) = options.quality();
+    let max_height = limits.max_height.map_or(quality_height, |m| m.clamp(240, quality_height));
+    let target_kbps = limits.max_video_kbps.map_or(quality_kbps, |k| k.clamp(1_000, quality_kbps));
     let video = input.probe.and_then(|p| p.video.as_ref());
     let audio = input.probe.and_then(|p| p.audio.get(input.audio_ordinal as usize));
     let mut reasons: Vec<String> = Vec::new();
@@ -566,9 +650,15 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
     };
     let aspect = options.aspect_ratio();
     let burning = input.burn_sub.is_some() || input.burn_bitmap.is_some();
-    let mut encode_video = forced || input.force_video_encode || burning || deinterlace || aspect.is_some();
+    // Forcing the tone mapper only does something if the picture goes through the encoder.
+    let tonemap_forced = options.tonemap == "on";
+    let mut encode_video =
+        forced || input.force_video_encode || burning || deinterlace || aspect.is_some() || tonemap_forced;
     if forced {
         reasons.push("forced conversion".into());
+    }
+    if tonemap_forced {
+        reasons.push("tone mapping forced".into());
     }
     if let Some(v) = video {
         let native_hevc = options.hevc_native && v.codec == "hevc";
@@ -650,7 +740,7 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         deinterlaced: deinterlace,
         reasons,
     };
-    let mut hls_video_codec = "avc1.640029".to_string();
+    let mut hls_video_codec = h264_codec_string(41);
     let mut hls_fmp4 = false;
 
     if encode_video {
@@ -706,11 +796,18 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         let gop = (fps * 2.0).round() as u32;
         if let Some(sub_index) = input.burn_bitmap {
             // Picture subtitles are drawn on a canvas of their own; fit it to the output frame and
-            // keep it at the bottom, where the canvas places its text.
+            // keep it at the bottom, where the canvas places its text. They carry the stream's own
+            // timestamps, so the subtitle delay moves them here (text subtitles are shifted in
+            // their file instead).
+            let shift = match options.sub_delay_ms {
+                0 => String::new(),
+                d if d > 0 => format!("setpts=PTS+{}/TB,", ffmpeg_number(d as f64 / 1000.0)),
+                d => format!("setpts=PTS-{}/TB,", ffmpeg_number(-d as f64 / 1000.0)),
+            };
             output.extend([
                 "-filter_complex".into(),
                 format!(
-                    "[{video_map}]{}[base];[0:{sub_index}]scale={out_w}:{out_h}:force_original_aspect_ratio=decrease[sub];[base][sub]overlay=x=(W-w)/2:y=H-h:eof_action=pass,format=yuv420p[vout]",
+                    "[{video_map}]{}[base];[0:{sub_index}]{shift}scale={out_w}:{out_h}:force_original_aspect_ratio=decrease[sub];[base][sub]overlay=x=(W-w)/2:y=H-h:eof_action=pass,format=yuv420p[vout]",
                     vf.join(",")
                 ),
             ]);
@@ -748,22 +845,32 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
             "-force_key_frames".into(),
             "expr:gte(t,n_forced*2)".into(),
         ]);
+        // One level, from the output size, frame rate, peak rate and buffer, for both the encoder
+        // and the playlist. The hardware encoders not listed pick a fitting level themselves.
+        let level = h264_level(out_w, out_h, fps, Some(maxrate), Some(bufsize));
+        if matches!(encoder, "libx264" | "h264_nvenc") {
+            output.extend(["-level".into(), level_arg(level)]);
+        }
         if encoder == "libx264" {
-            output.extend(["-level".into(), if out_h > 1080 { "5.1".into() } else { "4.1".into() }]);
             output.extend(["-keyint_min".into(), gop.to_string()]);
         }
-        hls_video_codec = h264_codec_string(out_h).into();
+        hls_video_codec = h264_codec_string(level);
         summary.video = encoder.into();
         summary.hardware = (encoder != "libx264").then(|| caps.hardware_label().unwrap_or("GPU").to_string());
         summary.output_height = out_h;
     } else {
         output.extend(["-c:v".into(), "copy".into()]);
+        // A copied stream keeps its own level: announce what it declares, or what its size and
+        // frame rate need, whichever is higher.
+        let rate_kbps = video.map(|v| v.bitrate / 1000).filter(|k| *k > 0).and_then(|k| u32::try_from(k).ok());
         if let Some(v) = video.filter(|v| v.codec == "h264") {
             output.extend(["-bsf:v".into(), "h264_mp4toannexb".into()]);
-            hls_video_codec = h264_codec_string(v.height).into();
+            let needed = h264_level(v.width, v.height, fps, rate_kbps, None);
+            hls_video_codec = h264_codec_string(needed.max(v.level.unwrap_or(0)));
         } else if let Some(v) = video.filter(|v| v.codec == "hevc") {
             output.extend(["-bsf:v".into(), "hevc_mp4toannexb".into()]);
-            hls_video_codec = hevc_codec_string(v);
+            let needed = hevc_level(v.width, v.height, fps);
+            hls_video_codec = hevc_codec_string(v, needed.max(v.level.unwrap_or(0)));
             hls_fmp4 = true;
         }
     }
@@ -771,8 +878,9 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
     let channels = audio.map(|a| a.channels).unwrap_or(2);
     let codec = audio.map(|a| a.codec.as_str()).unwrap_or("");
     let ts_safe = matches!(codec, "aac" | "ac3" | "eac3" | "mp3");
+    let device_takes_it = (!limits.force_aac || codec == "aac") && (!limits.force_stereo || channels <= 2);
     let copy_audio = !options.audio_filters_requested()
-        && !input.force_audio_encode
+        && device_takes_it
         && !forced
         && ts_safe
         && match options.audio_mode.as_str() {
@@ -791,7 +899,8 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         };
         summary.audio = format!("{} (original)", codec.to_uppercase());
     } else {
-        let surround = matches!(options.audio_mode.as_str(), "surround" | "original") && channels >= 6;
+        let surround =
+            !limits.force_stereo && matches!(options.audio_mode.as_str(), "surround" | "original") && channels >= 6;
         let filters = audio_filters(options, channels, !surround);
         if !filters.is_empty() {
             output.extend(["-af".into(), filters.join(",")]);
@@ -950,7 +1059,7 @@ mod tests {
                 burn_sub: None,
                 burn_bitmap: None,
                 force_video_encode: false,
-                force_audio_encode: false,
+                limits: DeviceLimits::default(),
             },
             caps,
         )
@@ -974,7 +1083,7 @@ mod tests {
                 burn_sub: None,
                 burn_bitmap: Some(3),
                 force_video_encode: false,
-                force_audio_encode: false,
+                limits: DeviceLimits::default(),
             },
             &FfmpegCaps::default(),
         );
@@ -1001,7 +1110,8 @@ mod tests {
         assert_eq!(plan.pre_input, ["-init_hw_device", "vulkan", "-hwaccel", "cuda"]);
         assert_eq!(plan.summary.tonemap.as_deref(), Some("libplacebo"));
         assert_eq!(plan.summary.source_video, "HEVC 1606p DV");
-        assert_eq!(plan.hls_codecs, "avc1.640029,mp4a.40.2");
+        assert_eq!(plan.hls_codecs, "avc1.640032,mp4a.40.2", "2582x1080 is wider than level 4.2 allows");
+        assert!(args.contains("-level 5.0"), "{args}");
         assert_eq!((plan.width, plan.height), (2582, 1080));
     }
 
@@ -1016,7 +1126,8 @@ mod tests {
         assert!(args.contains("-c:v libx264"));
         assert!(args.contains("-c:a ac3 -b:a 640k -ac 6"));
         assert!(plan.pre_input.is_empty());
-        assert_eq!(plan.hls_codecs, "avc1.640029,ac-3");
+        assert_eq!(plan.hls_codecs, "avc1.640032,ac-3");
+        assert!(args.contains("-level 5.0"), "{args}");
         // Decoding on the GPU while encoding on the CPU stays available.
         let options = CastOptions { hardware_encoding: false, ..Default::default() };
         let plan = self::plan(Some(&probe), &options, &caps);
@@ -1033,7 +1144,7 @@ mod tests {
         let args = plan.output.join(" ");
         assert!(args.contains("-c:v copy -bsf:v hevc_mp4toannexb"), "{args}");
         assert!(args.contains("-c:a copy"), "{args}");
-        assert_eq!(plan.hls_codecs, "hvc1.2.4.L153.B0,ec-3");
+        assert_eq!(plan.hls_codecs, "hvc1.2.4.L150.B0,ec-3", "3840x1606 at 23.976 fits level 5");
         assert!(plan.hls_fmp4, "H.265 travels in fragmented MP4 over HLS");
         let forced = CastOptions { force_conversion: true, ..options };
         let args = self::plan(Some(&probe), &forced, &caps).output.join(" ");
@@ -1050,12 +1161,12 @@ mod tests {
         let caps = FfmpegCaps::default();
         let build = |options: &CastOptions| {
             build_plan(
-                &PlanInput { probe: Some(&probe), options, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, force_video_encode: false, force_audio_encode: false },
+                &PlanInput { probe: Some(&probe), options, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, force_video_encode: false, limits: DeviceLimits::default() },
                 &caps,
             )
         };
         let copied = build(&CastOptions::default());
-        assert_eq!(copied.hls_codecs, "avc1.640029,mp4a.40.2");
+        assert_eq!(copied.hls_codecs, "avc1.640028,mp4a.40.2", "1080p24 fits level 4.0");
         assert!(!copied.hls_fmp4);
         let args = copied.output.join(" ");
         assert!(args.contains("-c:v copy -bsf:v h264_mp4toannexb"), "{args}");
@@ -1077,7 +1188,7 @@ mod tests {
         )
         .unwrap();
         let p = build_plan(
-            &PlanInput { probe: Some(&scope), options: &fill, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, force_video_encode: false, force_audio_encode: false },
+            &PlanInput { probe: Some(&scope), options: &fill, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, force_video_encode: false, limits: DeviceLimits::default() },
             &caps,
         );
         assert!(p.output.join(" ").contains("-vf crop=1422:800,scale=1422:800"), "{:?}", p.output);
@@ -1117,7 +1228,7 @@ mod tests {
         assert_eq!(probe.video.as_ref().and_then(|v| v.sar), Some((16, 15)));
         let options = CastOptions::default();
         let plan = build_plan(
-            &PlanInput { probe: Some(&probe), options: &options, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, force_video_encode: false, force_audio_encode: false },
+            &PlanInput { probe: Some(&probe), options: &options, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, force_video_encode: false, limits: DeviceLimits::default() },
             &FfmpegCaps::default(),
         );
         let args = plan.output.join(" ");
@@ -1127,13 +1238,116 @@ mod tests {
 
     #[test]
     fn hls_announces_the_profile_and_level_actually_sent() {
-        let mut v = VideoInfo { codec: "hevc".into(), pix_fmt: "yuv420p".into(), height: 1080, ..Default::default() };
-        assert_eq!(hevc_codec_string(&v), "hvc1.1.6.L123.B0");
+        // H.264: size, frame rate, peak rate and buffer each pick a minimum level.
+        assert_eq!(h264_level(1920, 1080, 30.0, None, None), 40);
+        assert_eq!(h264_level(1920, 1080, 60.0, None, None), 42, "1080p60 needs 4.2");
+        assert_eq!(h264_level(1920, 1080, 24.0, Some(30_000), None), 41, "above 4.0's 25 Mbit/s");
+        assert_eq!(h264_level(1920, 1080, 24.0, Some(60_000), Some(80_000)), 50, "a buffer above 4.1's");
+        assert_eq!(h264_level(1280, 720, 30.0, None, None), 31);
+        assert_eq!(h264_level(1280, 720, 60.0, None, None), 32);
+        assert_eq!(h264_level(3840, 2160, 30.0, None, None), 51);
+        assert_eq!(h264_level(3840, 2160, 60.0, None, None), 52, "4K60 needs 5.2");
+        assert_eq!(h264_codec_string(42), "avc1.64002A");
+        assert_eq!(h264_codec_string(52), "avc1.640034");
+        assert_eq!(level_arg(42), "4.2");
+        assert_eq!(level_arg(50), "5.0");
+        // H.265 has no level 4.2: 1080p60 fits 4.1 (L123), 4K60 needs 5.1.
+        assert_eq!(hevc_level(1920, 1080, 30.0), 120);
+        assert_eq!(hevc_level(1920, 1080, 60.0), 123);
+        assert_eq!(hevc_level(3840, 2160, 24.0), 150);
+        assert_eq!(hevc_level(3840, 2160, 60.0), 153);
+        assert_eq!(hevc_level(3840, 2160, 120.0), 156);
+        let mut v = VideoInfo { codec: "hevc".into(), pix_fmt: "yuv420p".into(), ..Default::default() };
+        assert_eq!(hevc_codec_string(&v, 123), "hvc1.1.6.L123.B0");
         v.pix_fmt = "yuv420p10le".into();
-        v.height = 2160;
-        assert_eq!(hevc_codec_string(&v), "hvc1.2.4.L153.B0");
-        assert_eq!(h264_codec_string(2160), "avc1.640033");
-        assert_eq!(h264_codec_string(720), "avc1.640029");
+        assert_eq!(hevc_codec_string(&v, 153), "hvc1.2.4.L153.B0");
+    }
+
+    fn copy_probe(codec: &str, width: u32, height: u32, rate: &str, level: Option<u32>) -> MediaProbe {
+        let level = level.map(|l| format!(",\"level\":{l}")).unwrap_or_default();
+        parse_probe(&format!(
+            r#"{{"streams":[{{"index":0,"codec_type":"video","codec_name":"{codec}","pix_fmt":"yuv420p","width":{width},"height":{height},"avg_frame_rate":"{rate}"{level}}},
+               {{"index":1,"codec_type":"audio","codec_name":"aac","channels":2}}],"format":{{"duration":"100"}}}}"#
+        ))
+        .unwrap()
+    }
+
+    fn plan_with(probe: &MediaProbe, options: &CastOptions, limits: DeviceLimits) -> CastPlan {
+        build_plan(
+            &PlanInput { probe: Some(probe), options, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, force_video_encode: false, limits },
+            &FfmpegCaps::default(),
+        )
+    }
+
+    #[test]
+    fn the_encoder_level_and_the_playlist_agree_at_high_frame_rates() {
+        // A 1080p60 source re-encoded: -level and CODECS both say 4.2.
+        let probe = copy_probe("hevc", 1920, 1080, "60/1", None);
+        let p = plan_with(&probe, &CastOptions::default(), DeviceLimits::default());
+        let args = p.output.join(" ");
+        assert!(args.contains("-c:v libx264") && args.contains("-level 4.2"), "{args}");
+        assert!(p.hls_codecs.starts_with("avc1.64002A,"), "{}", p.hls_codecs);
+        // A copied 1080p60 H.264 stream announces what its size and frame rate need ...
+        let probe = copy_probe("h264", 1920, 1080, "60000/1001", None);
+        assert!(plan_with(&probe, &CastOptions::default(), DeviceLimits::default()).hls_codecs.starts_with("avc1.64002A,"));
+        // ... or the level it declares, when that is higher.
+        let probe = copy_probe("h264", 1920, 1080, "24/1", Some(51));
+        assert!(plan_with(&probe, &CastOptions::default(), DeviceLimits::default()).hls_codecs.starts_with("avc1.640033,"));
+        let probe = copy_probe("hevc", 3840, 2160, "60/1", Some(150));
+        let options = CastOptions { hevc_native: true, quality: "4k".into(), ..Default::default() };
+        assert!(plan_with(&probe, &options, DeviceLimits::default()).hls_codecs.starts_with("hvc1.1.6.L153.B0,"));
+    }
+
+    #[test]
+    fn device_limits_cap_resolution_rate_and_audio() {
+        // A 720p receiver (Nest Hub) gets 720p, within its bit rate, in stereo AAC.
+        let probe = parse_probe(
+            r#"{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","pix_fmt":"yuv420p","width":1920,"height":1080,"avg_frame_rate":"24/1"},
+               {"index":1,"codec_type":"audio","codec_name":"ac3","channels":6}],"format":{"duration":"100"}}"#,
+        )
+        .unwrap();
+        let limits = DeviceLimits { max_height: Some(720), max_video_kbps: Some(3_000), force_aac: true, force_stereo: true };
+        let options = CastOptions { audio_mode: "surround".into(), ..Default::default() };
+        let p = plan_with(&probe, &options, limits);
+        let args = p.output.join(" ");
+        assert!(args.contains("scale=1280:720"), "{args}");
+        assert!(args.contains("-maxrate 4500k"), "{args}");
+        assert!(args.contains("-c:a aac -b:a 192k -ac 2"), "{args}");
+        assert_eq!(p.summary.output_height, 720);
+        // Without limits the same film is copied and keeps its surround track.
+        let free = plan_with(&probe, &CastOptions { audio_mode: "original".into(), ..Default::default() }, DeviceLimits::default());
+        assert!(free.output.join(" ").contains("-c:v copy") && free.output.join(" ").contains("-c:a copy"));
+    }
+
+    #[test]
+    fn forcing_tone_mapping_converts_a_copyable_source() {
+        let probe = copy_probe("h264", 1920, 1080, "24/1", None);
+        let p = plan_with(&probe, &CastOptions { tonemap: "on".into(), ..Default::default() }, DeviceLimits::default());
+        assert_ne!(p.summary.video, "copy");
+        assert!(p.summary.reasons.iter().any(|r| r == "tone mapping forced"), "{:?}", p.summary.reasons);
+        let p = plan_with(&probe, &CastOptions::default(), DeviceLimits::default());
+        assert_eq!(p.summary.video, "copy");
+    }
+
+    #[test]
+    fn picture_subtitles_follow_the_subtitle_delay() {
+        let probe = parse_probe(
+            r#"{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","pix_fmt":"yuv420p","width":1920,"height":1080,"avg_frame_rate":"24/1"},
+               {"index":2,"codec_type":"subtitle","codec_name":"hdmv_pgs_subtitle"}],"format":{"duration":"100"}}"#,
+        )
+        .unwrap();
+        let plan_for = |delay: i32| {
+            let options = CastOptions { sub_delay_ms: delay, ..Default::default() };
+            build_plan(
+                &PlanInput { probe: Some(&probe), options: &options, audio_ordinal: 0, burn_sub: None, burn_bitmap: Some(2), force_video_encode: false, limits: DeviceLimits::default() },
+                &FfmpegCaps::default(),
+            )
+            .output
+            .join(" ")
+        };
+        assert!(plan_for(1500).contains("[0:2]setpts=PTS+1.5/TB,scale="), "{}", plan_for(1500));
+        assert!(plan_for(-250).contains("[0:2]setpts=PTS-0.25/TB,scale="), "{}", plan_for(-250));
+        assert!(plan_for(0).contains("[0:2]scale="), "{}", plan_for(0));
     }
 
     #[test]

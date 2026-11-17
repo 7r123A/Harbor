@@ -428,19 +428,29 @@ impl ProxyState {
         self.hls.stop_all().await
     }
 
+    /// Marks the active cast's stream as in use. Casting status is polled every second while a cast
+    /// runs, so a receiver paused for longer than the idle limit keeps its stream.
+    pub async fn keep_alive(&self, session_id: &str) {
+        if !session_id.starts_with("ts-") && !session_id.starts_with("audio-") {
+            self.hls.touch_session(session_id).await;
+        }
+    }
+
     pub async fn gc_idle(&self) -> usize {
-        const PROXY_MAX_AGE: Duration = Duration::from_secs(3 * 60 * 60);
         const HLS_IDLE: Duration = Duration::from_secs(5 * 60);
         let now = Instant::now();
         let mut removed = {
             let mut map = self.sessions.write().await;
             let stale: Vec<String> = map
                 .iter()
-                .filter(|(_, s)| now.duration_since(s.created_at) > PROXY_MAX_AGE)
+                .filter(|(_, s)| session_expired(s, now))
                 .map(|(k, _)| k.clone())
                 .collect();
             for k in &stale {
-                map.remove(k);
+                // A response still streaming from it ends with it.
+                if let Some(session) = map.remove(k) {
+                    session.cancel.cancel();
+                }
             }
             stale.len()
         };
@@ -455,6 +465,14 @@ impl ProxyState {
         removed += self.audio.gc().await;
         removed
     }
+}
+
+const PROXY_MAX_AGE: Duration = Duration::from_secs(3 * 60 * 60);
+
+/// A relayed stream expires after three hours. A cast conversion (MPEG-TS) does not: it lasts as
+/// long as its cast, and stopping or replacing the cast removes it.
+fn session_expired(session: &Session, now: Instant) -> bool {
+    session.cast.is_none() && now.duration_since(session.created_at) > PROXY_MAX_AGE
 }
 
 pub(crate) fn shutdown(app: &tauri::AppHandle) {
@@ -1267,6 +1285,54 @@ pub async fn proxy_gc_idle(state: tauri::State<'_, ProxyState>) -> Result<usize,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn session_at(created_at: Instant, cast: Option<Arc<CastJob>>) -> Session {
+        Session {
+            url: "https://media.example/film.mkv".into(),
+            audio_url: None,
+            base_url: None,
+            headers: HashMap::new(),
+            transcode: cast.is_some(),
+            profile: TranscodeProfile::default(),
+            burn_sub: None,
+            prebuffer: None,
+            created_at,
+            cast,
+            cancel: tokio_util::sync::CancellationToken::new(),
+        }
+    }
+
+    #[test]
+    fn a_running_cast_stream_never_ages_out() {
+        let Some(long_ago) = Instant::now().checked_sub(PROXY_MAX_AGE + Duration::from_secs(60)) else {
+            return;
+        };
+        let options = crate::cast_transcode::CastOptions::default();
+        let plan = crate::cast_transcode::build_plan(
+            &crate::cast_transcode::PlanInput {
+                probe: None,
+                options: &options,
+                audio_ordinal: 0,
+                burn_sub: None,
+                burn_bitmap: None,
+                force_video_encode: false,
+                limits: Default::default(),
+            },
+            &Default::default(),
+        );
+        let job = Arc::new(CastJob {
+            url: "C:/Films/film.mkv".into(),
+            headers: HashMap::new(),
+            seek_sec: 0.0,
+            fast_seek: false,
+            plan,
+            stats: Default::default(),
+        });
+        let now = Instant::now();
+        assert!(session_expired(&session_at(long_ago, None), now), "a relayed stream still expires");
+        assert!(!session_expired(&session_at(long_ago, Some(job)), now), "a cast stream lasts as long as its cast");
+        assert!(!session_expired(&session_at(now, None), now));
+    }
 
     #[test]
     fn register_args_accept_a_separate_audio_url() {

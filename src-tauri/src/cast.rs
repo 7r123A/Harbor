@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use crate::airplay;
 use crate::cast_subs::{self, CastSub, CastSubStyle};
-use crate::cast_transcode::{self, CastJob, CastOptions, MediaProbe, PlanInput, PlanSummary, SharedStats, TranscodeStats};
+use crate::cast_transcode::{self, CastJob, CastOptions, DeviceLimits, MediaProbe, PlanInput, PlanSummary, SharedStats, TranscodeStats};
 use crate::dlna;
 use crate::roku;
 use crate::stream_proxy::{AudioCastFormat, AudioCastInput, ProxyState, RegisterArgs};
@@ -168,6 +168,8 @@ struct Reload {
     sub_base: Option<std::path::PathBuf>,
     burn_bitmap: Option<u32>,
     force_video_encode: bool,
+    /// What the receiver's device profile rules out (resolution, bit rate, surround, codecs).
+    limits: DeviceLimits,
     hls: bool,
 }
 
@@ -242,6 +244,11 @@ impl ActiveSession {
 
 fn snapshot_extra() -> Option<SessionExtra> {
     ACTIVE.lock().ok()?.as_ref().map(|s| s.extra().clone())
+}
+
+/// The proxy stream (HLS or MPEG-TS) the active cast plays from, if any.
+fn active_stream_id() -> Option<String> {
+    ACTIVE.lock().ok()?.as_ref().and_then(|s| s.hls_session_id())
 }
 
 async fn replace_active_session<Stop, StopFuture>(
@@ -637,8 +644,11 @@ pub async fn cast_load(
     // Files go through the converter, which only copies what the receiver can take as it is; an
     // adaptive playlist or an audio stream is handed over directly unless something must change.
     // A copied stream plays its first audio track untouched, so another track or any audio
-    // processing needs the converter too.
-    let convert = !audio_type
+    // processing needs the converter too. A file on this computer always goes through it: the
+    // direct path relays HTTP and cannot open a filesystem path.
+    let local_source = !cast_transcode::is_http(&url);
+    let convert = local_source
+        || !audio_type
         && (transcode.unwrap_or(false)
             || wants_sub
             || options.force_conversion
@@ -665,6 +675,7 @@ pub async fn cast_load(
         sub_base: None,
         burn_bitmap: None,
         force_video_encode: transcode.unwrap_or(false) && profile.as_ref().is_some_and(|p| p.force_h264),
+        limits: device_limits(transcode.unwrap_or(false), profile.as_ref()),
         hls: wants_hls(&kind_str, &options),
     };
     if convert {
@@ -698,16 +709,20 @@ pub async fn cast_load(
         .contains("/cast/hls/")
         .then(|| proxied.session_id.clone());
     let cast_url = proxied.url;
+    let uuid_for_retry = uuid.clone();
     let extra = SessionExtra { seek_base: 0.0, reload: Some(Arc::new(reload)), stats: None, summary: None, uuid, converted: false };
     let info = CastLoadInfo { stream: "direct".into(), summary: None };
     if kind_str == "dlna" {
         let cu = control_url.ok_or_else(|| "DLNA device missing control_url".to_string())?;
-        if let Err(error) = dlna::load(cu.clone(), cast_url, title, start_time_sec, content_type.clone(), false).await {
-            if let Some(id) = hls_session_id.as_deref() {
-                proxy_state.stop_hls_session(id).await;
+        let cu = match load_dlna_rediscovering(cu, uuid_for_retry.as_deref(), &cast_url, title, start_time_sec, content_type.clone()).await {
+            Ok(cu) => cu,
+            Err(error) => {
+                if let Some(id) = hls_session_id.as_deref() {
+                    proxy_state.stop_hls_session(id).await;
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
+        };
         replace_active_session(
             ActiveSession::Dlna { control_url: cu, hls_session_id, extra },
             |id| async move {
@@ -779,6 +794,44 @@ pub async fn cast_load(
     }
 }
 
+/// The device profile's limits apply when the caller already decided the source must change for
+/// this receiver; otherwise only the cast settings do.
+fn device_limits(transcode: bool, profile: Option<&TranscodeProfile>) -> DeviceLimits {
+    match profile.filter(|_| transcode) {
+        Some(p) => DeviceLimits {
+            max_height: Some(p.max_height),
+            max_video_kbps: p.max_video_kbps,
+            force_aac: p.force_aac,
+            force_stereo: p.force_stereo,
+        },
+        None => DeviceLimits::default(),
+    }
+}
+
+/// Loads `url` on a DLNA renderer; one that restarted on a new port is found again by its UUID and
+/// loaded there. Returns the control URL that took it.
+async fn load_dlna_rediscovering(
+    control_url: String,
+    uuid: Option<&str>,
+    url: &str,
+    title: Option<String>,
+    start: Option<f64>,
+    mime: Option<String>,
+) -> Result<String, String> {
+    let first = dlna::load(control_url.clone(), url.to_string(), title.clone(), start, mime.clone(), false).await;
+    let error = match first {
+        Ok(()) => return Ok(control_url),
+        Err(error) => error,
+    };
+    let Some(fresh) = (match uuid {
+        Some(id) => dlna::rediscover(id).await,
+        None => None,
+    }) else {
+        return Err(error);
+    };
+    dlna::load(fresh.clone(), url.to_string(), title, start, mime, false).await.map(|_| fresh)
+}
+
 /// Probes the source and prepares the subtitle once; every restart of this cast reuses both.
 async fn prepare_reload(reload: &mut Reload) {
     if reload.probe.is_none() {
@@ -837,7 +890,7 @@ async fn start_converted(
             burn_sub: burn_pair.as_ref(),
             burn_bitmap: reload.burn_bitmap,
             force_video_encode: reload.force_video_encode,
-            force_audio_encode: false,
+            limits: reload.limits,
         },
         &caps,
     );
@@ -1248,8 +1301,8 @@ pub async fn cast_pause() -> Result<(), String> {
     pause_active().await
 }
 
-/// Whether the receiver reports itself paused. Chromecast is not asked here: that takes a
-/// connection of its own, so a restart on a Chromecast still resumes playback.
+/// Whether the receiver reports itself paused, asked of whichever kind is casting (a Chromecast
+/// through a connection of its own), so a restart can pause it again.
 async fn receiver_paused() -> bool {
     let state = if let Some(cu) = snapshot_dlna() {
         dlna::status(cu).await.ok().map(|s| s.player_state)
@@ -1441,6 +1494,11 @@ pub async fn cast_status(proxy_state: tauri::State<'_, ProxyState>) -> Result<Op
         let input = proxy_state.audio_cast_input(&id).await.ok_or("Speaker audio route ended")?;
         let state = dlna::status(cu).await?;
         return Ok(Some(CastStatus { position_sec: input.start_seconds + state.position_sec, player_state: normalize_player_state(&state.player_state), connected: true, transport_codec: Some("mp3".into()), transcode: None, summary: None }));
+    }
+    // A paused receiver requests nothing, and the proxy ends streams nobody requests; while
+    // Harbor follows the cast, the stream stays.
+    if let Some(id) = active_stream_id() {
+        proxy_state.keep_alive(&id).await;
     }
     let extra = snapshot_extra().unwrap_or_default();
     let base = extra.seek_base;
@@ -1797,6 +1855,7 @@ mod live_tv_tests {
             sub_base: None,
             burn_bitmap: None,
             force_video_encode: false,
+            limits: DeviceLimits::default(),
         }
     }
 
@@ -1851,7 +1910,7 @@ mod live_tv_tests {
                     burn_sub: pair.as_ref(),
                     burn_bitmap: reload.burn_bitmap,
                     force_video_encode: false,
-                    force_audio_encode: false,
+                    limits: DeviceLimits::default(),
                 },
                 &caps,
             );
