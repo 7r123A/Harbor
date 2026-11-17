@@ -2,7 +2,6 @@ import { ChevronDown, Download, ExternalLink, Loader2, Zap } from "lucide-react"
 import { Play } from "@/components/icons/play-filled";
 import { useEffect, useMemo, useState } from "react";
 import { AddonLogo, AddonLogoStack } from "@/components/addon-logo";
-import { AccountOriginBadge } from "@/components/account-origin-badge";
 import { CopyLinkButton, resolveStreamLink } from "@/components/player/copy-link-button";
 import { FlagStack } from "@/components/flag";
 import { FormatBadge, RuleBadges } from "@/components/format-badge";
@@ -10,9 +9,11 @@ import { HostMatchChip } from "@/components/host-match-chip";
 import { useT } from "@/lib/i18n";
 import { useDebridClients } from "@/lib/debrid/registry";
 import { useSettings } from "@/lib/settings";
+import { sortStreams } from "@/lib/streams/source-sort";
 import type { ScoredStream } from "@/lib/streams/types";
 import type { PlayEpisode } from "@/lib/view";
 import { EditionChip } from "./edition-chip";
+import { SourceSortMenu } from "./source-sort-menu";
 import {
   addonInstanceKey,
   anyStreamCached,
@@ -55,13 +56,16 @@ export function SourceDrawer({
   absoluteEpisode?: number | null;
 }) {
   const t = useT();
+  const { settings, update } = useSettings();
+  const sourceSort = settings.sourceSort;
+  const [sortOpen, setSortOpen] = useState(false);
   const [addonFilter, setAddonFilter] = useState("all");
   const addonOptions = useMemo(() => buildAddonOptions(streams), [streams]);
-  const shown = useMemo(
-    () =>
-      addonFilter === "all" ? streams : streams.filter((s) => addonInstanceKey(s) === addonFilter),
-    [streams, addonFilter],
-  );
+  const shown = useMemo(() => {
+    const filtered =
+      addonFilter === "all" ? streams : streams.filter((s) => addonInstanceKey(s) === addonFilter);
+    return sortStreams(filtered, sourceSort);
+  }, [streams, addonFilter, sourceSort]);
   useEffect(() => {
     if (addonFilter !== "all" && !addonOptions.some((o) => o.id === addonFilter))
       setAddonFilter("all");
@@ -88,23 +92,37 @@ export function SourceDrawer({
           </span>
         )}
       </button>
-      {open && addonOptions.length > 1 && (
+      {open && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <AddonPill
-            active={addonFilter === "all"}
-            onClick={() => setAddonFilter("all")}
-            label={t("All")}
-            count={streams.length}
+          <SourceSortMenu
+            value={sourceSort}
+            open={sortOpen}
+            onToggle={() => setSortOpen((v) => !v)}
+            onClose={() => setSortOpen(false)}
+            onPick={(value) => {
+              update({ sourceSort: value });
+              setSortOpen(false);
+            }}
           />
-          {addonOptions.map((o) => (
-            <AddonPill
-              key={o.id}
-              active={addonFilter === o.id}
-              onClick={() => setAddonFilter(o.id)}
-              label={o.name}
-              count={o.count}
-            />
-          ))}
+          {addonOptions.length > 1 && (
+            <>
+              <AddonPill
+                active={addonFilter === "all"}
+                onClick={() => setAddonFilter("all")}
+                label={t("All")}
+                count={streams.length}
+              />
+              {addonOptions.map((o) => (
+                <AddonPill
+                  key={o.id}
+                  active={addonFilter === o.id}
+                  onClick={() => setAddonFilter(o.id)}
+                  label={o.name}
+                  count={o.count}
+                />
+              ))}
+            </>
+          )}
         </div>
       )}
       {open && (
@@ -232,7 +250,6 @@ function SourceRow({
                 <span className="text-ink-subtle/60"> · {summary.join(" · ")}</span>
               )}
             </span>
-            <AccountOriginBadge addonUrl={stream.addonUrl || stream.addonId} size="sm" />
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-2 pt-0.5">

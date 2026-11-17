@@ -33,6 +33,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import "./ebook-hero.css";
 import "./ebook-showcase.css";
 import { NavArrow } from "@/components/nav-arrow";
@@ -258,6 +259,7 @@ function scheduleEBookBackground(run: () => void, delay = 1_200): () => void {
 export function EBookView() {
   const t = useT();
   const { ebookId, openEBook, topKind } = useView();
+  const browsing = !ebookId && topKind === "ebook";
   const listScrollRef = useRef<HTMLElement | null>(null);
   useScrollMemory("ebook", listScrollRef, !ebookId);
   const { activeId } = useProfiles();
@@ -286,10 +288,7 @@ export function EBookView() {
     "ebook.titleLanguage",
     "auto",
   );
-  const [browseStatus, setBrowseStatus] = useSessionState<EBookBrowseStatus>(
-    "ebook.status",
-    "any",
-  );
+  const [browseStatus, setBrowseStatus] = useSessionState<EBookBrowseStatus>("ebook.status", "any");
   const [browseLanguage, setBrowseLanguage] = useSessionState<EBookBrowseLanguage>(
     "ebook.language",
     "any",
@@ -550,7 +549,7 @@ export function EBookView() {
 
   const sourceCatalogReady = sourceCatalogItems !== null;
   useEffect(() => {
-    if (screen !== "collections" || !providerId || !sourceCatalogReady) return;
+    if (!browsing || screen !== "collections" || !providerId || !sourceCatalogReady) return;
     const seq = sourceSeq.current;
     let active = true;
     setCollectionsRefreshing(true);
@@ -610,18 +609,20 @@ export function EBookView() {
     return () => {
       active = false;
     };
-  }, [cachedAwardBooks, collectionScope, providerId, screen, sourceCatalogReady]);
+  }, [browsing, cachedAwardBooks, collectionScope, providerId, screen, sourceCatalogReady]);
 
   useEffect(() => {
+    if (!browsing) return;
     loadSources();
     const sources = subscribeEBookSources(loadSources);
     const extensions = subscribeEBookExtensions(loadSources);
     return () => {
+      sourceSeq.current += 1;
       window.clearTimeout(searchTimer.current);
       sources();
       extensions();
     };
-  }, [loadSources, metadataVersion, uiLanguage]);
+  }, [browsing, loadSources, metadataVersion, uiLanguage]);
 
   useEffect(() => {
     const update = () => {
@@ -2322,13 +2323,13 @@ function EBookChapterSection({
       <div className="relative">
         <Search
           size={18}
-          className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-subtle"
+          className="pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-ink-subtle"
         />
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder={t("Search chapters...")}
-          className="h-11 w-full rounded-lg bg-canvas pl-11 pr-4 text-[14px] text-ink ring-1 ring-inset ring-edge-soft transition-colors placeholder:text-ink-subtle focus:ring-edge focus:outline-none"
+          className="h-11 w-full rounded-lg bg-canvas ps-11 pe-4 text-[14px] text-ink ring-1 ring-inset ring-edge-soft transition-colors placeholder:text-ink-subtle focus:ring-edge focus:outline-none"
         />
       </div>
 
@@ -2719,71 +2720,73 @@ function EBookInformation({ ebook }: { ebook: EBook }) {
           <p className="mt-3 text-[14px] text-ink-subtle">{t("No adaptations found.")}</p>
         )}
       </div>
-      {adaptationChoices && (
-        <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-6 backdrop-blur-md"
-          role="presentation"
-          onClick={() => setAdaptationChoices(null)}
-        >
+      {adaptationChoices &&
+        createPortal(
           <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="ebook-adaptation-picker-title"
-            className="w-full max-w-3xl rounded-[28px] border border-white/10 bg-surface p-6 shadow-2xl sm:p-8"
-            onClick={(event) => event.stopPropagation()}
+            className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-6 backdrop-blur-md"
+            role="presentation"
+            onClick={() => setAdaptationChoices(null)}
           >
-            <div className="flex items-start justify-between gap-5">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent">
-                  {t("Manga adaptation")}
-                </p>
-                <h5
-                  id="ebook-adaptation-picker-title"
-                  className="mt-2 text-xl font-semibold text-ink"
-                >
-                  {t("Best Match for {title}", { title: adaptationChoices.title })}
-                </h5>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAdaptationChoices(null)}
-                aria-label={t("Close Manga selection")}
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-ink-muted transition hover:bg-white/10 hover:text-ink"
-              >
-                <X className="h-4 w-4" aria-hidden />
-              </button>
-            </div>
-            <div className="mt-7 grid grid-cols-1 gap-5 sm:grid-cols-3">
-              {adaptationChoices.items.map((choice) => (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="ebook-adaptation-picker-title"
+              className="w-full max-w-3xl rounded-[28px] border border-white/10 bg-surface p-6 shadow-2xl sm:p-8"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex items-start justify-between gap-5">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-accent">
+                    {t("Manga adaptation")}
+                  </p>
+                  <h5
+                    id="ebook-adaptation-picker-title"
+                    className="mt-2 text-xl font-semibold text-ink"
+                  >
+                    {t("Best Match for {title}", { title: adaptationChoices.title })}
+                  </h5>
+                </div>
                 <button
-                  key={choice.id}
                   type="button"
-                  onClick={() => {
-                    setAdaptationChoices(null);
-                    openManga(choice.id);
-                  }}
-                  className="group min-w-0 text-left outline-none"
+                  onClick={() => setAdaptationChoices(null)}
+                  aria-label={t("Close Manga selection")}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 text-ink-muted transition hover:bg-white/10 hover:text-ink"
                 >
-                  <span className="flex aspect-[2/3] w-full items-center justify-center overflow-hidden rounded-2xl bg-surface-2 ring-1 ring-white/10 transition duration-200 group-hover:-translate-y-1 group-hover:ring-accent/60 group-focus-visible:ring-2 group-focus-visible:ring-accent">
-                    {choice.cover ? (
-                      <img
-                        src={choice.cover}
-                        alt={t("{title} poster", { title: choice.title })}
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <BookOpen className="h-9 w-9 text-ink-subtle" aria-hidden />
-                    )}
-                  </span>
-                  <span className="mt-3 block line-clamp-2 text-[14px] font-semibold leading-snug text-ink transition-colors group-hover:text-accent">
-                    {choice.title}
-                  </span>
+                  <X className="h-4 w-4" aria-hidden />
                 </button>
-              ))}
+              </div>
+              <div className="mt-7 grid grid-cols-1 gap-5 sm:grid-cols-3">
+                {adaptationChoices.items.map((choice) => (
+                  <button
+                    key={choice.id}
+                    type="button"
+                    onClick={() => {
+                      setAdaptationChoices(null);
+                      openManga(choice.id);
+                    }}
+                    className="group min-w-0 text-left outline-none"
+                  >
+                    <span className="flex aspect-[2/3] w-full items-center justify-center overflow-hidden rounded-2xl bg-surface-2 ring-1 ring-white/10 transition duration-200 group-hover:-translate-y-1 group-hover:ring-accent/60 group-focus-visible:ring-2 group-focus-visible:ring-accent">
+                      {choice.cover ? (
+                        <img
+                          src={choice.cover}
+                          alt={t("{title} poster", { title: choice.title })}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <BookOpen className="h-9 w-9 text-ink-subtle" aria-hidden />
+                      )}
+                    </span>
+                    <span className="mt-3 block line-clamp-2 text-[14px] font-semibold leading-snug text-ink transition-colors group-hover:text-accent">
+                      {choice.title}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </section>
   );
 }
@@ -2888,7 +2891,9 @@ function EBookDetails({
     const authors = ebook.authors.slice(0, 2);
     void (async () => {
       const sourceResults = (
-        await Promise.all(authors.map((author) => searchSourceEBookCatalog(author, "all")))
+        await Promise.all(
+          authors.map((author) => searchSourceEBookCatalog(author, "all", { background: true })),
+        )
       ).flat();
       const sourceMatches = booksBySameAuthor(ebook, sourceResults);
       if (sourceMatches.length) return sourceMatches;
@@ -2965,7 +2970,7 @@ function EBookDetails({
         .map(({ item }) => item)
         .slice(0, 18);
     };
-    void loadSourceEBookPage(undefined, "all")
+    void loadSourceEBookPage(undefined, "all", {}, undefined, undefined, { background: true })
       .then(async (page) => {
         const sourceItems = sourceRecommendations(page.items);
         if (active && sourceItems.length) setRecommendations(sourceItems);
@@ -3007,7 +3012,9 @@ function EBookDetails({
     const hasArabic = (value: string) => /\p{Script=Arabic}/u.test(value);
     const ebookIsArabic = hasArabic(ebook.title);
     void Promise.all(
-      [...new Set(queries)].slice(0, 6).map((query) => searchSourceEBookCatalog(query, "all")),
+      [...new Set(queries)]
+        .slice(0, 6)
+        .map((query) => searchSourceEBookCatalog(query, "all", { background: true })),
     )
       .then(async (results) => {
         if (!active) return;
@@ -3026,7 +3033,7 @@ function EBookDetails({
           .slice(0, 32);
         const hydrated = await Promise.all(
           promising.map((candidate) =>
-            sourceEBookDetail(candidate.id)
+            sourceEBookDetail(candidate.id, { background: true })
               .then((detail) => detail ?? candidate)
               .catch(() => candidate),
           ),
@@ -3148,10 +3155,17 @@ function EBookDetails({
             else window.setTimeout(prefetch, 1_000);
           }
         })
-        .catch(() =>
+        .catch((error) =>
           setReading((current) =>
             current?.chapter.id === chapter.id
-              ? { chapter, content: {}, error: "This chapter could not be loaded." }
+              ? {
+                  chapter,
+                  content: {},
+                  error:
+                    error instanceof Error && error.name === "PdfDocumentError"
+                      ? error.message
+                      : "This chapter could not be loaded.",
+                }
               : current,
           ),
         );

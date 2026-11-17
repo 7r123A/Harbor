@@ -23,6 +23,12 @@ function deferred() {
   return { promise, resolve };
 }
 
+// These panel tests drive async retries; a fixed sleep flakes when the runner is busy.
+async function until(ready, timeout = 3000) {
+  const deadline = Date.now() + timeout;
+  while (!ready() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+}
+
 function fixture({
   storage = new Map(),
   blockNames = false,
@@ -446,7 +452,7 @@ test("reading a completed persisted order preserves its expiry", async () => {
   const f = fixture();
   const order = await f.fetchTvdbOrderBySeriesId("test-key", 1, "aired", "eng");
   await f.waitForTvdbSeasonNames(order);
-  const [key, value] = [...f.storage.entries()].find(([k]) => k.startsWith("v1:tvdb-order:"));
+  const [key, value] = [...f.storage.entries()].find(([k]) => k.startsWith("v1:tvdb-order-v2:"));
   const saved = JSON.parse(value);
   saved.storedAt = Date.now() - 10000;
   f.storage.set(key, JSON.stringify(saved));
@@ -583,7 +589,9 @@ test("fresh and cached proxy orders do not give missing special stills another s
   assert.deepEqual(Array.from(ordering.imageByAbs.keys()), [1]);
   assert.equal(ordering.absByEpId.get(11), 0, "playback mappings remain unchanged");
 
-  const [key, value] = [...fresh.storage.entries()].find(([k]) => k.startsWith("v1:tvdb-order:"));
+  const [key, value] = [...fresh.storage.entries()].find(([k]) =>
+    k.startsWith("v1:tvdb-order-v2:"),
+  );
   const saved = JSON.parse(value);
   saved.value.imageByAbs.push(
     [0, "https://wrong/last-special.jpg"],
@@ -637,7 +645,11 @@ test("anime falls back to an available order if the requested order is empty", a
   const panel = panelFixture(f, availability, "dvd");
   const cleanup = panel.run();
   try {
-    await new Promise((r) => setTimeout(r, 20));
+    await until(
+      () =>
+        panel.updates.find((u) => u.index === 3)?.value === "aired" &&
+        panel.updates.find((u) => u.index === 1)?.value?.bySeason.size > 0,
+    );
     assert.equal(panel.updates.find((u) => u.index === 3).value, "aired");
     assert.ok(panel.updates.find((u) => u.index === 1).value.bySeason.size > 0);
   } finally {
@@ -656,7 +668,7 @@ test("anime retries a requested order confirmed available after a transient fail
   const panel = panelFixture(f, availability),
     cleanup = panel.run();
   try {
-    await new Promise((r) => setTimeout(r, 20));
+    await until(() => attempts >= 2 && panel.updates.some((u) => u.index === 1 && u.value));
     assert.equal(attempts, 2);
     assert.ok(panel.updates.some((u) => u.index === 1 && u.value));
   } finally {

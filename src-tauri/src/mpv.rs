@@ -1747,6 +1747,196 @@ impl ResumeObserved {
     }
 }
 
+// Windows-only bounded recovery for the post-pause WASAPI stalls observed
+// in Static's logs. Use event-fed properties, never synchronous reads.
+#[cfg(windows)]
+const RESUME_RECOVERY_MIN_PAUSE: Duration = Duration::from_secs(10);
+#[cfg(windows)]
+const RESUME_RECOVERY_WINDOW: Duration = Duration::from_secs(90);
+#[cfg(windows)]
+const RESUME_RECOVERY_STALL: Duration = Duration::from_secs(6);
+#[cfg(windows)]
+const RESUME_RECOVERY_SETTLE: Duration = Duration::from_secs(2);
+#[cfg(windows)]
+const RESUME_RECOVERY_GIVE_UP: Duration = Duration::from_secs(24);
+#[cfg(windows)]
+const RESUME_RECOVERY_AUDIO_REPLY: u64 = 0x4842_5200_0000_0001;
+#[cfg(windows)]
+const RESUME_RECOVERY_SEEK_REPLY: u64 = 0x4842_5200_0000_0002;
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ResumeRecoveryAction {
+    AudioReload,
+    ResyncSeek(f64),
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ResumeRecoveryDecision {
+    Attempt(ResumeRecoveryAction),
+    Recovered(u8),
+    Exhausted,
+}
+
+#[cfg(windows)]
+#[derive(Default)]
+struct ResumeStallRecovery {
+    armed_at: Option<std::time::Instant>,
+    attempts: u8,
+    last_attempt_at: Option<std::time::Instant>,
+    samples: std::collections::VecDeque<(std::time::Instant, f64, f64)>,
+    sample_speed: Option<f64>,
+    own_seek_pending: bool,
+}
+
+#[cfg(windows)]
+impl ResumeStallRecovery {
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    fn arm(&mut self, now: std::time::Instant, paused_for: Duration) {
+        self.clear();
+        if paused_for >= RESUME_RECOVERY_MIN_PAUSE {
+            self.armed_at = Some(now);
+        }
+    }
+
+    // Do not mistake our own recovery seek for a user-requested seek.
+    fn consume_recovery_seek(&mut self) -> bool {
+        std::mem::take(&mut self.own_seek_pending)
+    }
+
+    fn mark_recovery_seek_queued(&mut self) {
+        self.own_seek_pending = true;
+    }
+
+    fn assess(
+        &mut self,
+        snapshot: &ResumeObserved,
+        now: std::time::Instant,
+        embedded: bool,
+        playing: bool,
+    ) -> Option<ResumeRecoveryDecision> {
+        let armed_at = self.armed_at?;
+        if now.saturating_duration_since(armed_at) > RESUME_RECOVERY_WINDOW {
+            self.clear();
+            return None;
+        }
+        if !embedded || !playing {
+            self.samples.clear();
+            return None;
+        }
+        let (Some(media), Some(audio)) = (snapshot.time_pos, snapshot.audio_pts) else {
+            self.samples.clear();
+            return None;
+        };
+        let safe = snapshot.value("current-ao") == "wasapi"
+            && snapshot.flag("paused-for-cache") == Some(false)
+            && snapshot.flag("seeking") == Some(false)
+            && snapshot.flag("core-idle") == Some(false)
+            && snapshot.flag("eof-reached") != Some(true)
+            && snapshot
+                .value("demuxer-cache-duration")
+                .parse::<f64>()
+                .is_ok_and(|sec| sec.is_finite() && sec >= 10.0)
+            && snapshot
+                .value("duration")
+                .parse::<f64>()
+                .is_ok_and(|duration| duration.is_finite() && duration > media + 20.0);
+        let speed = snapshot
+            .value("speed")
+            .parse::<f64>()
+            .ok()
+            .filter(|speed| speed.is_finite() && *speed > 0.0);
+        if !safe || speed.is_none() {
+            self.samples.clear();
+            return None;
+        }
+        let speed = speed.unwrap();
+        if self.sample_speed != Some(speed) {
+            self.samples.clear();
+            self.sample_speed = Some(speed);
+        }
+        if let Some(at) = self.last_attempt_at {
+            let elapsed = now.saturating_duration_since(at);
+            if elapsed >= RESUME_RECOVERY_GIVE_UP {
+                self.clear();
+                return Some(ResumeRecoveryDecision::Exhausted);
+            }
+            // Do not charge output teardown/reinitialization to playback progress.
+            if elapsed < RESUME_RECOVERY_SETTLE {
+                self.samples.clear();
+                return None;
+            }
+        }
+        self.samples.push_back((now, media, audio));
+        while self.samples.len() > 1
+            && now.saturating_duration_since(self.samples[1].0) >= RESUME_RECOVERY_STALL
+        {
+            self.samples.pop_front();
+        }
+        // A fresh three-second window can prove recovery even when startup
+        // consumed much of the longer stall-detection window.
+        if self.attempts > 0 {
+            if let Some(&(at, before_media, before_audio)) = self
+                .samples
+                .iter()
+                .rev()
+                .find(|(at, _, _)| now.saturating_duration_since(*at) >= Duration::from_secs(3))
+            {
+                let expected = now.saturating_duration_since(at).as_secs_f64() * speed;
+                if media - before_media >= expected * 0.6 && audio - before_audio >= expected * 0.6
+                {
+                    let stage = self.attempts;
+                    self.clear();
+                    return Some(ResumeRecoveryDecision::Recovered(stage));
+                }
+            }
+        }
+        let &(at, before_media, before_audio) = self.samples.front()?;
+        let elapsed = now.saturating_duration_since(at);
+        if elapsed < RESUME_RECOVERY_STALL {
+            return None;
+        }
+        let expected = elapsed.as_secs_f64() * speed;
+        // Periodic tiny clock jumps (as in Static's logs) must not reset the
+        // detector. Require sustained poor progress, not exact stationarity.
+        if media - before_media >= expected * 0.25 && audio - before_audio >= expected * 0.25 {
+            return None;
+        }
+        let action = match self.attempts {
+            0 => ResumeRecoveryAction::AudioReload,
+            1 => ResumeRecoveryAction::ResyncSeek(media),
+            _ => return None,
+        };
+        self.attempts += 1;
+        self.last_attempt_at = Some(now);
+        self.samples.clear();
+        Some(ResumeRecoveryDecision::Attempt(action))
+    }
+}
+
+#[cfg(windows)]
+fn queue_resume_recovery_command(mpv: &Mpv, args: &[&str], reply_id: u64) -> Result<(), String> {
+    let cstrings: Vec<CString> = args
+        .iter()
+        .map(|arg| CString::new(*arg).map_err(|_| "invalid recovery command".to_string()))
+        .collect::<Result<_, _>>()?;
+    let mut ptrs: Vec<*const std::os::raw::c_char> =
+        cstrings.iter().map(|arg| arg.as_ptr()).collect();
+    ptrs.push(std::ptr::null());
+    // Synchronous mpv operations have previously blocked this event loop.
+    let rc =
+        unsafe { libmpv2_sys::mpv_command_async(mpv.ctx.as_ptr(), reply_id, ptrs.as_mut_ptr()) };
+    if rc < 0 {
+        Err(format!("mpv_command_async rc={rc}"))
+    } else {
+        Ok(())
+    }
+}
+
 // These counters are mpv's *observed* playback/output values, not direct
 // measurements from WASAPI or the GPU driver threads.
 #[cfg(windows)]
@@ -1966,6 +2156,8 @@ fn spawn_event_loop(
         #[cfg(windows)]
         let mut resume_progress = ResumeProgress::default();
         #[cfg(windows)]
+        let mut resume_recovery = ResumeStallRecovery::default();
+        #[cfg(windows)]
         let phase = Arc::new(std::sync::atomic::AtomicU8::new(0));
         #[cfg(windows)]
         let clock_start = std::time::Instant::now();
@@ -2088,6 +2280,70 @@ fn spawn_event_loop(
                             }
                         }
                     }
+                    if let Some(decision) =
+                        resume_recovery.assess(&resume_observed, now, embedded, playing)
+                    {
+                        match decision {
+                            ResumeRecoveryDecision::Attempt(action) => {
+                                let (step, result) = match action {
+                                    ResumeRecoveryAction::AudioReload => (
+                                        "audio-reload",
+                                        queue_resume_recovery_command(
+                                            &mpv_keepalive,
+                                            &["ao-reload"],
+                                            RESUME_RECOVERY_AUDIO_REPLY,
+                                        ),
+                                    ),
+                                    ResumeRecoveryAction::ResyncSeek(position) => {
+                                        let position = format!("{position:.3}");
+                                        let result = queue_resume_recovery_command(
+                                            &mpv_keepalive,
+                                            &["seek", &position, "absolute+exact"],
+                                            RESUME_RECOVERY_SEEK_REPLY,
+                                        );
+                                        if result.is_ok() {
+                                            resume_recovery.mark_recovery_seek_queued();
+                                        }
+                                        ("resync-seek", result)
+                                    }
+                                };
+                                if let Some(log) = &log {
+                                    let status = match result {
+                                        Ok(()) => "queued".to_string(),
+                                        Err(err) => format!("failed:{err}"),
+                                    };
+                                    let _ = log.try_send(format!(
+                                        "[harbor/resume] warn: recovery wall_ms={} step={step} status={status} media={} audio={} cache_sec={} since_resume_ms={}",
+                                        resume_wall_ms(),
+                                        resume_observed.value("time-pos"),
+                                        resume_observed.value("audio-pts"),
+                                        resume_observed.value("demuxer-cache-duration"),
+                                        resume_recovery.armed_at
+                                            .map(|at| now.saturating_duration_since(at).as_millis())
+                                            .unwrap_or(0),
+                                    ));
+                                }
+                            }
+                            ResumeRecoveryDecision::Recovered(step) => {
+                                if let Some(log) = &log {
+                                    let _ = log.try_send(format!(
+                                        "[harbor/resume] info: recovery-result wall_ms={} status=recovered step={step} media={} audio={}",
+                                        resume_wall_ms(),
+                                        resume_observed.value("time-pos"),
+                                        resume_observed.value("audio-pts"),
+                                    ));
+                                }
+                            }
+                            ResumeRecoveryDecision::Exhausted => {
+                                if let Some(log) = &log {
+                                    let _ = log.try_send(format!(
+                                        "[harbor/resume] warn: recovery-result wall_ms={} status=exhausted",
+                                        resume_wall_ms(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
                 }
             }
             // Shorten polling only for bounded resume/preload work.
@@ -2127,6 +2383,28 @@ fn spawn_event_loop(
             match res {
                 Some(Ok(event)) => {
                     record_event_poll_success(&mut error_backoff);
+                    // Track completion of our asynchronous commands without
+                    // forwarding their private reply IDs to the frontend.
+                    #[cfg(windows)]
+                    if let Event::CommandReply(reply_id) = &event {
+                        if matches!(
+                            *reply_id,
+                            RESUME_RECOVERY_AUDIO_REPLY | RESUME_RECOVERY_SEEK_REPLY
+                        ) {
+                            if let Some(log) = &log {
+                                let step = if *reply_id == RESUME_RECOVERY_AUDIO_REPLY {
+                                    "audio-reload"
+                                } else {
+                                    "resync-seek"
+                                };
+                                let _ = log.try_send(format!(
+                                    "[harbor/resume] info: recovery-reply wall_ms={} step={step} status=complete",
+                                    resume_wall_ms(),
+                                ));
+                            }
+                            continue;
+                        }
+                    }
                     // libmpv2 exposes newer C events through Deprecated(raw).
                     if let Event::Deprecated(raw) = &event {
                         if raw.event_id == libmpv2_sys::mpv_event_id_MPV_EVENT_HOOK
@@ -2242,12 +2520,19 @@ fn spawn_event_loop(
                             }
                             resume_trace.position.clear();
                             resume_progress.clear();
+                            if matches!(event, Event::Seek)
+                                && !resume_recovery.consume_recovery_seek()
+                            {
+                                // An unrelated seek cancels any pending recovery.
+                                resume_recovery.clear();
+                            }
                         }
                         if matches!(
                             event,
                             Event::EndFile(_) | Event::FileLoaded | Event::Shutdown
                         ) {
                             resume_trace.clear();
+                            resume_recovery.clear();
                             watch_playing.store(false, std::sync::atomic::Ordering::Relaxed);
                         }
                         if let Event::PropertyChange {
@@ -2258,6 +2543,11 @@ fn spawn_event_loop(
                         {
                             let now = std::time::Instant::now();
                             let paused_for = resume_trace.on_pause_change(*paused, now);
+                            if *paused {
+                                resume_recovery.clear();
+                            } else if let Some(duration) = paused_for {
+                                resume_recovery.arm(now, duration);
+                            }
                             watch_playing.store(
                                 !paused && resume_trace.last_resumed_at.is_some(),
                                 std::sync::atomic::Ordering::Relaxed,
@@ -5128,11 +5418,280 @@ mod audio_device_fallback_tests {
 mod resume_trace_tests {
     use super::{
         resume_event_loop_phase, resume_warning_kind, ResumeObserved, ResumePosition,
-        ResumeProgress, ResumeTraceState, HDR_STATUS_OBSERVED_PROP, OBSERVED_PROPS,
-        RESUME_DIAG_PROPS, RESUME_HEALTH_INTERVAL, RESUME_POSITION_STALL, RESUME_TRACE_WINDOW,
+        ResumeProgress, ResumeRecoveryAction, ResumeRecoveryDecision, ResumeStallRecovery,
+        ResumeTraceState, HDR_STATUS_OBSERVED_PROP, OBSERVED_PROPS, RESUME_DIAG_PROPS,
+        RESUME_HEALTH_INTERVAL, RESUME_POSITION_STALL, RESUME_TRACE_WINDOW,
     };
     use libmpv2::events::PropertyData;
     use std::time::{Duration, Instant};
+
+    fn recovery_snapshot(now: Instant) -> ResumeObserved {
+        let mut snapshot = ResumeObserved::default();
+        snapshot.update("time-pos", &PropertyData::Double(500.0), now);
+        snapshot.update("audio-pts", &PropertyData::Double(500.0), now);
+        snapshot.update("duration", &PropertyData::Double(2000.0), now);
+        snapshot.update("speed", &PropertyData::Double(1.0), now);
+        snapshot.update("demuxer-cache-duration", &PropertyData::Double(300.0), now);
+        snapshot.update("current-ao", &PropertyData::Str("wasapi"), now);
+        snapshot.update("paused-for-cache", &PropertyData::Flag(false), now);
+        snapshot.update("seeking", &PropertyData::Flag(false), now);
+        snapshot.update("core-idle", &PropertyData::Flag(false), now);
+        snapshot
+    }
+
+    #[test]
+    fn long_pause_is_not_mistaken_for_a_stall_immediately_after_resume() {
+        let now = Instant::now();
+        let mut snapshot = recovery_snapshot(now);
+        let mut recovery = ResumeStallRecovery::default();
+        let resumed = now + Duration::from_secs(77);
+        recovery.arm(resumed, Duration::from_secs(77));
+        assert_eq!(
+            recovery.assess(&snapshot, resumed + Duration::from_secs(1), true, true),
+            None
+        );
+        assert_eq!(
+            recovery.assess(&snapshot, resumed + Duration::from_secs(3), true, true),
+            None
+        );
+        snapshot.update(
+            "time-pos",
+            &PropertyData::Double(500.5),
+            resumed + Duration::from_secs(3),
+        );
+        snapshot.update(
+            "audio-pts",
+            &PropertyData::Double(500.5),
+            resumed + Duration::from_secs(3),
+        );
+        assert_eq!(
+            recovery.assess(&snapshot, resumed + Duration::from_secs(5), true, true),
+            None
+        );
+    }
+
+    fn recovery_tick(
+        recovery: &mut ResumeStallRecovery,
+        snapshot: &mut ResumeObserved,
+        start: Instant,
+        second: u64,
+        position: f64,
+    ) -> Option<ResumeRecoveryDecision> {
+        let now = start + Duration::from_secs(second);
+        snapshot.update("time-pos", &PropertyData::Double(position), now);
+        snapshot.update("audio-pts", &PropertyData::Double(position), now);
+        recovery.assess(snapshot, now, true, true)
+    }
+
+    #[test]
+    fn trickle_progress_triggers_bounded_recovery() {
+        let now = Instant::now();
+        let mut snapshot = recovery_snapshot(now);
+        let mut recovery = ResumeStallRecovery::default();
+        recovery.arm(now, Duration::from_secs(77));
+        let mut actions = Vec::new();
+        for second in 0..=90 {
+            if let Some(decision) = recovery_tick(
+                &mut recovery,
+                &mut snapshot,
+                now,
+                second,
+                500.0 + (second / 3) as f64 * 0.1,
+            ) {
+                actions.push((second, decision));
+            }
+        }
+        assert_eq!(actions.len(), 3);
+        assert_eq!(
+            actions[0],
+            (
+                6,
+                ResumeRecoveryDecision::Attempt(ResumeRecoveryAction::AudioReload)
+            )
+        );
+        assert_eq!(
+            actions[1],
+            (
+                14,
+                ResumeRecoveryDecision::Attempt(ResumeRecoveryAction::ResyncSeek(500.4))
+            )
+        );
+        assert_eq!(actions[2], (38, ResumeRecoveryDecision::Exhausted));
+    }
+
+    #[test]
+    fn delayed_successful_reload_does_not_seek() {
+        let now = Instant::now();
+        let mut snapshot = recovery_snapshot(now);
+        let mut recovery = ResumeStallRecovery::default();
+        recovery.arm(now, Duration::from_secs(77));
+        let mut actions = Vec::new();
+        for second in 0..=40 {
+            // Reload at 6s, normal playback only resumes at 11s.
+            if let Some(decision) = recovery_tick(
+                &mut recovery,
+                &mut snapshot,
+                now,
+                second,
+                500.0 + second.saturating_sub(11) as f64,
+            ) {
+                actions.push(decision);
+            }
+        }
+        assert_eq!(
+            actions,
+            vec![
+                ResumeRecoveryDecision::Attempt(ResumeRecoveryAction::AudioReload),
+                ResumeRecoveryDecision::Recovered(1)
+            ]
+        );
+    }
+
+    #[test]
+    fn recovery_respects_playback_speed_and_speed_changes() {
+        for speed in [0.25, 0.5, 1.0, 2.0] {
+            let now = Instant::now();
+            let mut snapshot = recovery_snapshot(now);
+            let mut recovery = ResumeStallRecovery::default();
+            recovery.arm(now, Duration::from_secs(77));
+            snapshot.update("speed", &PropertyData::Double(speed), now);
+            for second in 0..=20 {
+                assert_eq!(
+                    recovery_tick(
+                        &mut recovery,
+                        &mut snapshot,
+                        now,
+                        second,
+                        500.0 + second as f64 * speed
+                    ),
+                    None
+                );
+            }
+        }
+        let now = Instant::now();
+        let mut snapshot = recovery_snapshot(now);
+        let mut recovery = ResumeStallRecovery::default();
+        recovery.arm(now, Duration::from_secs(77));
+        for second in 0..6 {
+            assert_eq!(
+                recovery_tick(&mut recovery, &mut snapshot, now, second, 500.0),
+                None
+            );
+        }
+        snapshot.update(
+            "speed",
+            &PropertyData::Double(0.5),
+            now + Duration::from_secs(6),
+        );
+        assert_eq!(
+            recovery_tick(&mut recovery, &mut snapshot, now, 6, 500.0),
+            None
+        );
+    }
+
+    #[test]
+    fn buffering_discards_stall_history_and_cancellation_discards_attempts() {
+        let now = Instant::now();
+        let mut snapshot = recovery_snapshot(now);
+        let mut recovery = ResumeStallRecovery::default();
+        recovery.arm(now, Duration::from_secs(77));
+        for second in 0..6 {
+            assert_eq!(
+                recovery_tick(&mut recovery, &mut snapshot, now, second, 500.0),
+                None
+            );
+        }
+        snapshot.update("paused-for-cache", &PropertyData::Flag(true), now);
+        assert_eq!(
+            recovery_tick(&mut recovery, &mut snapshot, now, 6, 500.0),
+            None
+        );
+        snapshot.update("paused-for-cache", &PropertyData::Flag(false), now);
+        for second in 7..13 {
+            assert_eq!(
+                recovery_tick(&mut recovery, &mut snapshot, now, second, 500.0),
+                None
+            );
+        }
+        assert_eq!(
+            recovery_tick(&mut recovery, &mut snapshot, now, 13, 500.0),
+            Some(ResumeRecoveryDecision::Attempt(
+                ResumeRecoveryAction::AudioReload
+            ))
+        );
+        // The event loop clears recovery on pause, user seek, and file changes.
+        recovery.clear();
+        for second in 14..40 {
+            assert_eq!(
+                recovery_tick(&mut recovery, &mut snapshot, now, second, 500.0),
+                None
+            );
+        }
+        recovery.mark_recovery_seek_queued();
+        assert!(recovery.consume_recovery_seek());
+        assert!(!recovery.consume_recovery_seek());
+    }
+
+    #[test]
+    fn no_recovery_for_short_pauses_buffering_seeks_or_non_wasapi() {
+        for case in 0..10 {
+            let now = Instant::now();
+            let mut snapshot = recovery_snapshot(now);
+            let mut recovery = ResumeStallRecovery::default();
+            recovery.arm(now, Duration::from_secs(if case == 0 { 3 } else { 30 }));
+            match case {
+                3 => snapshot.update("paused-for-cache", &PropertyData::Flag(true), now),
+                4 => snapshot.update("seeking", &PropertyData::Flag(true), now),
+                5 => snapshot.update("current-ao", &PropertyData::Str("other"), now),
+                6 => snapshot.update("demuxer-cache-duration", &PropertyData::Double(2.0), now),
+                7 => snapshot.update("duration", &PropertyData::Double(510.0), now),
+                8 => snapshot.update("eof-reached", &PropertyData::Flag(true), now),
+                9 => snapshot.update("core-idle", &PropertyData::Flag(true), now),
+                _ => {}
+            }
+            for second in 0..=30 {
+                assert_eq!(
+                    recovery.assess(
+                        &snapshot,
+                        now + Duration::from_secs(second),
+                        case != 1,
+                        case != 2
+                    ),
+                    None,
+                    "guard {case}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn slow_speed_playback_recovers_after_the_second_action() {
+        let now = Instant::now();
+        let mut snapshot = recovery_snapshot(now);
+        snapshot.update("speed", &PropertyData::Double(0.25), now);
+        let mut recovery = ResumeStallRecovery::default();
+        recovery.arm(now, Duration::from_secs(77));
+        let mut actions = Vec::new();
+        for second in 0..=40 {
+            if let Some(decision) = recovery_tick(
+                &mut recovery,
+                &mut snapshot,
+                now,
+                second,
+                500.0 + second.saturating_sub(16) as f64 * 0.25,
+            ) {
+                actions.push(decision);
+            }
+        }
+        assert_eq!(
+            actions,
+            vec![
+                ResumeRecoveryDecision::Attempt(ResumeRecoveryAction::AudioReload),
+                ResumeRecoveryDecision::Attempt(ResumeRecoveryAction::ResyncSeek(500.0)),
+                ResumeRecoveryDecision::Recovered(2)
+            ]
+        );
+    }
 
     #[test]
     fn resume_diagnostics_are_observed_without_property_reads() {

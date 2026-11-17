@@ -32,6 +32,8 @@ import { pickAnimeHeroBackdrop } from "./anime-art-quality";
 import { staticHeroArt } from "./anime-hero-art-static";
 import { animeRecommendations } from "./anime-recommendations";
 import { enrichEpisodes } from "@/lib/providers/anime-episode-enrich";
+import { isSharedSplitTvdb } from "@/lib/providers/anime-tvdb-source";
+import { splitFranchiseDisplaySeason } from "@/lib/streams/anime-identity-core";
 import { harborImdbEpisodes } from "@/lib/providers/harbor-imdb";
 import { fanartMovie, fanartTv } from "@/lib/providers/fanart";
 import { fetchTvdbArtwork } from "@/lib/providers/tvdb-proxy";
@@ -162,6 +164,9 @@ function makeFranchiseMeta(id: number, anime: import("./kitsu").KitsuAnimeDetail
     description: anime.synopsis,
     releaseInfo: anime.year,
     imdbRating: anime.rating,
+    trailerStreams: anime.trailerYtId
+      ? [{ ytId: anime.trailerYtId, title: anime.title }]
+      : undefined,
   };
 }
 
@@ -645,8 +650,15 @@ async function loadAnimeDetails(
     () => null,
   );
   const tvdbEpisodesPromise = kitsuToTvdb(kitsuId, maxAge)
-    .then((tid) => {
+    .then(async (tid) => {
       if (!tid) return null;
+      // A TYBW cour can resolve to the base Bleach (2004) TVDB entry. That
+      // entry's seasons are not this cour's episodes, so merging them replaces
+      // the correct Kitsu artwork and titles with the 2004 run.
+      if (splitFranchiseDisplaySeason(kitsuId) != null) {
+        const rootTvdbId = await kitsuToTvdb(244, maxAge).catch(() => null);
+        if (isSharedSplitTvdb(kitsuId, tid, rootTvdbId)) return null;
+      }
       const lang = tvdbLangFromIso1(settings.tmdbLanguage || settings.uiLanguage);
       const fetchAll = (l: string) =>
         Promise.all([
@@ -921,6 +933,9 @@ async function loadAnimeDetails(
           tmdbFull = fullRaw;
       }
     }
+    const tmdbTrailers = tmdbFull?.trailerCandidates ?? [];
+    const trailerCandidates =
+      tmdbTrailers.length > 0 ? tmdbTrailers : anime.trailerYtId ? [anime.trailerYtId] : [];
     const [rails, characters, studios] = await Promise.all([
       recommendationsPromise,
       charactersPromise,
@@ -947,6 +962,9 @@ async function loadAnimeDetails(
       imdbId: seriesImdb ?? addonMeta?.imdb_id ?? tmdbFull?.imdbId ?? null,
       tmdbTvId: tmdbFull?.tmdbTvId,
       seasonPosters: tmdbFull?.seasonPosters,
+      trailerYtId: trailerCandidates[0] ?? null,
+      trailerCandidates,
+      trailerVideos: tmdbFull?.trailerVideos ?? [],
       extraVideos: tmdbFull?.extraVideos ?? [],
       recommendations: rails.moreLikeThis,
       similar: rails.youMightLike,

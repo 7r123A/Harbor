@@ -9,6 +9,8 @@ import type { Settings, SecondaryProfilePrivileges } from "./types";
 
 export const STORAGE_KEY = "harbor.settings";
 
+export const HARBOR_CURSOR_SCALE = { min: 0.75, max: 2, step: 0.05 };
+
 export const DEFAULT_SECONDARY_PRIVILEGES: SecondaryProfilePrivileges = {
   canAddProfiles: false,
   canManageStartup: false,
@@ -20,12 +22,27 @@ export const DEFAULT_SECONDARY_PRIVILEGES: SecondaryProfilePrivileges = {
 
 export const DEFAULT: Settings = {
   tvCardOptions: {
-    showImdbBadge: true, showTmdbBadge: false, showRtBadge: true, showPopcornBadge: false, showMalBadge: true,
-    animeCardRating: "mal", showMetacriticBadge: false, showLetterboxdBadge: false,
-    showMdblistBadge: false, showTraktBadge: false, showSimklBadge: true, showDubBadge: true,
-    showCardBadges: true, cardAwardDisplay: "badge", top10Ribbon: false, top10RibbonSide: "right",
-    badgePlacement: "bottom", watchlistBadge: "topEnd",
-    showLocalLibraryBadge: true, showWatchedBadge: true,
+    showImdbBadge: true,
+    showTmdbBadge: false,
+    showRtBadge: true,
+    showPopcornBadge: false,
+    showMalBadge: true,
+    animeCardRating: "mal",
+    showMetacriticBadge: false,
+    showLetterboxdBadge: false,
+    showMdblistBadge: false,
+    showTraktBadge: false,
+    showSimklBadge: true,
+    scaleScoreStack: true,
+    showDubBadge: true,
+    showCardBadges: true,
+    cardAwardDisplay: "badge",
+    top10Ribbon: false,
+    top10RibbonSide: "right",
+    badgePlacement: "bottom",
+    watchlistBadge: "topEnd",
+    showLocalLibraryBadge: true,
+    showWatchedBadge: true,
   },
   accountProvider: "stremio",
   spooktoberBanner: undefined,
@@ -72,7 +89,6 @@ export const DEFAULT: Settings = {
   showSimklBadge: true,
   showSimklDetail: true,
   showDubBadge: true,
-  simklShowCommunityRatings: true,
   simklEnableUserRatings: true,
   simklGranularFilters: {
     movies: {
@@ -107,7 +123,6 @@ export const DEFAULT: Settings = {
   posterDockTransitionMs: 760,
   top10Ribbon: false,
   top10RibbonSide: "right",
-  awardTabs: false,
   cardAwardDisplay: "badge",
   awardTabPosition: "above",
   rowTitleScale: 1,
@@ -116,6 +131,8 @@ export const DEFAULT: Settings = {
   playerTitleSeriesFirst: false,
   playerTitleLogo: false,
   uiScale: 1,
+  harborCursor: false,
+  harborCursorScale: 1,
   serveWebUi: false,
   remoteControlEnabled: false,
   controllerSupportEnabled: true,
@@ -260,7 +277,7 @@ export const DEFAULT: Settings = {
   fullscreenMode: "fullscreen",
   seasonSourceLock: false,
   rememberLastStream: true,
-  keepSourceNextEpisode: false,
+  keepSourceNextEpisode: true,
   autoPreDownloadNextEpisode: false,
   autoPreDownloadNotifications: true,
   autoPreDownloadNextEpisodeEnabledAt: 0,
@@ -343,6 +360,8 @@ export const DEFAULT: Settings = {
   autoSyncApplyStructural: false,
   autoSyncDrift: false,
   subtitleAutoSyncAsr: true,
+  subtitleAutoSyncEngine: "automatic",
+  subtitleMoonshineLanguage: "auto",
   subtitleAutoSyncPivot: false,
   subtitleAutoSyncCrowd: true,
   communitySyncUrl: "",
@@ -458,6 +477,7 @@ export const DEFAULT: Settings = {
   hideWatchedInCatalogs: false,
   hideWatchedInHero: false,
   hideWatchedInMoreLikeThis: false,
+  moreLikeThisOnAiringSeries: false,
   hideUnreleased: false,
   localEpisodeSortDesc: false,
   localReviewDismissedCount: 0,
@@ -466,6 +486,7 @@ export const DEFAULT: Settings = {
   showLetterboxdCard: false,
   externalContinueWatching: false,
   cwSources: { library: true, trakt: false, simkl: false, local: true, publicmetadb: false },
+  cwClearProviderProgress: false,
   showPlaylistsTab: false,
   skipProfileScreen: false,
   profilePromptInterval: "launch",
@@ -492,7 +513,6 @@ export const DEFAULT: Settings = {
   customLogoMark: "",
   customLogoWordmark: "",
   customAppIcon: "",
-  customAppIconPreset: "",
   musicArtworkAppIcon: false,
   musicSeekThumb: true,
   musicSeekThumbHover: true,
@@ -504,7 +524,6 @@ export const DEFAULT: Settings = {
   homeNewEpisodes: false,
   libraryBookmarkedOnly: true,
   librarySort: "recent",
-  preferCustomMetaAddon: false,
   addonOnlyMetadata: false,
   metadataAddonOrder: [],
   metadataSources: {},
@@ -515,6 +534,7 @@ export const DEFAULT: Settings = {
   animeCwEnd: "hide",
   cwAdvanceNext: true,
   cwHideCaughtUp: true,
+  cwPlayUnreleased: true,
   useNativeTitleBar: false,
   fullscreenClockEnabled: false,
   fullscreenClockFormat: "system",
@@ -525,7 +545,6 @@ export const DEFAULT: Settings = {
   fullscreenClockSizePx: DEFAULT_FULLSCREEN_CLOCK_SIZE_PX,
   hybridTitleBar: false,
   topbarScrollBlur: false,
-  transparentTopBar: true,
   topbarAppearance: "transparent",
   dragAnywhere: false,
   resumeDetailScroll: true,
@@ -545,7 +564,7 @@ export const DEFAULT: Settings = {
   cwSnapshotFullQuality: false,
   cwPreferEpisodeStill: false,
   streamFilterLevel: "strict",
-  animePreferImdbStreams: false,
+  animePreferImdbStreams: true,
   blockTrackers: true,
   homeRows: {
     order: [],
@@ -560,7 +579,6 @@ export const DEFAULT: Settings = {
     cwTop: false,
   },
   navCustomization: { order: [], hidden: [], renamed: {} },
-  navCustomizationOwn: null,
   animeRows: { order: [], hidden: [], renamed: {} },
   hotkeys: {},
   animeFavoriteGenres: [],
@@ -571,10 +589,12 @@ export const DEFAULT: Settings = {
   animeMalRowsHidden: [],
   addonTimeoutSec: 30,
   profileAudio: "auto",
-  syncIndicator: true,
+  anilistSyncIndicator: true,
+  malSyncIndicator: true,
   syncIndicatorPosition: "top-right",
   pickerLayout: "stremio",
   streamSort: "addon",
+  sourceSort: "default",
   streamPriority: [],
   fullStreamDescription: true,
   pickerShowFilename: false,
@@ -646,6 +666,7 @@ export const DEFAULT: Settings = {
   gamesOpenInLibrary: false,
   wrappedButton: true,
   libraryHero: false,
+  libraryHiddenTabs: [],
   mangaEnabled: false,
   feedLocaleBias: true,
   uiLanguage: "en",
@@ -682,49 +703,3 @@ export const DEFAULT: Settings = {
   secondaryPrivileges: { ...DEFAULT_SECONDARY_PRIVILEGES },
   nuvioSecondaryPrivileges: { ...DEFAULT_SECONDARY_PRIVILEGES },
 };
-
-export function getSecondaryPrivileges(
-  settings?: {
-    accountProvider?: string;
-    secondaryPrivileges?: Partial<SecondaryProfilePrivileges> | null;
-    nuvioSecondaryPrivileges?: Partial<SecondaryProfilePrivileges> | null;
-  } | null,
-  isNuvioOverride?: boolean,
-): SecondaryProfilePrivileges {
-  let isNuvio = typeof isNuvioOverride === "boolean" ? isNuvioOverride : false;
-  if (typeof isNuvioOverride !== "boolean") {
-    if (settings?.accountProvider) {
-      isNuvio = settings.accountProvider === "nuvio";
-    } else {
-      try {
-        const explicit = localStorage.getItem("harbor.account-provider");
-        isNuvio =
-          explicit === "nuvio" ||
-          Boolean(
-            !explicit &&
-            localStorage.getItem("harbor.settings.shared")?.includes('"accountProvider":"nuvio"'),
-          );
-      } catch {}
-    }
-  }
-
-  let sharedBlob: {
-    secondaryPrivileges?: Partial<SecondaryProfilePrivileges> | null;
-    nuvioSecondaryPrivileges?: Partial<SecondaryProfilePrivileges> | null;
-  } | null = null;
-  try {
-    const raw =
-      localStorage.getItem("harbor.settings.shared") ?? localStorage.getItem("harbor.settings");
-    if (raw) sharedBlob = JSON.parse(raw);
-  } catch {}
-
-  const directSource = isNuvio ? settings?.nuvioSecondaryPrivileges : settings?.secondaryPrivileges;
-  if (directSource) return { ...DEFAULT_SECONDARY_PRIVILEGES, ...directSource };
-
-  const sharedSource = isNuvio
-    ? sharedBlob?.nuvioSecondaryPrivileges
-    : sharedBlob?.secondaryPrivileges;
-  if (sharedSource) return { ...DEFAULT_SECONDARY_PRIVILEGES, ...sharedSource };
-
-  return { ...DEFAULT_SECONDARY_PRIVILEGES };
-}

@@ -1,3 +1,4 @@
+import ebookPdf from "./en/ebook-pdf";
 import playOrders from "./en/play-orders";
 import gameRomLibrary from "./en/game-rom-library";
 import gameNotes from "./en/game-notes";
@@ -345,6 +346,11 @@ const en: Record<string, string> = {
   "Ranking source": "Ranking source",
   "How Harbor Rank works": "How Harbor Rank works",
   "Harbor Rank": "Harbor Rank",
+  "Harbor cursor": "Harbor cursor",
+  "Harbor cursor size": "Harbor cursor size",
+  "settings.harborCursor.scale": "Cursor size",
+  "Use Harbor's anchor as your mouse pointer.": "Use Harbor's anchor as your mouse pointer.",
+  "Adjust the size of Harbor's mouse pointer.": "Adjust the size of Harbor's mouse pointer.",
   Trending: "Trending",
   "Top on TMDB": "Top on TMDB",
   "Top on IMDb": "Top on IMDb",
@@ -496,6 +502,7 @@ const en: Record<string, string> = {
   ...gameRomLibrary,
   ...gameNotes,
   ...playOrders,
+  ...ebookPdf,
 };
 
 export default en;

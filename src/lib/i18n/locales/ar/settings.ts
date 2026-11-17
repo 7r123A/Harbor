@@ -206,7 +206,8 @@ const settings: Record<string, string> = {
   "Browse all releases": "تصفّح جميع الإصدارات",
   "Buffer fill": "تعبئة المخزن المؤقت",
   "Reveal the dot on hover": "إظهار النقطة عند التمرير فوقها",
-  "The dot stays out of the way and appears when you point at the bar. Turn this off to keep it on screen the whole time.": "تبقى النقطة بعيدة عن الطريق وتظهر عندما توجّه المؤشر إلى الشريط. أوقف هذا الخيار لإبقائها ظاهرة طوال الوقت.",
+  "The dot stays out of the way and appears when you point at the bar. Turn this off to keep it on screen the whole time.":
+    "تبقى النقطة بعيدة عن الطريق وتظهر عندما توجّه المؤشر إلى الشريط. أوقف هذا الخيار لإبقائها ظاهرة طوال الوقت.",
   "Buffer fill brightness": "سطوع تعبئة المخزن المؤقت",
   Build: "البناء",
   "Build a named quality preference once and set it active. The picker prefers streams that match it, including the instant pick, and falls back to the next best source when nothing matches. Each filter ANDs its dimensions and ignores any you leave blank.":
@@ -620,6 +621,9 @@ const settings: Record<string, string> = {
   "Scan for corruption": "الفحص بحثًا عن التلف",
   "Scanning your library…": "جارٍ فحص مكتبتك…",
   "Scanning…": "جارٍ الفحص…",
+  "Scale TV score badges": "تحجيم شارات التقييم في بطاقات المسلسلات",
+  "Shrink the score stack when several ratings are enabled.":
+    "تصغير مجموعة شارات التقييم عند تفعيل عدة تقييمات.",
   "Score badges on cards": "شارات التقييم على البطاقات",
   "Score position": "موضع التقييم",
   "Scrobble to SIMKL": "تسجيل المشاهدات في SIMKL",
@@ -1523,6 +1527,11 @@ const settings: Record<string, string> = {
   "Make everything bigger and easier to read: sidebar, menus, popups, every page. The whole interface scales live as you drag, so you can see the change right here. Great on 4K and ultrawide monitors, or whenever the text feels small.":
     "اجعل كل شيء أكبر وأسهل للقراءة: الشريط الجانبي، القوائم، النوافذ المنبثقة، كل صفحة. الواجهة بأكملها تتغير أثناء السحب. ممتاز للشاشات الكبيرة.",
   "Interface scale": "حجم الواجهة",
+  "Harbor cursor": "مؤشر هاربور",
+  "Harbor cursor size": "حجم مؤشر هاربور",
+  "settings.harborCursor.scale": "حجم المؤشر",
+  "Use Harbor's anchor as your mouse pointer.": "استخدم مرساة هاربور كمؤشر للماوس.",
+  "Adjust the size of Harbor's mouse pointer.": "ضبط حجم مؤشر Harbor.",
   "Trailer quality": "جودة العرض الدعائي",
   "How sharp the trailer is when you hit the preview button. Auto picks from your connection speed. 1080p and Best merge separate video and audio with the bundled ffmpeg, so they take a beat longer to start.":
     "مدى دقة المقطع الدعائي عند النقر على زر المعاينة. 'تلقائي' يختار بناءً على سرعة اتصالك. '1080p' و'الأفضل' يدمجان الفيديو والصوت المنفصلين عبر ffmpeg، لذا قد يستغرقان وقتاً أطول قليلاً للبدء.",
@@ -2311,7 +2320,8 @@ const settings: Record<string, string> = {
     "تنبيه: إن كان Stremio مثبّتًا أيضًا، فقد يسأل Windows عن أي تطبيق تستخدمه في أول مرة يُطلق فيها رابط ‎stremio://‎. اختر Harbor ليثبت ذلك.",
   "stremio:// links now open in the Stremio app. Harbor will only install when you trigger it from inside Harbor.":
     "تُفتح روابط ‎stremio://‎ الآن في تطبيق Stremio. ولن يثبّت Harbor إلا عندما تطلقه من داخل Harbor.",
-  "Checking harborcommunity.site for a newer build.": "يتحقّق من harborcommunity.site بحثًا عن إصدار أحدث.",
+  "Checking harborcommunity.site for a newer build.":
+    "يتحقّق من harborcommunity.site بحثًا عن إصدار أحدث.",
   "Downloading {pct}%": "جارٍ التنزيل {pct}%",
   "Downloaded. Ready to install and restart.": "تم التنزيل. جاهز للتثبيت وإعادة التشغيل.",
   "Installing. Harbor will restart.": "جارٍ التثبيت. سيُعاد تشغيل Harbor.",

@@ -33,7 +33,13 @@ export type PublicRating = {
   at: string;
 };
 
-export type RatingCounts = { movie: number; series: number; anime: number; manga: number; total: number };
+export type RatingCounts = {
+  movie: number;
+  series: number;
+  anime: number;
+  manga: number;
+  total: number;
+};
 
 export type RatingsSummary = {
   count: number;

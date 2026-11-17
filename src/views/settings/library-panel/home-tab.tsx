@@ -228,6 +228,14 @@ export function HomeTab() {
           </SettingRow>
           <CwEndPreview mode={settings.animeCwEnd} />
           <ToggleRow
+            label={t("Allow playing unreleased episodes")}
+            sub={t(
+              "On by default: Continue Watching lets you play the next episode even when its release date is still in the future. Turn this off to block Play until it airs. The countdown and Upcoming label stay visible either way.",
+            )}
+            value={settings.cwPlayUnreleased}
+            onChange={(v) => update({ cwPlayUnreleased: v })}
+          />
+          <ToggleRow
             label={t("Keep anime in the Anime room only")}
             sub={t(
               "Hides anime from the Home Continue Watching row. It still appears in the Anime tab's own Continue Watching.",
@@ -338,6 +346,19 @@ export function HomeTab() {
                 nuvio: isNuvio,
               });
             }}
+          />
+          <ToggleRow
+            label={t("Also clear provider playback progress")}
+            sub={t(
+              "When you dismiss a Continue Watching card, also delete its saved playback position from every connected provider. Watch history, ratings, and watchlist statuses are unchanged.",
+            )}
+            value={settings.cwClearProviderProgress}
+            onChange={(v) => update({ cwClearProviderProgress: v })}
+            lockReason={
+              !isNuvio && settings.cwPerProfile
+                ? t("Unavailable while Continue Watching is kept private to each profile.")
+                : undefined
+            }
           />
         </SettingGroup>
 

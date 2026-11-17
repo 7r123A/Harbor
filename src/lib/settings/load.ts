@@ -39,13 +39,21 @@ const RETIRED_GEMINI = new Set([
   "gemini-pro",
   "gemini-3-pro-preview",
 ]);
-import { DEFAULT, STORAGE_KEY } from "./defaults";
+import { DEFAULT, HARBOR_CURSOR_SCALE, STORAGE_KEY } from "./defaults";
 import type { Settings } from "./types";
 import { adoptLegacyPlaylists, readPlaylists } from "@/lib/iptv/playlists-store";
 import { sanitizeDisplaySelection } from "@/lib/monitors";
 import { migratePublicRelayUrl } from "@/lib/together/relay-version";
 
 const HEX_RE = /^#[0-9a-f]{6}$/i;
+
+export function sanitizeHarborCursorScale(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT.harborCursorScale;
+  const { min, max, step } = HARBOR_CURSOR_SCALE;
+  const bounded = Math.min(max, Math.max(min, value));
+  const stepsPerUnit = 1 / step;
+  return Math.round(bounded * stepsPerUnit) / stepsPerUnit;
+}
 
 function sanitizePosterDockTransition(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -168,7 +176,10 @@ export function loadStoredSettings(rawKey: string = STORAGE_KEY): Settings {
   return settings;
 }
 
-function parseStoredSettings(raw: string | null): { settings: Settings; cacheable: boolean } {
+export function parseStoredSettings(raw: string | null): {
+  settings: Settings;
+  cacheable: boolean;
+} {
   if (!raw) {
     return {
       settings: {
@@ -195,6 +206,8 @@ function parseStoredSettings(raw: string | null): { settings: Settings; cacheabl
       _stremioDeeplinkOnByDefault?: boolean;
       _skipButtonHideSecV2?: boolean;
       _anilistSyncOnV1?: boolean;
+      /** Legacy shared toggle, now split per tracker. */
+      syncIndicator?: boolean;
       _animeTitleLanguageV1?: boolean;
       /** Legacy: the preference used to live in the Simkl panel. */
       simklAnimeTitleLanguage?: "english" | "romaji" | "native";
@@ -216,6 +229,10 @@ function parseStoredSettings(raw: string | null): { settings: Settings; cacheabl
       _playbackSourcePreferenceV2?: boolean;
       /** Legacy: the high-quality toggle was split into a quality choice. */
       mangaBestEnabled?: boolean;
+      /** Legacy: folded into cardAwardDisplay. */
+      awardTabs?: boolean;
+      /** Legacy: folded into topbarAppearance. */
+      transparentTopBar?: boolean;
     };
     // Legacy defaults and playlist adoption depend on other stores. Re-read them
     // until a self-contained settings blob has been persisted by the normal flow.
@@ -426,9 +443,22 @@ function parseStoredSettings(raw: string | null): { settings: Settings; cacheabl
     const posterCards = normalizePosterCardSettings(parsed);
     if (parsed.mangaBestEnabled === true) parsed.mangaUpscaleQuality = "best";
     delete parsed.mangaBestEnabled;
+    const legacySyncIndicator =
+      typeof parsed.syncIndicator === "boolean" ? parsed.syncIndicator : undefined;
+    delete parsed.syncIndicator;
     const settings: Settings = {
       ...DEFAULT,
       ...parsed,
+      harborCursor: parsed.harborCursor === true,
+      harborCursorScale: sanitizeHarborCursorScale(parsed.harborCursorScale),
+      anilistSyncIndicator:
+        typeof parsed.anilistSyncIndicator === "boolean"
+          ? parsed.anilistSyncIndicator
+          : (legacySyncIndicator ?? DEFAULT.anilistSyncIndicator),
+      malSyncIndicator:
+        typeof parsed.malSyncIndicator === "boolean"
+          ? parsed.malSyncIndicator
+          : (legacySyncIndicator ?? DEFAULT.malSyncIndicator),
       searchTmdbTopMatch: parsed.searchTmdbTopMatch !== false,
       metadataAddonOrder: Array.isArray(parsed.metadataAddonOrder)
         ? [
@@ -459,7 +489,7 @@ function parseStoredSettings(raw: string | null): { settings: Settings; cacheabl
           : DEFAULT.togetherRelayUrl,
       ),
       ...posterCards,
-      animePreferImdbStreams: parsed.animePreferImdbStreams === true,
+      animePreferImdbStreams: parsed.animePreferImdbStreams !== false,
       showQuickGameLibrary: parsed.showQuickGameLibrary === true,
       topbarAppearance: sanitizeTopbarAppearance(
         parsed.topbarAppearance,
@@ -519,6 +549,7 @@ function parseStoredSettings(raw: string | null): { settings: Settings; cacheabl
         ...DEFAULT.cwSources,
         ...parsed.cwSources,
       },
+      cwClearProviderProgress: parsed.cwClearProviderProgress === true,
       subProvidersEnabled: {
         ...DEFAULT.subProvidersEnabled,
         ...parsed.subProvidersEnabled,
@@ -544,8 +575,8 @@ function parseStoredSettings(raw: string | null): { settings: Settings; cacheabl
         ...parsed.letterboxd,
       },
       preferredSubLangs: (parsed.preferredSubLangs ?? DEFAULT.preferredSubLangs).map(languageName),
-      preferredAudioLangs: (parsed.preferredAudioLangs ?? DEFAULT.preferredAudioLangs).map(
-        (lang) => (lang === ORIGINAL_AUDIO_LANG ? lang : languageName(lang)),
+      preferredAudioLangs: (parsed.preferredAudioLangs ?? DEFAULT.preferredAudioLangs).map((lang) =>
+        lang === ORIGINAL_AUDIO_LANG ? lang : languageName(lang),
       ),
       castAlwaysTranscode: parsed.castAlwaysTranscode ?? DEFAULT.castAlwaysTranscode,
       mangaUpscaleQuality: parsed.mangaUpscaleQuality === "best" ? "best" : "fast",

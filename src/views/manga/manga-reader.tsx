@@ -23,7 +23,7 @@ import { malMangaAuthed } from "@/lib/manga/tracking-mal";
 import type { MangaTracker } from "@/lib/manga/sync";
 import { activeMangaSourceId, listMangaSources } from "@/lib/manga/sources";
 import { useProfiles } from "@/lib/profiles";
-import { effectiveBinding, formatBindingForDisplay, matchesBinding } from "@/lib/hotkeys";
+import { effectiveBinding, findHotkeyMatch, formatBindingForDisplay } from "@/lib/hotkeys";
 import { useSettings } from "@/lib/settings";
 import { toggleWindowFullscreen } from "@/lib/fullscreen-state";
 import { useWindowFullscreen } from "@/lib/use-window-fullscreen";
@@ -33,6 +33,8 @@ import { ReaderProgressMeter } from "./manga-reader/reader-progress-meter";
 import { ReaderPageJump } from "./manga-reader/reader-page-jump";
 import { ReaderSettings } from "./manga-reader/reader-settings";
 import { PageImage } from "./manga-reader/page-image";
+import { useMangaReaderBackground } from "./manga-reader/reader-background";
+import { readerBackgroundStyle } from "@/components/reader-background/use-reader-background";
 import { prefetchBestMangaPage, prefetchMangaPage } from "./manga-reader/manga-upscale";
 import {
   resetBestChapterHeight,
@@ -95,7 +97,13 @@ export function MangaReader({
   onChangeIndex: (i: number) => void;
 }) {
   const chapter = chapters[index];
-  const chapterContext = useMangaChapterContext<HTMLDivElement>(manga, chapter);
+  const readerBackground = useMangaReaderBackground();
+  const chapterContext = useMangaChapterContext<HTMLDivElement>(
+    manga,
+    chapter,
+    undefined,
+    readerBackground.actions,
+  );
   const t = useT();
   const [pages, setPages] = useState<MangaPage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -543,7 +551,7 @@ export function MangaReader({
         else prevPage();
       } else if (e.key === "f") {
         toggleFullscreen();
-      } else if (matchesBinding(e, matchBinding)) {
+      } else if (findHotkeyMatch(e, settings.hotkeys, "Manga") === "mangaMatch") {
         e.preventDefault();
         if (manga.title) enqueueMatchWith(connectedTrackers());
       }
@@ -653,6 +661,33 @@ export function MangaReader({
         : (resumePageForChapter(pid, manga.id, manga.title, chapter.id, chapter.chapter) ?? 0)),
     [chapter.id, startPage, pid, manga.id, manga.title, disableMangaPersistence],
   );
+  // Start the page the reader opens on before its image is ready, so the model
+  // load and first inference overlap the reader's own startup instead of
+  // following them.
+  const warmedChapter = useRef<string | null>(null);
+  useEffect(() => {
+    if (!settings.mangaUpscaleEnabled || pages.length === 0) return;
+    const chapterKey = `${manga.id}:${chapter.id}:${bookResume}`;
+    if (warmedChapter.current === chapterKey) return;
+    const index = Math.min(bookResume, pages.length - 1);
+    const page = pages[index];
+    if (!page?.url) return;
+    warmedChapter.current = chapterKey;
+    const key = pageCacheKey(index);
+    if (settings.mangaUpscaleQuality === "best") {
+      void prefetchBestMangaPage(page.url, page.headers, key, settings.mangaUpscaleAutoDownload);
+    } else {
+      void prefetchMangaPage(page.url, page.headers, key);
+    }
+  }, [
+    pages,
+    bookResume,
+    manga.id,
+    chapter.id,
+    settings.mangaUpscaleEnabled,
+    settings.mangaUpscaleQuality,
+    settings.mangaUpscaleAutoDownload,
+  ]);
   const pageRef = useRef(currentPage);
   pageRef.current = currentPage;
   const [bookStart, setBookStart] = useState(bookResume);
@@ -987,9 +1022,23 @@ export function MangaReader({
 
   return createPortal(
     <div
+      data-harbor-manga-reader
       ref={disableMangaPersistence ? undefined : chapterContext}
       className={`fixed inset-0 z-[80] ${BG[prefs.bg]} text-ink`}
     >
+      {readerBackground.image && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 -z-10"
+          style={readerBackgroundStyle(readerBackground.image, readerBackground.transform)}
+        />
+      )}
+      {readerBackground.input}
+      {readerBackground.error && (
+        <div className="absolute left-1/2 top-20 z-[95] max-w-md -translate-x-1/2 rounded-xl bg-elevated p-4">
+          {readerBackground.error}
+        </div>
+      )}
       <div
         ref={scrollRef}
         dir={horizontal ? (rtl ? "rtl" : "ltr") : undefined}
@@ -1012,7 +1061,8 @@ export function MangaReader({
             <BookFlip
               pages={pageUrls}
               rtl={rtl}
-              bg={BG_HEX[prefs.bg]}
+              bg={readerBackground.image ? "transparent" : BG_HEX[prefs.bg]}
+              contextActions={readerBackground.actions}
               resumePage={bookStart}
               soundEnabled={prefs.flipSound}
               zoom={prefs.zoom}
@@ -1207,6 +1257,8 @@ export function MangaReader({
             patchPrefs(patch);
           }}
           onClose={() => setSettingsOpen(false)}
+          backgroundControls={readerBackground.controls}
+          backgroundError={readerBackground.error}
         />
       )}
 

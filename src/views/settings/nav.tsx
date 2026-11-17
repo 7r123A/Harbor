@@ -1146,7 +1146,7 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
     label: "Player controls in Big Picture",
     section: "hotkeys",
     tab: "behaviour",
-    anchorTitle: "Big Picture",
+    anchorTitle: "Navigation",
     keywords: [
       "big picture player",
       "ten foot player",
@@ -3337,7 +3337,7 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
   {
     label: "Synced addons",
     section: "account",
-    tab: "stremio",
+    tab: "nuvio",
     anchorTitle: "Synced addons",
     keywords: ["synced addons", "addons", "stremio addons", "installed addons"],
   },
@@ -3485,8 +3485,9 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
   },
   {
     label: "Picture in picture style",
-    section: "basics",
-    anchorTitle: "Picture in picture style",
+    section: "player",
+    tab: "play",
+    anchorTitle: "Picture in picture",
     keywords: [
       "pip",
       "picture in picture",
@@ -4077,19 +4078,6 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
     tab: "cards",
     anchorTitle: "Titles",
     keywords: ["poster titles", "hide names", "clean grid", "minimal"],
-  },
-  {
-    label: "Prefer my installed metadata addon",
-    section: "library",
-    tab: "providers",
-    anchorTitle: "Titles and descriptions",
-    keywords: [
-      "meta addon",
-      "localized cinemeta",
-      "custom metadata",
-      "override cinemeta",
-      "descriptions",
-    ],
   },
   {
     label: "Fanart.tv · logos and backdrops",
@@ -5325,8 +5313,12 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
       "ass subtitles",
       "ssa",
       "keep original",
-      "resize only",
+      "keep the file's look",
+      "match my size",
+      "change font only",
       "use my style",
+      "hardcoded font",
+      "inline tags",
       "karaoke",
       "anime subs",
       "boxes instead of letters",
@@ -5687,7 +5679,7 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
     label: "Embed mpv inside Harbor window",
     section: "player",
     tab: "engine",
-    anchorTitle: "Engine",
+    anchorTitle: "mpv window",
     keywords: [
       "embedded mpv",
       "separate window",
@@ -5700,7 +5692,7 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
     label: "Separate window display",
     section: "player",
     tab: "engine",
-    anchorTitle: "Engine",
+    anchorTitle: "mpv window",
     keywords: [
       "separate window monitor",
       "mpv display",
@@ -5714,7 +5706,7 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
     label: "Cover the taskbar",
     section: "player",
     tab: "engine",
-    anchorTitle: "Engine",
+    anchorTitle: "mpv window",
     keywords: [
       "taskbar",
       "full screen",
@@ -6654,9 +6646,9 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
   },
   {
     label: "Close player",
-    section: "hotkeys",
-    tab: "keys",
-    anchorTitle: "Player",
+    section: "player",
+    tab: "upnext",
+    anchorTitle: "More like this at the end",
     keywords: ["escape", "exit playback", "quit player", "back out"],
   },
   {
@@ -7218,6 +7210,20 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
       "small text fix",
       "ultrawide",
     ],
+  },
+  {
+    label: "Harbor cursor",
+    section: "theme",
+    tab: "interface",
+    anchorTitle: "Harbor cursor",
+    keywords: ["cursor", "mouse", "pointer", "anchor", "مؤشر", "ماوس", "مرساة"],
+  },
+  {
+    label: "Harbor cursor size",
+    section: "theme",
+    tab: "interface",
+    anchorTitle: "Harbor cursor",
+    keywords: ["mouse cursor size", "pointer size", "anchor size", "حجم المؤشر", "حجم الماوس"],
   },
   {
     label: "Show format chips on stream rows",
@@ -8212,6 +8218,21 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
       "cw end",
       "timer",
       "countdown",
+    ],
+  },
+  {
+    label: "Allow playing unreleased episodes",
+    section: "library",
+    tab: "home",
+    anchorTitle: "Home layout",
+    keywords: [
+      "unreleased episode",
+      "future release date",
+      "play anyway",
+      "blocked playback",
+      "incorrect release date",
+      "continue watching play",
+      "unaired episode",
     ],
   },
   {
@@ -10115,7 +10136,7 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
     section: "subtitles",
     tab: "sync",
     anchorTitle: "Subtitle auto-sync",
-    keywords: ["speech recognition", "asr", "smart resync", "audio derived sync", "whisper"],
+    keywords: ["speech recognition", "asr", "smart resync", "audio derived sync", "moonshine"],
   },
   {
     label: "Match subtitles across languages (experimental)",
@@ -10231,9 +10252,8 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
   },
   {
     label: "Show the Big Picture button",
-    section: "hotkeys",
-    tab: "behaviour",
-    anchorTitle: "Big Picture",
+    section: "bigPicture",
+    anchorTitle: "Interface",
     keywords: ["big picture button", "tv mode button", "hide big picture", "ten foot"],
   },
   {
