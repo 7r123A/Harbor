@@ -28,13 +28,14 @@ const app = read("src/App.tsx");
 const dhtBoot = read("src-tauri/src/torrent_engine/dht_boot.rs");
 const autoRetry = read("src/views/player/hooks/use-auto-retry.ts");
 
-test("selecting a torrent file does not start peer transfer", () => {
+test("selecting a torrent file starts discovery and prefetch while the player boots", () => {
   const start = engine.indexOf("pub async fn torrent_engine_select");
   const end = engine.indexOf("pub async fn torrent_engine_stats", start);
   assert.ok(start >= 0 && end > start, "torrent_engine_select block is missing");
   const select = engine.slice(start, end);
   assert.match(select, /update_only_files_bounded\(&session, &handle, &only\)/);
-  assert.doesNotMatch(select, /session\.unpause\(/);
+  assert.match(select, /\.unpause\(&handle\)/);
+  assert.match(select, /spawn_stream_prime\(handle\.clone\(\), file_idx\)/);
 });
 
 test("the local HTTP stream request starts a paused torrent on demand", () => {
