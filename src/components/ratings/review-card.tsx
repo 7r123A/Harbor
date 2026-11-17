@@ -1,17 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { ChevronDown, Heart, Loader2, MessageSquare, Star } from "lucide-react";
 import { useT } from "@/lib/i18n";
-import { findQuickReviewId } from "@/lib/social/quick-reviews";
-import { cachedReviewCommentCount, loadReviewThread } from "@/lib/social/review-comments";
-import { likeReview, unlikeReview } from "@/lib/social/review-reactions";
-import { useReviewEngagement } from "@/lib/social/review-engagement";
 import { MutualMatchLabel } from "./mutual-match-badge";
 import { ReviewSpoiler } from "./review-spoiler";
 import type { TitleRating, TitleRef } from "@/lib/social/review-rank";
 import { Avatar, timeAgo } from "@/views/profile/profile-bits";
 import { UserHoverCard } from "@/views/profile/user-hover-card";
 import { VerifiedBadge } from "@/views/account/verified-badge";
-import { ReviewComments } from "./review-comments";
+import { ReviewDiscussion } from "./review-comments";
+import { useReviewActions } from "./use-review-actions";
 import { RatingStars } from "./rating-stars";
 
 const LONG_REVIEW = 320;
@@ -24,96 +21,38 @@ const LONG_REVIEW = 320;
 export function ReviewCard({
   review,
   target,
-  prefetchComments = false,
   onOpenAuthor,
 }: {
   review: TitleRating;
   target: TitleRef;
-  /** Loading the thread early is what puts a real comment count on the button. */
-  prefetchComments?: boolean;
   onOpenAuthor: () => void;
 }) {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
   const [revealed, setRevealed] = useState(false);
-  const [thread, setThread] = useState(false);
-  const [liking, setLiking] = useState(false);
-  const [resolvedReviewId, setResolvedReviewId] = useState<string>();
-  const id = review.reviewId ?? resolvedReviewId;
-  const { value: engagement, update } = useReviewEngagement(id);
-  const like = engagement.like ?? review.reactions ?? { count: 0, mine: false };
-  const [likeError, setLikeError] = useState<"auth" | "request" | null>(null);
-  const [commentCount, setCommentCount] = useState<number | null>(() =>
-    review.reviewId
-      ? (review.comments?.count ?? null)
-      : cachedReviewCommentCount(review.handle, target),
-  );
-  const visibleCount = engagement.comments ?? commentCount;
-  const onCommentCount = useCallback(
-    (count: number) => {
-      setCommentCount(count);
-      if (id) update({ comments: count });
-    },
-    [id, update],
-  );
-  const [openingThread, setOpeningThread] = useState(false);
-
-  useEffect(() => {
-    // A hub review has its own thread; only the legacy profile-quote thread needs a prefetch.
-    if (!prefetchComments || review.reviewId || commentCount !== null) return;
-    let live = true;
-    loadReviewThread(review.handle, target)
-      .then((result) => {
-        if (live) setCommentCount(result.comments.length);
-      })
-      .catch(() => {
-        /* The button still works; the count appears once the thread is opened. */
-      });
-    return () => {
-      live = false;
-    };
-  }, [prefetchComments, commentCount, review.handle, review.reviewId, target]);
+  const {
+    id,
+    like,
+    commentCount,
+    liking,
+    likeError,
+    threadOpen,
+    openingThread,
+    toggleLike,
+    toggleComments,
+    onCommentCount,
+  } = useReviewActions({
+    handle: review.handle,
+    target,
+    reviewId: review.reviewId,
+    initialLike: review.reactions,
+    initialCommentCount: review.comments?.count,
+  });
 
   const text = review.review ?? "";
   const spoilerHidden = review.spoiler === true && !revealed;
   const long = text.length > LONG_REVIEW;
   const collapsed = long && !expanded;
-
-  async function toggleLike() {
-    if (liking) return;
-    setLiking(true);
-    setLikeError(null);
-    try {
-      const reviewId = id ?? (await findQuickReviewId(review.handle, target));
-      if (!reviewId) {
-        setLikeError("request");
-        return;
-      }
-      setResolvedReviewId(reviewId);
-      const result = await (like.mine ? unlikeReview(reviewId) : likeReview(reviewId));
-      update({ like: { count: result.count, mine: result.reacted } }, reviewId);
-    } catch (error) {
-      setLikeError((error as { status?: number }).status === 401 ? "auth" : "request");
-    } finally {
-      setLiking(false);
-    }
-  }
-
-  async function toggleThread() {
-    if (thread || id) {
-      setThread(!thread);
-      return;
-    }
-    setOpeningThread(true);
-    try {
-      setResolvedReviewId(await findQuickReviewId(review.handle, target));
-    } catch {
-      // Keep the profile-quote thread available on servers that lack the review hub.
-    } finally {
-      setOpeningThread(false);
-      setThread(true);
-    }
-  }
 
   return (
     <article className="group overflow-hidden rounded-2xl bg-elevated/35 ring-1 ring-edge-soft transition-colors duration-150 hover:bg-elevated/50">
@@ -209,16 +148,16 @@ export function ReviewCard({
         </button>
         <button
           type="button"
-          onClick={toggleThread}
+          onClick={toggleComments}
           disabled={openingThread}
-          aria-expanded={thread}
+          aria-expanded={threadOpen}
           aria-label={t("Comments")}
           className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-[12px] tabular-nums text-ink-subtle transition-colors hover:bg-elevated/70 hover:text-ink-muted ${
-            thread ? "text-ink" : ""
+            threadOpen ? "text-ink" : ""
           }`}
         >
           <MessageSquare size={14} />
-          {visibleCount === null ? t("Comments") : visibleCount}
+          {commentCount ?? t("Comments")}
         </button>
       </div>
 
@@ -228,15 +167,9 @@ export function ReviewCard({
         </p>
       )}
 
-      {thread && (
+      {threadOpen && (
         <div className="border-t border-edge-soft/70 px-3.5 pb-3 pt-2">
-          <ReviewComments
-            handle={review.handle}
-            target={target}
-            score={review.score}
-            reviewId={id}
-            onCount={onCommentCount}
-          />
+          <ReviewDiscussion reviewId={id} onCount={onCommentCount} />
         </div>
       )}
     </article>

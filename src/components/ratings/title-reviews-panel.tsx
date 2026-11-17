@@ -274,12 +274,11 @@ export function TitleReviewsPanel({
 
         {active.state === "ready" && reviews.length > 0 && (
           <div className="flex flex-col gap-2.5">
-            {reviews.map((review, index) => (
+            {reviews.map((review) => (
               <ReviewCard
                 key={`${review.handle}-${review.at}`}
                 review={review}
                 target={ref}
-                prefetchComments={index < 6}
                 onOpenAuthor={() => {
                   setQuickSeed({ alias: review.alias, avatarUrl: review.avatarUrl });
                   setQuickHandle(review.handle);

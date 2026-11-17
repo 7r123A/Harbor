@@ -35,7 +35,10 @@ function loadReviewComments(dependencies: Record<string, unknown>) {
     module,
     module.exports,
   );
-  return module.exports as { ReviewComments: React.ComponentType<any> };
+  return module.exports as {
+    ReviewComments: React.ComponentType<{ reviewId: string; onCount?: (count: number) => void }>;
+    ReviewDiscussion: React.ComponentType<{ reviewId?: string }>;
+  };
 }
 
 test("review comments show server counts, load the next cursor, and reconcile a new reply", async () => {
@@ -50,12 +53,9 @@ test("review comments show server counts, load the next cursor, and reconcile a 
   const pageCalls: Array<string | undefined> = [];
   const countUpdates: number[] = [];
   const engagementUpdates: unknown[] = [];
-  const { ReviewComments } = loadReviewComments({
+  const { ReviewComments, ReviewDiscussion } = loadReviewComments({
     "@/lib/theme-auth": { authToken: () => "fixture-token" },
-    "@/lib/ratings/quote": {
-      parseQuotedBody: (body: string) => ({ text: body }),
-      ratingQuoteLength: () => 0,
-    },
+    "@/lib/ratings/quote": { parseQuotedBody: (body: string) => ({ text: body }) },
     "@/views/profile/comment-compose": {
       CommentCompose: ({ onSubmit }: { onSubmit: (body: string) => Promise<unknown> }) =>
         React.createElement("button", { onClick: () => void onSubmit("A reply") }, "Post reply"),
@@ -77,11 +77,6 @@ test("review comments show server counts, load the next cursor, and reconcile a 
       segmentProfanity: (text: string) => [{ text, masked: false }],
       stripUrls: (text: string) => text,
       validateComment: () => null,
-    },
-    "@/lib/social/review-comments": {
-      loadReviewThread: async () => ({ comments: [], hasMore: false }),
-      replyToReview: async () => ({}),
-      reviewQuote: () => null,
     },
     "@/lib/social/review-comment-api": {
       loadReviewCommentPage: async (_id: string, cursor?: string) => {
@@ -112,14 +107,15 @@ test("review comments show server counts, load the next cursor, and reconcile a 
   const root = createRoot(dom.window.document.getElementById("root")!);
   const render = () =>
     React.createElement(ReviewComments, {
-      handle: "friend",
-      target: { itemKey: "tt123", mediaType: "movie" },
-      score: 8,
       reviewId: "review-1",
       onCount: (count: number) => countUpdates.push(count),
     });
 
   try {
+    await React.act(async () => root.render(React.createElement(ReviewDiscussion)));
+    assert.match(dom.window.document.body.textContent || "", /Review comments are unavailable/);
+    assert.equal(pageCalls.length, 0);
+
     await React.act(async () => {
       root.render(render());
       await Promise.resolve();

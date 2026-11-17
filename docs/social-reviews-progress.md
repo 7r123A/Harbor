@@ -91,7 +91,7 @@ Statuses: **Not Started**, **In Progress**, **Implemented, Not Verified**, **Ver
 - Profile integration: `src/views/profile/profile.tsx`, `src/views/profile/ratings-card.tsx`, `src/views/profile/mutual-ratings-card.tsx`.
 - Quick Access: `src/components/ratings/reviewer-quick-menu.tsx` (had pre-existing uncommitted edit; preserved).
 - Existing hover-card implementation: `src/views/profile/user-hover-card.tsx`; now integrated in `src/components/ratings/review-card.tsx` and `review-comments.tsx`.
-- Review interactions/comment adapters: `src/lib/social/review-comments.ts`, `src/lib/social/review-reactions.ts`, `src/components/ratings/review-comments.tsx` (both profile-comment and review-ID modes), `src/components/ratings/review-card.tsx`, `src/lib/social/title-reviews.ts`.
+- Review interactions: Social Reviews and Quick Access share `src/components/ratings/use-review-actions.ts`, `src/lib/social/review-reactions.ts`, and `src/lib/social/review-comment-api.ts`. Both write to the canonical review ID. If an older rating response omits it, the client looks it up by author and exact title before opening a discussion. Profile-quote comments remain on profiles.
 - Quick Access sorting, filtering, and ratings adapter: `src/lib/social/quick-reviews.ts`.
 - Review-ID comment transport: `src/lib/social/review-comment-api.ts`.
 - Friendship: `src/lib/social/friend-request.ts`, `src/lib/social/friends.ts`.

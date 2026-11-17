@@ -26,10 +26,29 @@ export function fetchQuickReviews<T>(handle: string, query: string, cursor?: str
   return socialGet<T>(`/social/u/${encodeURIComponent(handle)}/quick?${params}`);
 }
 
-export async function findQuickReviewId(
+export async function findAuthorReviewId(
   handle: string,
   target: TitleRef,
 ): Promise<string | undefined> {
+  const exact = new URLSearchParams({
+    contentType: target.mediaType,
+    contentId: target.itemKey,
+    limit: "1",
+  });
+  const sameTitle = (review: QuickReview) =>
+    review.contentId === target.itemKey && review.contentType === target.mediaType;
+  try {
+    const { items, total } = await socialGet<{ items: QuickReview[]; total: number }>(
+      `/social/u/${encodeURIComponent(handle)}/reviews?${exact}`,
+    );
+    const match = items.find(sameTitle);
+    if (match?.id || total === 0) return match?.id;
+  } catch (error) {
+    const response = error as { status?: number; body?: { error?: string } };
+    if (response.status !== 405 && (response.status !== 404 || response.body?.error)) throw error;
+  }
+
+  // Older servers can search Quick Access by title ID, then we verify the exact title pair.
   const query = new URLSearchParams({ q: target.itemKey, limit: "50" }).toString();
   const seen = new Set<string>();
   let cursor: string | undefined;
@@ -37,9 +56,7 @@ export async function findQuickReviewId(
     const { reviews } = await fetchQuickReviews<{
       reviews: { items: QuickReview[]; nextCursor?: string };
     }>(handle, query, cursor);
-    const match = reviews.items.find(
-      (review) => review.contentId === target.itemKey && review.contentType === target.mediaType,
-    );
+    const match = reviews.items.find(sameTitle);
     if (match?.id) return match.id;
     cursor = reviews.nextCursor;
     if (!cursor || seen.has(cursor)) break;
@@ -108,10 +125,6 @@ export function filterQuickReviews(
       .toLowerCase()
       .includes(q);
   });
-}
-
-export function canLikeQuickReview(review: QuickReview): boolean {
-  return !!review.id;
 }
 
 /** Apply the fallback path's filter, sort, and page in the same order as the hub route. */

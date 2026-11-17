@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Loader2, Reply } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { authToken } from "@/lib/theme-auth";
-import { parseQuotedBody, ratingQuoteLength } from "@/lib/ratings/quote";
+import { parseQuotedBody } from "@/lib/ratings/quote";
 import type { Comment } from "@/views/profile/profile-types";
 import { CommentCompose } from "@/views/profile/comment-compose";
 import { Avatar, timeAgo } from "@/views/profile/profile-bits";
@@ -15,13 +15,11 @@ import {
   validateComment,
   type ComposeIssue,
 } from "@/views/profile/text-safety";
-import { loadReviewThread, replyToReview, reviewQuote } from "@/lib/social/review-comments";
 import {
   createReviewComment,
   loadReviewCommentPage,
   type ReviewCommentApiRow,
 } from "@/lib/social/review-comment-api";
-import type { TitleRef } from "@/lib/social/review-rank";
 import { useReviewEngagement } from "@/lib/social/review-engagement";
 
 function fromReviewComment(row: ReviewCommentApiRow): Comment {
@@ -172,18 +170,30 @@ function Body({ text }: { text: string }) {
  * The discussion under one review. Replies are stored as profile comments that quote the rated
  * title, so this thread and the reviewer's profile show the same conversation.
  */
+export function ReviewDiscussion({
+  reviewId,
+  onCount,
+}: {
+  reviewId?: string;
+  onCount?: (count: number) => void;
+}) {
+  const t = useT();
+  if (!reviewId) {
+    return (
+      <p role="status" className="py-2 text-[12px] text-ink-muted">
+        {t("Review comments are unavailable.")}
+      </p>
+    );
+  }
+  return <ReviewComments key={reviewId} reviewId={reviewId} onCount={onCount} />;
+}
+
 export function ReviewComments({
-  handle,
-  target,
-  score,
   onCount,
   reviewId,
 }: {
-  handle: string;
-  target: TitleRef;
-  score: number;
   onCount?: (count: number) => void;
-  reviewId?: string;
+  reviewId: string;
 }) {
   const t = useT();
   const signedIn = !!authToken();
@@ -202,20 +212,14 @@ export function ReviewComments({
   useEffect(() => {
     let live = true;
     setState("loading");
-    (reviewId
-      ? loadReviewCommentPage(reviewId).then((page) => ({
-          comments: (page.comments ?? []).map(fromReviewComment),
-          nextCursor: page.nextCursor,
-          total: page.total,
-        }))
-      : loadReviewThread(handle, target)
-    )
-      .then((thread) => {
+    loadReviewCommentPage(reviewId)
+      .then((page) => {
         if (!live) return;
-        setComments(thread.comments);
-        setNextCursor(thread.nextCursor);
-        setServerCount("total" in thread ? thread.total : null);
-        setState(thread.comments.length ? "ready" : "empty");
+        const rows = (page.comments ?? []).map(fromReviewComment);
+        setComments(rows);
+        setNextCursor(page.nextCursor);
+        setServerCount(page.total);
+        setState(rows.length ? "ready" : "empty");
       })
       .catch(() => {
         if (live) setState("error");
@@ -223,7 +227,7 @@ export function ReviewComments({
     return () => {
       live = false;
     };
-  }, [handle, target, reviewId, threadVersion]);
+  }, [reviewId, threadVersion]);
 
   useEffect(() => {
     if (state === "ready" || state === "empty") onCount?.(serverCount ?? comments.length);
@@ -234,14 +238,9 @@ export function ReviewComments({
     setLoadingMore(true);
     setLoadError("");
     try {
-      const thread = reviewId
-        ? await loadReviewCommentPage(reviewId, nextCursor).then((page) => ({
-            comments: (page.comments ?? []).map(fromReviewComment),
-            nextCursor: page.nextCursor,
-          }))
-        : await loadReviewThread(handle, target, nextCursor);
-      setComments((cur) => [...cur, ...thread.comments]);
-      setNextCursor(thread.nextCursor);
+      const page = await loadReviewCommentPage(reviewId, nextCursor);
+      setComments((cur) => [...cur, ...(page.comments ?? []).map(fromReviewComment)]);
+      setNextCursor(page.nextCursor);
     } catch {
       setLoadError(t("Could not load more comments."));
     } finally {
@@ -251,23 +250,17 @@ export function ReviewComments({
 
   const submit = async (raw: string, parentId?: string): Promise<ComposeIssue> => {
     if (!signedIn) return "signin";
-    const quote = reviewId ? null : reviewQuote(handle, target, score);
-    const budget = COMMENT_MAX - (quote ? ratingQuoteLength(quote) : 0);
-    const issue = validateComment(raw, 0, Date.now(), budget);
+    const issue = validateComment(raw, 0, Date.now(), COMMENT_MAX);
     if (issue) return issue;
     setSending(true);
     try {
       const body = stripUrls(raw.trim());
-      const created = reviewId
-        ? fromReviewComment(await createReviewComment(reviewId, body, parentId))
-        : await replyToReview(handle, target, score, body, parentId);
+      const created = fromReviewComment(await createReviewComment(reviewId, body, parentId));
       setComments((cur) => [created, ...cur]);
       setReplyingTo(null);
-      if (reviewId) {
-        const count = (serverCount ?? comments.length) + 1;
-        setServerCount(count);
-        update({ comments: count, threadChanged: true });
-      }
+      const count = (serverCount ?? comments.length) + 1;
+      setServerCount(count);
+      update({ comments: count, threadChanged: true });
       setState("ready");
       return null;
     } catch (error) {

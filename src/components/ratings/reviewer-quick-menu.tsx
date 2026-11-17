@@ -20,11 +20,9 @@ import {
   type ProfileFriendStatus,
 } from "@/lib/social/friend-request";
 import { fetchFriends, fetchPendingRequests } from "@/lib/social/friends";
-import { likeReview, unlikeReview } from "@/lib/social/review-reactions";
-import { useReviewEngagement } from "@/lib/social/review-engagement";
-import { ReviewComments } from "@/components/ratings/review-comments";
+import { ReviewDiscussion } from "./review-comments";
+import { useReviewActions } from "./use-review-actions";
 import {
-  canLikeQuickReview,
   fetchQuickReviews,
   pageQuickReviews,
   reviewFromRating,
@@ -115,25 +113,25 @@ function ReviewerReviewRow({
   const t = useT();
   const [expanded, setExpanded] = useState(false);
   const [revealed, setRevealed] = useState(false);
-  const { value: engagement, update } = useReviewEngagement(review.id);
-  const likes = engagement.like?.count ?? review.reactions.count;
-  const liked = engagement.like?.mine ?? review.reactions.viewerReacted;
-  const [liking, setLiking] = useState(false);
-  const [likeFailed, setLikeFailed] = useState(false);
-  const [threadOpen, setThreadOpen] = useState(false);
-  const [legacyCount, setLegacyCount] = useState(review.comments.count);
-  const commentCount = engagement.comments ?? legacyCount;
-  const onCommentCount = useCallback(
-    (count: number) => {
-      if (review.id) update({ comments: count });
-      else setLegacyCount(count);
-    },
-    [review.id, update],
-  );
-  const commentTarget = useMemo(
-    () => ({ itemKey: review.contentId, mediaType: review.contentType }),
-    [review.contentId, review.contentType],
-  );
+  const {
+    id,
+    like,
+    commentCount,
+    liking,
+    likeError,
+    threadOpen,
+    openingThread,
+    toggleLike,
+    toggleComments,
+    onCommentCount,
+  } = useReviewActions({
+    handle,
+    target: { itemKey: review.contentId, mediaType: review.contentType },
+    reviewId: review.id,
+    initialLike: { count: review.reactions.count, mine: review.reactions.viewerReacted },
+    initialCommentCount: review.comments.count,
+  });
+  const liked = like.mine;
   const text = review.review ?? "";
   const hidden = review.spoiler === true && !revealed;
   const long = text.length > 260;
@@ -178,35 +176,29 @@ function ReviewerReviewRow({
               type="button"
               aria-pressed={liked}
               aria-label={liked ? t("Unlike this review") : t("Like this review")}
-              disabled={liking || !canLikeQuickReview(review)}
-              onClick={async () => {
-                if (!canLikeQuickReview(review) || !review.id) return;
-                const next = !liked;
-                setLiking(true);
-                setLikeFailed(false);
-                try {
-                  const result = next ? await likeReview(review.id) : await unlikeReview(review.id);
-                  update({ like: { count: result.count, mine: result.reacted } });
-                } catch {
-                  setLikeFailed(true);
-                } finally {
-                  setLiking(false);
-                }
-              }}
+              disabled={liking}
+              onClick={toggleLike}
               className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 transition-colors ${liked ? "text-accent" : "text-ink-subtle hover:text-ink"}`}
             >
-              <Heart size={14} className={liked ? "fill-current" : undefined} /> {likes}
+              <Heart size={14} className={liked ? "fill-current" : undefined} /> {like.count}
             </button>
             <button
               type="button"
               aria-expanded={threadOpen}
               aria-label={t("Comments")}
               className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-ink-subtle transition-colors hover:text-ink"
-              onClick={() => setThreadOpen((open) => !open)}
+              onClick={toggleComments}
+              disabled={openingThread}
             >
               <MessageSquare size={14} /> {commentCount}
             </button>
-            {likeFailed && <span role="status">{t("Could not update this like.")}</span>}
+            {likeError && (
+              <span role="status">
+                {likeError === "auth"
+                  ? t("Sign in to like reviews.")
+                  : t("Could not update this like.")}
+              </span>
+            )}
           </div>
           {text && (
             <div className="mt-2">
@@ -230,13 +222,7 @@ function ReviewerReviewRow({
       </div>
       {threadOpen && (
         <div className="mt-3 rounded-lg bg-canvas/50 px-3 pb-3 pt-1 ring-1 ring-edge-soft">
-          <ReviewComments
-            handle={handle}
-            target={commentTarget}
-            score={review.score}
-            reviewId={review.id}
-            onCount={onCommentCount}
-          />
+          <ReviewDiscussion reviewId={id} onCount={onCommentCount} />
         </div>
       )}
     </article>
@@ -632,6 +618,7 @@ export function ReviewerQuickMenu({
               {items.map((review) => (
                 <ReviewerReviewRow
                   key={JSON.stringify([
+                    profileHandle,
                     review.contentType,
                     review.contentId,
                     review.updatedAt,
