@@ -230,6 +230,53 @@ test("background refreshes of stale rows run at most six at a time", () =>
     assert.equal(peak, 6);
   }));
 
+test("a queued catalog refresh sends the language its cache key was built with", () =>
+  withClock(10_000_000, async (advance) => {
+    store.set("harbor.settings", JSON.stringify({ region: "US", tmdbLanguage: "en" }));
+    const original = globalThis.fetch;
+    const languages: (string | null)[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (requestUrl(input).includes("/catalog/")) {
+        languages.push(new Headers(init?.headers).get("Accept-Language"));
+      }
+      return new Response(JSON.stringify({ metas: [] }), {
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    try {
+      const addon = {
+        transportUrl: "https://lang.example/manifest.json",
+        manifest: { id: "lang", name: "Lang" },
+      } as unknown as Parameters<typeof addons.fetchCatalogRow>[0];
+      const cat = { id: "top", type: "movie", name: "Top" };
+      const blockers = Array.from({ length: 6 }, (_, i) => `lang-blocker-${i}`);
+      for (const key of blockers) {
+        await catalogCache.cachedCatalogRow(key, async () => ({ value: 0, ok: true }));
+      }
+      await addons.fetchCatalogRow(addon, cat);
+      advance(11 * 60 * 1000);
+
+      // Six stale refreshes fill the background lanes, so the next one waits.
+      const gates: (() => void)[] = [];
+      const hang = () =>
+        new Promise<{ value: number; ok: boolean }>((resolve) =>
+          gates.push(() => resolve({ value: 1, ok: true })),
+        );
+      for (const key of blockers) await catalogCache.cachedCatalogRow(key, hang);
+      await addons.fetchCatalogRow(addon, cat);
+      store.set("harbor.settings", JSON.stringify({ region: "FR", tmdbLanguage: "fr" }));
+      while (gates.length > 0) {
+        gates.shift()?.();
+        await new Promise((r) => setTimeout(r, 0));
+      }
+      await new Promise((r) => setTimeout(r, 0));
+      assert.deepEqual(languages, ["en-US,en;q=0.8", "en-US,en;q=0.8"]);
+    } finally {
+      globalThis.fetch = original;
+      store.delete("harbor.settings");
+    }
+  }));
+
 test("a failed catalog row is retried after its short backoff, never served stale", () =>
   withClock(9_000_000, async (advance) => {
     let loads = 0;

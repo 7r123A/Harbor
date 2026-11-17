@@ -291,11 +291,17 @@ function addonAcceptLanguage(): string | null {
   }
 }
 
-async function fetchWithTimeout(url: string, timeoutMs = 8000): Promise<Response | null> {
+// `acceptLanguage` lets a cached request send the language its cache key was
+// built with, even if the settings change while it waits in a queue.
+async function fetchWithTimeout(
+  url: string,
+  timeoutMs = 8000,
+  acceptLanguage: string | null = addonAcceptLanguage(),
+): Promise<Response | null> {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const al = addonAcceptLanguage();
+    const al = acceptLanguage;
     allowDirectHost(url);
     return await fetch(url, {
       signal: ac.signal,
@@ -487,20 +493,21 @@ export function fetchCatalogRow(
 ): Promise<CatalogLoad<AddonRow | null>> {
   // Region-gated addons answer per Accept-Language, so a region or language
   // change must not be served the rows cached for the previous one.
-  const lang = addonAcceptLanguage() ?? "";
-  return cachedCatalogRow(`${addon.transportUrl}|${cat.type}|${cat.id}|${lang}`, () =>
-    loadCatalogRow(addon, cat),
+  const lang = addonAcceptLanguage();
+  return cachedCatalogRow(`${addon.transportUrl}|${cat.type}|${cat.id}|${lang ?? ""}`, () =>
+    loadCatalogRow(addon, cat, lang),
   );
 }
 
 async function loadCatalogRow(
   addon: Addon,
   cat: CatalogDef,
+  acceptLanguage: string | null,
 ): Promise<CatalogLoad<AddonRow | null>> {
   const base = addonBaseUrl(addon.transportUrl);
   const url = catalogRequestUrl(base, cat);
   if (!url) return { value: null, ok: true };
-  const res = await fetchWithTimeout(url);
+  const res = await fetchWithTimeout(url, undefined, acceptLanguage);
   if (!res || !res.ok) return { value: null, ok: false };
   try {
     const json = await res.json();
