@@ -43,6 +43,7 @@ const DEDUP_MS = 15 * 60 * 1000;
 const MAX_PENDING = 2500;
 const QUEUE_FULL = "Refract queue full; unable to save another watch";
 let running = false;
+let flushRequested = false;
 let started = false;
 
 const empty = (): Store => ({ pending: [], recent: {}, failed: [], synced: 0, message: "" });
@@ -215,7 +216,11 @@ async function push(key: string, job: Job): Promise<void> {
   );
 }
 export async function flushRefractSync(): Promise<void> {
-  if (running || !refractEnabled() || !activeProfileIsPrimary()) return;
+  if (running) {
+    flushRequested = true;
+    return;
+  }
+  if (!refractEnabled() || !activeProfileIsPrimary()) return;
   const key = getRefractKey();
   if (!key) return;
   running = true;
@@ -280,6 +285,10 @@ export async function flushRefractSync(): Promise<void> {
     }
   } finally {
     running = false;
+    if (flushRequested) {
+      flushRequested = false;
+      void flushRefractSync();
+    }
   }
 }
 export function retryRefractSync(): void {
