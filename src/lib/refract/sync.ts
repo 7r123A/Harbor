@@ -254,7 +254,7 @@ export async function flushRefractSync(): Promise<void> {
           (error instanceof RefractApiError &&
             error.status >= 400 &&
             error.status < 500 &&
-            ![401, 403, 429].includes(error.status))
+            ![401, 403, 409, 429].includes(error.status))
         ) {
           current.pending = current.pending.filter((x) => x.id !== job.id);
           current.failed.push({
