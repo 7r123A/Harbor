@@ -235,8 +235,9 @@ export async function flushRefractSync(): Promise<void> {
         current.recent[keyOf(job)] = Date.now();
         current.synced++;
         // Keep a rejected bulk action visible when an unrelated pending watch succeeds.
-        if (!current.failed.some((failure) => failure.reason === QUEUE_FULL))
-          current.message = "Last watched item sent successfully";
+        current.message = current.failed.some((failure) => failure.reason === QUEUE_FULL)
+          ? QUEUE_FULL
+          : "Last watched item sent successfully";
         save(current);
       } catch (error) {
         if (error instanceof Superseded || getRefractKey() !== key) break;
