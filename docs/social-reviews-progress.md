@@ -4,7 +4,7 @@ Single source of truth for this continuing request. Read this document and inspe
 
 ## Current repository state
 
-- Frontend: `C:/Users/MK/Downloads/Harbor for Dev`, branch `feat/social-all`.
+- Frontend: `C:/Users/MK/Downloads/Harbor for Dev`, branch `feat/fe-social-reviews` (Social Reviews/poster changes); Mutual Ratings is on `feat/fe-profile-card`. DM account-menu changes are on `feat/fe-dm`.
   - The pre-existing unstaged changes in `src/components/ratings/reviewer-quick-menu.tsx` were preserved and built upon.
   - Frontend changes in this work include poster/TV card placement and friend indexes; Quick Access filtering, sorting, review-ID reactions/comments, and friendship state; mutual-ratings profile integration and review comparison. Key files are listed under **Files and implementation references** below; focused regressions are in the `tests/` files listed there and in the latest test notes.
 - Backend: `C:/Users/MK/Downloads/harbor-hosted`, branch `feat/social-review-hub`, now fast-forwarded to include the two pre-existing local commits from old `main` (`1a226b1`, `7fc60c4`) without dropping anything. The branch is ahead of origin; no deployment occurred.
