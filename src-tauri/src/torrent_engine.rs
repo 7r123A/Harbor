@@ -1,6 +1,8 @@
 mod cache_sweep;
 mod dht_boot;
 mod lifecycle;
+#[cfg(test)]
+mod live_tests;
 mod netcheck;
 mod selftest;
 mod stream_route;
@@ -27,6 +29,7 @@ use librqbit::dht::PersistentDhtConfig;
 use librqbit::{SessionOptions, SessionPersistenceConfig};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::net::TcpListener;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
@@ -80,6 +83,15 @@ const FILE_SELECTION_TIMEOUT_SECS: u64 = 12;
 // The side DHT is an extra peer source, not a prerequisite. Waiting on it before
 // adding the torrent puts dead DHT time on the player's startup path.
 const SIDE_DHT_SEED_BUDGET: Duration = Duration::from_millis(250);
+// Prefetch the first 8 MiB so the demuxer probe and the first GOP are ready, and
+// the last 2 MiB because MP4 puts the moov atom and MKV often puts its cues at
+// the end of the file. Both are requested as soon as the file selection is
+// committed, so they overlap player startup instead of waiting for its first
+// HTTP request.
+const PRIME_HEAD_BYTES: u64 = 8 * 1024 * 1024;
+const PRIME_TAIL_BYTES: u64 = 2 * 1024 * 1024;
+const PRIME_READ_BUF: usize = 64 * 1024;
+const PRIME_TIMEOUT: Duration = Duration::from_secs(30);
 static CACHE_SWEEP_RUNNING: AtomicBool = AtomicBool::new(false);
 
 struct CacheSweepGuard;
@@ -993,6 +1005,123 @@ pub fn stop_lan_server() {
     st.lan_port = None;
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PrimeLeg {
+    pub bytes: u64,
+    pub first_byte: Duration,
+    pub elapsed: Duration,
+}
+
+#[derive(Debug)]
+pub(crate) struct PrimeReport {
+    pub head: Result<PrimeLeg, String>,
+    pub tail: Result<PrimeLeg, String>,
+    pub total: Duration,
+}
+
+// Reads one contiguous range of the selected file through the streaming priority
+// path. Dropping the returned stream releases the demand on the torrent.
+async fn prime_range(
+    handle: &Arc<ManagedTorrent>,
+    file_idx: usize,
+    from_end: bool,
+    bytes: u64,
+) -> Result<PrimeLeg, String> {
+    let mut stream = handle
+        .clone()
+        .stream(file_idx)
+        .map_err(|error| format!("{error:#}"))?;
+    let len = stream.len();
+    if len == 0 {
+        return Ok(PrimeLeg {
+            bytes: 0,
+            first_byte: Duration::ZERO,
+            elapsed: Duration::ZERO,
+        });
+    }
+    let (offset, want) = if from_end {
+        let want = bytes.min(len);
+        (len - want, want)
+    } else {
+        (0, bytes.min(len))
+    };
+    let started = Instant::now();
+    if offset > 0 {
+        stream
+            .seek(std::io::SeekFrom::Start(offset))
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+    let mut buf = vec![0u8; PRIME_READ_BUF];
+    let mut read = 0_u64;
+    let mut first_byte = None;
+    while read < want {
+        let step = (want - read).min(PRIME_READ_BUF as u64) as usize;
+        let n = stream
+            .read(&mut buf[..step])
+            .await
+            .map_err(|error| error.to_string())?;
+        if n == 0 {
+            break;
+        }
+        read += n as u64;
+        first_byte.get_or_insert_with(|| started.elapsed());
+    }
+    Ok(PrimeLeg {
+        bytes: read,
+        first_byte: first_byte.unwrap_or_else(|| started.elapsed()),
+        elapsed: started.elapsed(),
+    })
+}
+
+// Head and tail are demanded concurrently: an MP4 player asks for the moov atom
+// at the end of the file on its very first request, while MKV/HEVC probes read
+// from the start. Interleaving both keeps either container's probe from waiting
+// on the other.
+pub(crate) async fn prime_stream_head_tail(
+    handle: &Arc<ManagedTorrent>,
+    file_idx: usize,
+) -> PrimeReport {
+    let started = Instant::now();
+    let head = prime_range(handle, file_idx, false, PRIME_HEAD_BYTES);
+    let tail = prime_range(handle, file_idx, true, PRIME_TAIL_BYTES);
+    let (head, tail) = tokio::join!(head, tail);
+    PrimeReport {
+        head,
+        tail,
+        total: started.elapsed(),
+    }
+}
+
+fn describe_prime_leg(leg: &Result<PrimeLeg, String>) -> String {
+    match leg {
+        Ok(leg) => format!(
+            "{}B/ttfb{}ms/{}ms",
+            leg.bytes,
+            leg.first_byte.as_millis(),
+            leg.elapsed.as_millis()
+        ),
+        Err(error) => error.clone(),
+    }
+}
+
+fn spawn_stream_prime(handle: Arc<ManagedTorrent>, file_idx: usize) {
+    tokio::spawn(async move {
+        let info_hash = format!("{:?}", handle.info_hash());
+        match timeout(PRIME_TIMEOUT, prime_stream_head_tail(&handle, file_idx)).await {
+            Ok(report) => eprintln!(
+                "[torrent-engine] prime hash={info_hash} file={file_idx} head={} tail={} total_ms={}",
+                describe_prime_leg(&report.head),
+                describe_prime_leg(&report.tail),
+                report.total.as_millis()
+            ),
+            Err(_) => eprintln!(
+                "[torrent-engine] prime hash={info_hash} file={file_idx} timed out"
+            ),
+        }
+    });
+}
+
 #[tauri::command]
 pub async fn torrent_engine_select(info_hash: String, file_idx: usize) -> Result<(), String> {
     let session = current_session().ok_or_else(|| "engine not ready".to_string())?;
@@ -1001,6 +1130,17 @@ pub async fn torrent_engine_select(info_hash: String, file_idx: usize) -> Result
         let handle = session.get(id).ok_or_else(|| "no torrent".to_string())?;
         let only: HashSet<usize> = HashSet::from([file_idx]);
         update_only_files_bounded(&session, &handle, &only).await?;
+        // Peer discovery previously started only when the player issued its first
+        // HTTP request, which is after mpv init and the resume lookup. Starting it
+        // here lets tracker/DHT discovery, peer connects, and the head/tail
+        // prefetch run while the player boots.
+        if handle.is_paused() {
+            session
+                .unpause(&handle)
+                .await
+                .map_err(|error| format!("{error:#}"))?;
+        }
+        spawn_stream_prime(handle.clone(), file_idx);
         Ok(())
     })
     .await
