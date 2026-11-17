@@ -5,9 +5,14 @@ import { socialDelete, socialPost } from "./client";
 export type ReviewReactionResult = { ok: boolean; reacted: boolean; count: number };
 
 export function likeReview(reviewId: string): Promise<ReviewReactionResult> {
-  return socialPost<ReviewReactionResult>(`/social/reviews/${encodeURIComponent(reviewId)}/reaction`, {});
+  return socialPost<ReviewReactionResult>(
+    `/social/reviews/${encodeURIComponent(reviewId)}/reaction`,
+    {},
+  );
 }
 
 export function unlikeReview(reviewId: string): Promise<ReviewReactionResult> {
-  return socialDelete<ReviewReactionResult>(`/social/reviews/${encodeURIComponent(reviewId)}/reaction`);
+  return socialDelete<ReviewReactionResult>(
+    `/social/reviews/${encodeURIComponent(reviewId)}/reaction`,
+  );
 }

@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
   Archive,
   ArrowLeft,
@@ -73,7 +66,14 @@ const SHARE_ICON: Record<DmShare["type"], string> = {
   list: "≡",
 };
 
-const REACTION_CHOICES = ["\u{1F44D}", "\u2764\uFE0F", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F389}"];
+const REACTION_CHOICES = [
+  "\u{1F44D}",
+  "\u2764\uFE0F",
+  "\u{1F602}",
+  "\u{1F62E}",
+  "\u{1F622}",
+  "\u{1F389}",
+];
 
 /** The picker is a row of buttons, not a text field: the allowed set is the server's. */
 function ReactionPicker({ onPick }: { onPick: (emoji: string) => void }) {
@@ -126,7 +126,12 @@ function ShareCard({ share }: { share: DmShare }) {
   return (
     <div className="mb-1 flex items-center gap-2 rounded-lg bg-current/10 p-1.5 text-start">
       {share.poster ? (
-        <img src={share.poster} alt="" className="h-10 w-7 shrink-0 rounded object-cover" draggable={false} />
+        <img
+          src={share.poster}
+          alt=""
+          className="h-10 w-7 shrink-0 rounded object-cover"
+          draggable={false}
+        />
       ) : (
         <span className="grid h-10 w-7 shrink-0 place-items-center rounded bg-current/10 text-[11px] font-bold">
           {SHARE_ICON[share.type]}
@@ -257,9 +262,7 @@ export function DmThread({
     [ordered],
   );
   const seen =
-    !!lastMine &&
-    !!conv?.otherReadAt &&
-    Date.parse(conv.otherReadAt) >= Date.parse(lastMine.at);
+    !!lastMine && !!conv?.otherReadAt && Date.parse(conv.otherReadAt) >= Date.parse(lastMine.at);
 
   const loadOlder = async () => {
     if (!nextCursor || olderLoading) return;
@@ -346,10 +349,7 @@ export function DmThread({
     try {
       await deleteDmMessage(message.id);
       setMessages((prev) =>
-        mergeMessages(
-          prev,
-          [{ ...message, body: "", deleted: true, edited: undefined }],
-        ),
+        mergeMessages(prev, [{ ...message, body: "", deleted: true, edited: undefined }]),
       );
       void refreshDm({ silent: true });
     } catch (err) {
@@ -402,7 +402,10 @@ export function DmThread({
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13.5px] font-semibold text-ink">{name}</p>
           <p className="flex items-center gap-1 truncate text-[11px] text-ink-subtle">
-            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${PRESENCE_META[presence].dot}`} aria-hidden />
+            <span
+              className={`h-1.5 w-1.5 shrink-0 rounded-full ${PRESENCE_META[presence].dot}`}
+              aria-hidden
+            />
             {presenceStatusLabel(presence)}
             {other?.handle ? <span className="truncate">@{other.handle}</span> : null}
           </p>
@@ -450,7 +453,10 @@ export function DmThread({
       </div>
 
       {actionError && (
-        <p className="mx-3 mt-2 rounded-md bg-danger/10 px-3 py-1.5 text-[11.5px] text-danger" role="alert">
+        <p
+          className="mx-3 mt-2 rounded-md bg-danger/10 px-3 py-1.5 text-[11.5px] text-danger"
+          role="alert"
+        >
           {actionError}
         </p>
       )}
@@ -518,7 +524,9 @@ export function DmThread({
                       <span className="h-px flex-1 bg-edge-soft" aria-hidden />
                     </div>
                   )}
-                  <div className={`group mb-1.5 flex items-end gap-1.5 ${mine ? "justify-end" : "justify-start"}`}>
+                  <div
+                    className={`group mb-1.5 flex items-end gap-1.5 ${mine ? "justify-end" : "justify-start"}`}
+                  >
                     {!mine && (
                       <DmAvatar
                         user={{
@@ -529,7 +537,9 @@ export function DmThread({
                         size="sm"
                       />
                     )}
-                    <div className={`flex max-w-[80%] flex-col ${mine ? "items-end" : "items-start"}`}>
+                    <div
+                      className={`flex max-w-[80%] flex-col ${mine ? "items-end" : "items-start"}`}
+                    >
                       <div
                         className={`rounded-2xl px-3 py-2 text-[13px] leading-relaxed ${
                           mine
@@ -546,7 +556,11 @@ export function DmThread({
                               rows={2}
                               onChange={(e) => setEditDraft(e.target.value)}
                               onKeyDown={(e) => {
-                                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                                if (
+                                  e.key === "Enter" &&
+                                  !e.shiftKey &&
+                                  !e.nativeEvent.isComposing
+                                ) {
                                   e.preventDefault();
                                   void saveEdit(message);
                                 }
@@ -585,16 +599,16 @@ export function DmThread({
                           <span className="italic opacity-70">{t("Message deleted")}</span>
                         ) : (
                           <>
-                            {message.share && (
-                              <ShareCard share={message.share} />
-                            )}
+                            {message.share && <ShareCard share={message.share} />}
                             {message.body && (
                               <p className="whitespace-pre-wrap break-words">{message.body}</p>
                             )}
                           </>
                         )}
                         {message.reactions.length > 0 && (
-                          <div className={`mt-1 flex flex-wrap items-center gap-1 ${mine ? "justify-end" : ""}`}>
+                          <div
+                            className={`mt-1 flex flex-wrap items-center gap-1 ${mine ? "justify-end" : ""}`}
+                          >
                             {message.reactions.map((r) => (
                               <button
                                 key={r.emoji}
@@ -603,7 +617,9 @@ export function DmThread({
                                 aria-pressed={r.mine}
                                 aria-label={t("React with {emoji}", { emoji: r.emoji })}
                                 className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10.5px] tabular-nums transition-colors ${
-                                  r.mine ? "bg-ink/15 text-ink" : "bg-current/10 hover:bg-current/15"
+                                  r.mine
+                                    ? "bg-ink/15 text-ink"
+                                    : "bg-current/10 hover:bg-current/15"
                                 }`}
                               >
                                 <span aria-hidden>{r.emoji}</span>
@@ -613,7 +629,9 @@ export function DmThread({
                           </div>
                         )}
                       </div>
-                      <div className={`mt-0.5 flex items-center gap-1.5 text-[10px] text-ink-subtle ${mine ? "flex-row-reverse" : ""}`}>
+                      <div
+                        className={`mt-0.5 flex items-center gap-1.5 text-[10px] text-ink-subtle ${mine ? "flex-row-reverse" : ""}`}
+                      >
                         <span className="tabular-nums">{dmClock(message.at)}</span>
                         {message.edited && !message.deleted && <span>{t("edited")}</span>}
                         {!message.deleted && !editing && (
@@ -643,7 +661,9 @@ export function DmThread({
                                 </button>
                               </>
                             )}
-                            <ReactionPicker onPick={(emoji) => void toggleReaction(message, emoji)} />
+                            <ReactionPicker
+                              onPick={(emoji) => void toggleReaction(message, emoji)}
+                            />
                           </span>
                         )}
                       </div>
@@ -689,7 +709,9 @@ export function DmThread({
           </button>
         </div>
         {draft.length > 1800 && (
-          <p className="mt-1 text-end text-[10px] tabular-nums text-ink-subtle">{draft.length}/2000</p>
+          <p className="mt-1 text-end text-[10px] tabular-nums text-ink-subtle">
+            {draft.length}/2000
+          </p>
         )}
       </div>
     </div>

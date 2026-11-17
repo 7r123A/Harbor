@@ -28,10 +28,7 @@ function matching(comments: readonly Comment[], target: TitleRef): Comment[] {
 }
 
 /** Count from a recent load, so cards can show it without asking the API again. */
-export function cachedReviewCommentCount(
-  handle: string,
-  target: TitleRef,
-): number | null {
+export function cachedReviewCommentCount(handle: string, target: TitleRef): number | null {
   const hit = cache.get(keyOf(handle, target));
   return hit && Date.now() - hit.at < CACHE_TTL ? hit.thread.comments.length : null;
 }
@@ -80,7 +77,10 @@ export async function replyToReview(
   score: number,
   text: string,
 ): Promise<Comment> {
-  const created = await postComment(handle, composeQuotedBody(reviewQuote(handle, target, score), text));
+  const created = await postComment(
+    handle,
+    composeQuotedBody(reviewQuote(handle, target, score), text),
+  );
   cache.delete(keyOf(handle, target));
   return created;
 }

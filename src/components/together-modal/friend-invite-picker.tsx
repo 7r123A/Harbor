@@ -93,7 +93,10 @@ export function FriendInvitePicker({
       .then((res) => {
         setSent(res.invites.length);
         setSelected([]);
-        setPending((cur) => [...res.invites, ...cur.filter((p) => !res.invites.some((i) => i.id === p.id))]);
+        setPending((cur) => [
+          ...res.invites,
+          ...cur.filter((p) => !res.invites.some((i) => i.id === p.id)),
+        ]);
         void refreshPartyInvites();
         const blocked = res.skipped.filter((s) => s.reason === "blocked").length;
         if (blocked) setError(t("{count} could not be invited.", { count: blocked }));
@@ -117,7 +120,9 @@ export function FriendInvitePicker({
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-edge bg-canvas/60 p-3.5">
       <div className="flex items-center justify-between">
-        <span className="text-[10.5px] uppercase tracking-wider text-ink-subtle">{t("Invite friends")}</span>
+        <span className="text-[10.5px] uppercase tracking-wider text-ink-subtle">
+          {t("Invite friends")}
+        </span>
         {sent > 0 && (
           <span className="flex items-center gap-1 text-[11.5px] font-medium text-ink-muted">
             <Check size={13} strokeWidth={2.6} />
@@ -148,7 +153,9 @@ export function FriendInvitePicker({
         )}
         {!loading && !visible.length && (
           <p className="py-3 text-center text-[12px] text-ink-muted">
-            {query ? t("No friends match that search.") : t("Everyone you can invite is already invited.")}
+            {query
+              ? t("No friends match that search.")
+              : t("Everyone you can invite is already invited.")}
           </p>
         )}
         {visible.map((f) => {
@@ -173,7 +180,12 @@ export function FriendInvitePicker({
                 {checked && <Check size={11} strokeWidth={3} />}
               </span>
               {f.avatarUrl ? (
-                <img src={f.avatarUrl} alt="" className="h-7 w-7 rounded-full object-cover" draggable={false} />
+                <img
+                  src={f.avatarUrl}
+                  alt=""
+                  className="h-7 w-7 rounded-full object-cover"
+                  draggable={false}
+                />
               ) : (
                 <span className="grid h-7 w-7 place-items-center rounded-full bg-elevated text-[11px] font-semibold text-ink-muted">
                   {(f.alias || f.handle || "?").slice(0, 1).toUpperCase()}
@@ -194,7 +206,11 @@ export function FriendInvitePicker({
         disabled={!selected.length || sending}
         className="flex h-10 items-center justify-center gap-2 rounded-lg bg-ink text-[13px] font-semibold text-canvas transition-transform enabled:hover:scale-[1.01] disabled:opacity-50"
       >
-        {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} strokeWidth={2.4} />}
+        {sending ? (
+          <Loader2 size={14} className="animate-spin" />
+        ) : (
+          <Send size={14} strokeWidth={2.4} />
+        )}
         {selected.length
           ? t("Send {count} invitations", { count: selected.length })
           : t("Select friends to invite")}
@@ -219,7 +235,11 @@ export function FriendInvitePicker({
                 aria-label={t("Cancel invitation")}
                 className="grid h-6 w-6 place-items-center rounded-full text-ink-subtle transition-colors hover:bg-elevated hover:text-ink disabled:opacity-50"
               >
-                {revoking === inv.id ? <Loader2 size={12} className="animate-spin" /> : <X size={13} strokeWidth={2.4} />}
+                {revoking === inv.id ? (
+                  <Loader2 size={12} className="animate-spin" />
+                ) : (
+                  <X size={13} strokeWidth={2.4} />
+                )}
               </button>
             </div>
           ))}

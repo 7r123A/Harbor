@@ -120,7 +120,9 @@ export function PartyInviteCenter() {
     setActionError(null);
     fn()
       .catch((err: unknown) => {
-        setActionError(err instanceof Error ? err.message : t("That invitation could not be handled."));
+        setActionError(
+          err instanceof Error ? err.message : t("That invitation could not be handled."),
+        );
       })
       .finally(() => setBusy(null));
   };
@@ -167,7 +169,9 @@ export function PartyInviteCenter() {
               key={invite.id}
               invite={invite}
               busy={busy === invite.id}
-              onAccept={() => run(invite.id, () => acceptInvite(invite.id).then(() => setOpen(false)))}
+              onAccept={() =>
+                run(invite.id, () => acceptInvite(invite.id).then(() => setOpen(false)))
+              }
               onDecline={() => run(invite.id, () => declineInvite(invite.id))}
             />
           ))}

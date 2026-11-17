@@ -71,7 +71,9 @@ function Tab({
     >
       {children}
       {count !== undefined && (
-        <span className={`tabular-nums ${active ? "text-canvas/65" : "text-ink-subtle"}`}>{count}</span>
+        <span className={`tabular-nums ${active ? "text-canvas/65" : "text-ink-subtle"}`}>
+          {count}
+        </span>
       )}
     </button>
   );
@@ -79,7 +81,13 @@ function Tab({
 
 const SORTS: RatingSort[] = ["newest", "highest", "lowest"];
 
-function SortControls({ value, onChange }: { value: RatingSort; onChange: (v: RatingSort) => void }) {
+function SortControls({
+  value,
+  onChange,
+}: {
+  value: RatingSort;
+  onChange: (v: RatingSort) => void;
+}) {
   const t = useT();
   const labels: Record<RatingSort, string> = {
     newest: t("Newest"),
@@ -211,7 +219,9 @@ export function TitleReviewsPanel({
               {average !== null && (
                 <>
                   <span aria-hidden>·</span>
-                  <span className="font-semibold text-ink-muted">{average}/10 {t("average")}</span>
+                  <span className="font-semibold text-ink-muted">
+                    {average}/10 {t("average")}
+                  </span>
                 </>
               )}
             </div>

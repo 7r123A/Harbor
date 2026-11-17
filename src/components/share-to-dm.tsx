@@ -21,7 +21,12 @@ function SharePreview({ share }: { share: DmShare }) {
   return (
     <div className="flex items-center gap-2 rounded-lg bg-canvas/60 p-2">
       {share.poster ? (
-        <img src={share.poster} alt="" className="h-10 w-7 shrink-0 rounded object-cover" draggable={false} />
+        <img
+          src={share.poster}
+          alt=""
+          className="h-10 w-7 shrink-0 rounded object-cover"
+          draggable={false}
+        />
       ) : (
         <span className="grid h-10 w-7 shrink-0 place-items-center rounded bg-elevated text-[11px] font-bold text-ink-subtle">
           {share.type === "profile" ? "@" : share.type === "group" ? "#" : "■"}
@@ -49,19 +54,27 @@ export function ShareToDmHost() {
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => subscribeShareToDm((next) => {
-    setShare(next);
-    setQuery("");
-    setSentTo(null);
-    setError(null);
-  }), []);
+  useEffect(
+    () =>
+      subscribeShareToDm((next) => {
+        setShare(next);
+        setQuery("");
+        setSentTo(null);
+        setError(null);
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (!share) return;
     const ac = new AbortController();
     fetchFriends(ac.signal)
-      .then((rows) => { if (!ac.signal.aborted) setFriends(rows); })
-      .catch(() => { if (!ac.signal.aborted) setFriends([]); });
+      .then((rows) => {
+        if (!ac.signal.aborted) setFriends(rows);
+      })
+      .catch(() => {
+        if (!ac.signal.aborted) setFriends([]);
+      });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setShare(null);
     };
@@ -76,7 +89,10 @@ export function ShareToDmHost() {
   const matchingFriends = useMemo(() => {
     const q = query.trim().toLowerCase();
     return friends
-      .filter((f) => (f.alias || "").toLowerCase().includes(q) || (f.handle || "").toLowerCase().includes(q))
+      .filter(
+        (f) =>
+          (f.alias || "").toLowerCase().includes(q) || (f.handle || "").toLowerCase().includes(q),
+      )
       .slice(0, 8);
   }, [friends, query]);
 
@@ -141,7 +157,9 @@ export function ShareToDmHost() {
         className="harbor-together-surface animate-panel-in absolute end-4 top-1/2 flex max-h-[70vh] w-[min(360px,calc(100vw-2rem))] -translate-y-1/2 flex-col overflow-hidden rounded-xl shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)]"
       >
         <div className="flex items-center justify-between px-4 py-3">
-          <span className="text-[14px] font-semibold tracking-tight text-ink">{t("Send to a friend")}</span>
+          <span className="text-[14px] font-semibold tracking-tight text-ink">
+            {t("Send to a friend")}
+          </span>
           <button
             type="button"
             onClick={() => setShare(null)}
@@ -179,14 +197,25 @@ export function ShareToDmHost() {
                       className="flex items-center gap-2 rounded-lg px-1.5 py-1.5 text-start transition-colors hover:bg-elevated/60 disabled:opacity-60"
                     >
                       {c.other?.avatarUrl ? (
-                        <img src={c.other.avatarUrl} alt="" className="h-7 w-7 rounded-full object-cover" draggable={false} />
+                        <img
+                          src={c.other.avatarUrl}
+                          alt=""
+                          className="h-7 w-7 rounded-full object-cover"
+                          draggable={false}
+                        />
                       ) : (
                         <span className="grid h-7 w-7 place-items-center rounded-full bg-elevated text-[11px] font-semibold text-ink-muted">
                           {label.slice(0, 1).toUpperCase()}
                         </span>
                       )}
-                      <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">{label}</span>
-                      {busy === c.id ? <Loader2 size={13} className="animate-spin text-ink-subtle" /> : <Send size={13} className="text-ink-subtle" />}
+                      <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">
+                        {label}
+                      </span>
+                      {busy === c.id ? (
+                        <Loader2 size={13} className="animate-spin text-ink-subtle" />
+                      ) : (
+                        <Send size={13} className="text-ink-subtle" />
+                      )}
                     </button>
                   );
                 })}
@@ -194,9 +223,14 @@ export function ShareToDmHost() {
             </>
           )}
 
-          <span className="mt-1 text-[10.5px] uppercase tracking-wider text-ink-subtle">{t("Friends")}</span>
+          <span className="mt-1 text-[10.5px] uppercase tracking-wider text-ink-subtle">
+            {t("Friends")}
+          </span>
           <div className="relative">
-            <Search size={13} className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-ink-subtle" />
+            <Search
+              size={13}
+              className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-ink-subtle"
+            />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -219,14 +253,23 @@ export function ShareToDmHost() {
                   className="flex items-center gap-2 rounded-lg px-1.5 py-1.5 text-start transition-colors hover:bg-elevated/60 disabled:opacity-60"
                 >
                   {f.avatarUrl ? (
-                    <img src={f.avatarUrl} alt="" className="h-7 w-7 rounded-full object-cover" draggable={false} />
+                    <img
+                      src={f.avatarUrl}
+                      alt=""
+                      className="h-7 w-7 rounded-full object-cover"
+                      draggable={false}
+                    />
                   ) : (
                     <span className="grid h-7 w-7 place-items-center rounded-full bg-elevated text-[11px] font-semibold text-ink-muted">
                       {label.slice(0, 1).toUpperCase()}
                     </span>
                   )}
                   <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">{label}</span>
-                  {busy === f.id ? <Loader2 size={13} className="animate-spin text-ink-subtle" /> : <Send size={13} className="text-ink-subtle" />}
+                  {busy === f.id ? (
+                    <Loader2 size={13} className="animate-spin text-ink-subtle" />
+                  ) : (
+                    <Send size={13} className="text-ink-subtle" />
+                  )}
                 </button>
               );
             })}

@@ -413,7 +413,10 @@ export function ProfileSettings({
     }
   };
 
-  const applyCard = async (patch: { cardTheme?: CardThemeId | null; cardAccent?: string | null }, kind: "theme" | "accent") => {
+  const applyCard = async (
+    patch: { cardTheme?: CardThemeId | null; cardAccent?: string | null },
+    kind: "theme" | "accent",
+  ) => {
     setCardBusy(kind);
     setCardError(null);
     try {
@@ -1191,7 +1194,11 @@ export function ProfileSettings({
                         <div className="min-w-0 pb-0.5">
                           <p
                             className="truncate text-[12.5px] font-semibold text-ink"
-                            style={summary.profileCard?.accent ? { color: summary.profileCard.accent } : undefined}
+                            style={
+                              summary.profileCard?.accent
+                                ? { color: summary.profileCard.accent }
+                                : undefined
+                            }
                           >
                             {summary.alias || summary.handle}
                           </p>
@@ -1224,11 +1231,17 @@ export function ProfileSettings({
                               aria-pressed={on}
                               title={theme.label}
                               className={`h-12 rounded-md border transition-transform disabled:opacity-60 ${
-                                on ? "border-ink ring-2 ring-inset ring-ink" : "border-edge-soft hover:scale-[1.02]"
+                                on
+                                  ? "border-ink ring-2 ring-inset ring-ink"
+                                  : "border-edge-soft hover:scale-[1.02]"
                               }`}
                               style={{
                                 backgroundImage:
-                                  "linear-gradient(135deg, " + theme.from + " 0%, " + theme.to + " 100%)",
+                                  "linear-gradient(135deg, " +
+                                  theme.from +
+                                  " 0%, " +
+                                  theme.to +
+                                  " 100%)",
                               }}
                             >
                               <span className="sr-only">{theme.label}</span>
@@ -1248,7 +1261,9 @@ export function ProfileSettings({
                               "#7b5cff"
                             }
                             disabled={!!cardBusy}
-                            onChange={(e) => void applyCard({ cardAccent: e.target.value }, "accent")}
+                            onChange={(e) =>
+                              void applyCard({ cardAccent: e.target.value }, "accent")
+                            }
                             className="h-6 w-8 cursor-pointer rounded border-0 bg-transparent p-0"
                           />
                         </label>
@@ -1259,7 +1274,9 @@ export function ProfileSettings({
                           className="flex h-9 items-center gap-1.5 rounded-md border border-edge-soft bg-surface/40 px-2.5 text-[12px] font-medium text-ink-muted transition-colors enabled:hover:text-ink disabled:opacity-60"
                         >
                           <ImageIcon size={14} />
-                          {summary.profileCard?.bgUrl ? t("Replace background") : t("Upload background")}
+                          {summary.profileCard?.bgUrl
+                            ? t("Replace background")
+                            : t("Upload background")}
                         </button>
                         {summary.profileCard?.bgUrl && (
                           <button
@@ -1286,14 +1303,20 @@ export function ProfileSettings({
                         )}
                       </p>
                       {cardError && (
-                        <p className="mt-2 rounded-md bg-danger/10 px-3 py-2 text-[12px] text-danger" role="alert">
+                        <p
+                          className="mt-2 rounded-md bg-danger/10 px-3 py-2 text-[12px] text-danger"
+                          role="alert"
+                        >
                           {cardError}
                         </p>
                       )}
                     </div>
 
                     {dmError && (
-                      <p className="rounded-md bg-danger/10 px-3 py-2 text-[12px] text-danger" role="alert">
+                      <p
+                        className="rounded-md bg-danger/10 px-3 py-2 text-[12px] text-danger"
+                        role="alert"
+                      >
                         {dmError}
                       </p>
                     )}

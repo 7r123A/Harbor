@@ -148,7 +148,9 @@ function historyKey(handle: string, mediaType: RatingMediaType): string {
   return `${mediaType}|${foldHandle(handle)}`;
 }
 
-function toAuthorMeta(friend: Friend | { handle: string; alias?: string; avatarUrl?: string; verified?: boolean }): AuthorMeta {
+function toAuthorMeta(
+  friend: Friend | { handle: string; alias?: string; avatarUrl?: string; verified?: boolean },
+): AuthorMeta {
   return {
     handle: friend.handle,
     alias: "alias" in friend ? friend.alias : undefined,
@@ -272,9 +274,7 @@ export async function loadFriendTitleRatings(target: TitleRef): Promise<TitleRat
  * Everyone: your friends plus the public community graph. This is deliberately loaded only when
  * the Everyone tab is opened, because it costs one history scan per person.
  */
-export async function loadCommunityTitleRatings(
-  target: TitleRef,
-): Promise<TitleRatingsSnapshot> {
+export async function loadCommunityTitleRatings(target: TitleRef): Promise<TitleRatingsSnapshot> {
   const self = currentAuthor();
   const hub = await loadHubTitleRatings(target, "all", self?.handle ?? undefined, !self?.handle);
   if (hub) return hub;

@@ -55,7 +55,11 @@ function matchRank(candidate: Candidate, query: string): number {
   return -1;
 }
 
-function mergeCandidates(local: Candidate[], remote: DmDirectoryUser[], query: string): Candidate[] {
+function mergeCandidates(
+  local: Candidate[],
+  remote: DmDirectoryUser[],
+  query: string,
+): Candidate[] {
   const merged: Candidate[] = [];
   const seen = new Set<string>();
   const add = (candidate: Candidate) => {
@@ -159,7 +163,8 @@ export function DmNewMessage({
         // The directory search is optional; the public profile row is not. Asking it
         // directly keeps "message this person" working on a server without the search
         // route.
-        id = (await socialGet<{ id: string }>(`/social/u/${encodeURIComponent(candidate.handle)}`)).id;
+        id = (await socialGet<{ id: string }>(`/social/u/${encodeURIComponent(candidate.handle)}`))
+          .id;
       }
       if (!id) throw new Error("This person could not be found.");
       await onPick(id);
@@ -199,7 +204,10 @@ export function DmNewMessage({
       </div>
 
       {error && (
-        <p className="mx-3 mb-2 rounded-md bg-danger/10 px-3 py-2 text-[12px] text-danger" role="alert">
+        <p
+          className="mx-3 mb-2 rounded-md bg-danger/10 px-3 py-2 text-[12px] text-danger"
+          role="alert"
+        >
           {error}
         </p>
       )}
@@ -232,7 +240,14 @@ export function DmNewMessage({
                     onClick={() => void pick(c)}
                     className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-start transition-colors hover:bg-elevated disabled:opacity-60"
                   >
-                    <DmAvatar user={{ displayName: c.displayName, avatarUrl: c.avatarUrl, presence: c.presence }} showPresence />
+                    <DmAvatar
+                      user={{
+                        displayName: c.displayName,
+                        avatarUrl: c.avatarUrl,
+                        presence: c.presence,
+                      }}
+                      showPresence
+                    />
                     <span className="min-w-0 flex-1">
                       <span className="flex min-w-0 items-center gap-1.5">
                         <span className="truncate text-[13.5px] font-medium text-ink">
@@ -249,9 +264,13 @@ export function DmNewMessage({
                           </span>
                         )}
                       </span>
-                      <span className="block truncate text-[11.5px] text-ink-subtle">@{c.handle}</span>
+                      <span className="block truncate text-[11.5px] text-ink-subtle">
+                        @{c.handle}
+                      </span>
                     </span>
-                    {picking === c.handle && <Loader2 size={15} className="animate-spin text-ink-subtle" aria-hidden />}
+                    {picking === c.handle && (
+                      <Loader2 size={15} className="animate-spin text-ink-subtle" aria-hidden />
+                    )}
                   </button>
                 </li>
               ))}

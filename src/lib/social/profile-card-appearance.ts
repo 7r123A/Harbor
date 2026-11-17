@@ -58,7 +58,9 @@ export function cardThemeById(id: string | null | undefined): CardThemePreset | 
 }
 
 /** The CSS a card surface should paint, given what the API published. */
-export function cardBackground(look: { bgUrl?: string | null; gradient?: string | null } | undefined): {
+export function cardBackground(
+  look: { bgUrl?: string | null; gradient?: string | null } | undefined,
+): {
   backgroundImage?: string;
   backgroundColor?: string;
 } {

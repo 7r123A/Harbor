@@ -71,7 +71,11 @@ export function TitleReviewsEntry({
         } ${className}`}
       >
         {empty ? (
-          <MessageSquare size={17} strokeWidth={2.2} className="text-ink-muted transition-colors group-hover:text-ink" />
+          <MessageSquare
+            size={17}
+            strokeWidth={2.2}
+            className="text-ink-muted transition-colors group-hover:text-ink"
+          />
         ) : (
           <span className="flex">
             {handles.map((handle, index) => (

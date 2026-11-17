@@ -124,7 +124,11 @@ export function DmInbox({
                       </span>
                       <span className="mt-0.5 flex items-center gap-1.5">
                         {c.muted && (
-                          <BellOff size={12} className="shrink-0 text-ink-subtle" aria-label={t("Muted")} />
+                          <BellOff
+                            size={12}
+                            className="shrink-0 text-ink-subtle"
+                            aria-label={t("Muted")}
+                          />
                         )}
                         <span
                           className={`min-w-0 flex-1 truncate text-[12px] ${c.unread > 0 ? "text-ink-muted" : "text-ink-subtle"}`}
