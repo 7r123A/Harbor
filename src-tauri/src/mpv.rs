@@ -412,6 +412,7 @@ pub async fn mpv_probe(_app: AppHandle) -> MpvProbe {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn supports_vapoursynth_filter() -> bool {
     force_c_numeric_locale();
     Mpv::new()
@@ -553,6 +554,7 @@ fn apply_pre_init(
     embed_hwnd: Option<&str>,
     separate_screen: Option<i32>,
     separate_screen_size: Option<(u32, u32)>,
+    shader_cache_dir: Option<&std::path::Path>,
 ) -> Result<(), String> {
     #[cfg(not(windows))]
     {
@@ -620,6 +622,20 @@ fn apply_pre_init(
     } else {
         set("hwdec", "auto-safe");
         set("force-window", "immediate");
+    }
+    let use_render_api =
+        (cfg!(target_os = "macos") || cfg!(target_os = "linux")) && args.embed.unwrap_or(false);
+    if !use_render_api {
+        // libmpv reports `vo` as empty after initialization, so setting it
+        // afterwards always tears down and rebuilds the GPU context. Do it
+        // before mpv_initialize instead.
+        set(
+            "vo",
+            match args.renderer.as_deref() {
+                Some("gpu") => "gpu",
+                _ => "gpu-next",
+            },
+        );
     }
     if args.embed.unwrap_or(false) && (cfg!(target_os = "macos") || cfg!(target_os = "linux")) {
         // libmpv normally wakes the render callback ahead of the target
@@ -691,6 +707,12 @@ fn apply_pre_init(
             eprintln!("[harbor::mpv] pre-init option {k} rejected: {e}");
         }
     };
+    // libmpv has no user cache directory, so mpv's `gpu-shader-cache-dir`
+    // default resolves to empty and every shader is recompiled on each launch.
+    // Point it at an app-owned directory so compiled DXBC survives restarts.
+    if let Some(dir) = shader_cache_dir {
+        opt("gpu-shader-cache-dir", &dir.to_string_lossy());
+    }
     if rtx {
         opt("gpu-api", "d3d11");
         opt("target-colorspace-hint", "yes");
@@ -1058,6 +1080,18 @@ pub async fn mpv_start(
     );
     let embed_hwnd_for_init = embed_hwnd.clone();
     let args_for_init = args.clone();
+    let shader_cache_dir = app
+        .path()
+        .app_cache_dir()
+        .ok()
+        .map(|dir| dir.join("mpv-shader-cache"))
+        .filter(|dir| {
+            if let Err(error) = std::fs::create_dir_all(dir) {
+                eprintln!("[harbor::mpv] shader cache unavailable: {error}");
+                return false;
+            }
+            true
+        });
     let init_err: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
     let init_err_cap = init_err.clone();
 
@@ -1069,6 +1103,7 @@ pub async fn mpv_start(
             embed_hwnd_for_init.as_deref(),
             separate_screen_for_init,
             separate_screen_size_for_init,
+            shader_cache_dir.as_deref(),
         ) {
             eprintln!("[harbor::mpv] pre-init failed: {}", e);
             if let Ok(mut g) = init_err_cap.lock() {
@@ -1099,13 +1134,6 @@ pub async fn mpv_start(
     }
     let use_render_api = (cfg!(target_os = "macos") || cfg!(target_os = "linux")) && want_embed;
     if !use_render_api {
-        let vo = match args.renderer.as_deref() {
-            Some("gpu") => "gpu",
-            _ => "gpu-next",
-        };
-        if let Err(e) = mpv.set_property("vo", vo) {
-            eprintln!("[harbor::mpv] vo set FAILED: {:?}", e);
-        }
         if args.force_yuv420p.unwrap_or(false) {
             if let Err(e) = mpv.set_property("vf-append", "format=yuv420p") {
                 eprintln!("[harbor::mpv] vf yuv420p rejected: {:?}", e);

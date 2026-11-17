@@ -1322,8 +1322,10 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
               await applyDefaultVodBufferPhase(nextStartupProfile, "startup");
             }
             await applyHeaderProps(src.headers);
+            // Clear an inherited resume offset without requesting a seek to zero:
+            // MKV seeks can fetch the remote index and repeat addon redirects.
             const startAt =
-              typeof src.startAtSec === "number" && src.startAtSec > 0 ? src.startAtSec : 0;
+              typeof src.startAtSec === "number" && src.startAtSec > 0 ? src.startAtSec : "none";
             const cmd: Array<string | number> = [
               "loadfile",
               src.url,

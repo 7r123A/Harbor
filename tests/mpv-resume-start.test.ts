@@ -14,6 +14,8 @@ test("reused native playback loads at the saved position and resets it for the n
   await h.bridge.load({ url: "first.mkv", startAtSec: 605 });
   await h.bridge.load({ url: "second.mkv", startAtSec: 300 });
   await h.bridge.load({ url: "third.mkv" });
+  await h.bridge.load({ url: "fourth.mkv", startAtSec: 0 });
+  await h.bridge.load({ url: "fifth.mkv", startAtSec: 120 });
   const loads = h.commands.filter(
     (c) => c.command === "mpv_command" && (c.args.cmd as any[])?.[0] === "loadfile",
   );
@@ -21,7 +23,9 @@ test("reused native playback loads at the saved position and resets it for the n
     loads.map((c) => c.args.cmd),
     [
       ["loadfile", "second.mkv", "replace", 0, "start=300"],
-      ["loadfile", "third.mkv", "replace", 0, "start=0"],
+      ["loadfile", "third.mkv", "replace", 0, "start=none"],
+      ["loadfile", "fourth.mkv", "replace", 0, "start=none"],
+      ["loadfile", "fifth.mkv", "replace", 0, "start=120"],
     ],
   );
 });
