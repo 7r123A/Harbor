@@ -18,14 +18,19 @@ export function P2pConfirmModal({
 }) {
   const [remember, setRemember] = useState(false);
   const confirmed = useRef(false);
-  // Start metadata resolution and peer discovery while the prompt is open. The
-  // torrent is added paused, so no file data moves until the player asks for
-  // bytes; without this the whole discovery path would run after the player has
-  // already initialized. Cancelling the prompt cleans the prewarmed torrent up.
+  // StrictMode (and HMR) run an effect, its cleanup, then the effect again. Only
+  // abandon the prewarm when the prompt is really gone; otherwise that cleanup
+  // would delete the torrent the prompt is still warming.
+  const mountGeneration = useRef(0);
   useEffect(() => {
+    mountGeneration.current += 1;
+    const generation = mountGeneration.current;
     prewarmP2pStream(stream);
     return () => {
-      if (!confirmed.current) abandonPrewarmedStream(stream);
+      if (confirmed.current) return;
+      window.setTimeout(() => {
+        if (mountGeneration.current === generation) abandonPrewarmedStream(stream);
+      }, 0);
     };
   }, [stream]);
   const confirm = (rememberIt: boolean) => {

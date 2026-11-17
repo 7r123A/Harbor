@@ -56,6 +56,9 @@ function clearAbandonTimer(key: string): void {
 
 function abandonKey(key: string): void {
   clearAbandonTimer(key);
+  // A later play of the same source may prewarm again immediately; without this
+  // the cooldown would force it onto the slower direct-add fallback.
+  cooldown.delete(key);
   const running = inflight.get(key);
   if (!running) {
     deps.abandon(key);
