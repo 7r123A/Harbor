@@ -393,3 +393,37 @@ test("account replacement during an in-flight write cannot mark the new queue as
     h.cleanup();
   }
 });
+
+test("queue-full warning returns after a failed attempt is successfully retried", async () => {
+  const h = harness();
+  try {
+    const storeKey = "harbor.refract.sync.v1";
+    const now = Date.now();
+    const pending = Array.from({ length: 2499 }, (_, i) => ({
+      id: `existing-${i}`,
+      requestId: `request-${i}`,
+      sourceId: `tmdb:movie:${i + 1}`,
+      type: "movie",
+      watchedAt: now,
+      attempts: 0,
+      nextAt: i === 0 ? now : now + 60_000,
+    }));
+    h.db.set(storeKey, JSON.stringify({ pending, recent: {}, failed: [], synced: 0 }));
+    h.setOffline(true);
+    h.sync.enqueueRefractWatch(episodeEvent(), {
+      episodes: [{ season: 2, episode: 4 }, { season: 2, episode: 5 }],
+    });
+    await tick();
+    assert.equal(h.sync.refractStatus().failed, 1);
+    assert.equal(h.sync.refractStatus().message, "Network error; retry scheduled");
+
+    h.setOffline(false);
+    h.sync.retryRefractSync();
+    await tick();
+    assert.equal(h.sync.refractStatus().synced, 1);
+    assert.equal(h.sync.refractStatus().failed, 1);
+    assert.equal(h.sync.refractStatus().message, "Refract queue full; unable to save another watch");
+  } finally {
+    h.cleanup();
+  }
+});
