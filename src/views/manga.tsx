@@ -430,7 +430,7 @@ export function MangaView() {
           <h1 className="mb-8 font-display text-[32px] font-medium tracking-tight text-ink">
             {t("Collections")}
           </h1>
-          <MangaCollections onOpen={openMangaItem} />
+          <MangaCollections onOpen={(id) => setMode({ screen: "detail", mangaId: id })} />
         </main>
       )}
 

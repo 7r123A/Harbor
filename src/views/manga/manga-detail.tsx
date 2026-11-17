@@ -3,7 +3,16 @@ import { UiIcon } from "@/components/ui-icon";
 import { PopIcon } from "@/components/pop-icon";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CoverImg } from "@/components/cover-img";
-import { Award, BookOpen, ChevronLeft, Flame, RotateCcw, Sparkles, Star } from "lucide-react";
+import {
+  Award,
+  BookOpen,
+  ChevronLeft,
+  Flame,
+  Repeat2,
+  RotateCcw,
+  Sparkles,
+  Star,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 const COLLECTION_ICON: Record<string, LucideIcon> = {
@@ -51,6 +60,7 @@ import {
   useMangaUpdates,
 } from "./mangaupdates-info";
 import { TopMangaModal } from "./top-manga-modal";
+import { MangaMatchPicker } from "@/views/collections/manga-match-picker";
 import { decodeMangaId } from "@/lib/manga/sources/suwayomi/model";
 import { suwayomiBaseForSource } from "@/lib/manga/sources/suwayomi/auth-registry";
 import type { SuwayomiSource } from "@/lib/manga/sources/suwayomi/provider";
@@ -211,6 +221,7 @@ export function MangaDetail({
   const [backdrop, setBackdrop] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [topMangaOpen, setTopMangaOpen] = useState(false);
+  const [pickSourceOpen, setPickSourceOpen] = useState(false);
   const [extInfo, setExtInfo] = useState<{
     name: string;
     icon?: string;
@@ -626,6 +637,17 @@ export function MangaDetail({
                   altTitle={detail?.altTitle}
                   cover={detail?.cover}
                 />
+                {detail && (
+                  <button
+                    type="button"
+                    aria-label={t("Find on your sources")}
+                    title={t("Find on your sources")}
+                    onClick={() => setPickSourceOpen(true)}
+                    className="group flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-ink transition-[transform,background-color] duration-200 hover:bg-white/[0.10] active:scale-[0.94]"
+                  >
+                    <Repeat2 size={19} strokeWidth={2.2} />
+                  </button>
+                )}
                 {onOpenDownloads && (
                   <button
                     type="button"
@@ -717,6 +739,17 @@ export function MangaDetail({
           onOpenManga(id);
         }}
       />
+
+      {pickSourceOpen && detail && (
+        <MangaMatchPicker
+          name={detail.title}
+          onSelect={(id) => {
+            setPickSourceOpen(false);
+            onOpenManga(id);
+          }}
+          onClose={() => setPickSourceOpen(false)}
+        />
+      )}
     </div>
   );
 }
