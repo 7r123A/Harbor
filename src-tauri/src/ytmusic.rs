@@ -112,6 +112,75 @@ pub fn ytmusic_is_open(app: AppHandle) -> bool {
     app.get_webview_window(YTM_LABEL).is_some()
 }
 
+/// A cookie borrowed from the signed-in YouTube Music webview.
+#[derive(Debug, Clone)]
+pub struct AccountCookie {
+    pub domain: String,
+    pub path: String,
+    pub secure: bool,
+    pub name: String,
+    pub value: String,
+}
+
+/// Google auth cookies are set on `.google.com`, but this app has no business reading the
+/// rest of that jar (Mail, Calendar, other accounts), so only the sign-in names cross over.
+const GOOGLE_AUTH_COOKIES: &[&str] = &[
+    "SID",
+    "HSID",
+    "SSID",
+    "APISID",
+    "SAPISID",
+    "__Secure-1PSID",
+    "__Secure-3PSID",
+    "__Secure-1PAPISID",
+    "__Secure-3PAPISID",
+    "LOGIN_INFO",
+];
+
+fn wanted_cookie(domain: &str, name: &str) -> bool {
+    let domain = domain.trim_start_matches('.');
+    let youtube = domain == "youtube.com" || domain.ends_with(".youtube.com");
+    let google = domain == "google.com" || domain.ends_with(".google.com");
+    youtube || (google && GOOGLE_AUTH_COOKIES.contains(&name))
+}
+
+/// Cookies for music.youtube.com from whichever YouTube Music window is open. Reading the
+/// native cookie store is the only way to see the HttpOnly sign-in cookies; page JavaScript
+/// cannot. Nothing is persisted here: the webview profile already owns the session.
+pub async fn account_cookies(app: &AppHandle) -> Result<Vec<AccountCookie>, String> {
+    #[cfg(windows)]
+    let window = app
+        .get_webview_window(YTM_EMBED_LABEL)
+        .or_else(|| app.get_webview_window(YTM_LABEL));
+    #[cfg(not(windows))]
+    let window = app.get_webview_window(YTM_LABEL);
+    let window = window.ok_or_else(|| "Open YouTube Music and sign in first".to_string())?;
+    // The whole store, not cookies_for_url: Google sets the sign-in family on `.google.com`,
+    // which a music.youtube.com lookup does not return.
+    // Webview2 deadlocks when its cookie store is read from the main thread.
+    let cookies = tauri::async_runtime::spawn_blocking(move || window.cookies())
+        .await
+        .map_err(|error| format!("read YouTube Music cookies: {error}"))?
+        .map_err(|error| format!("read YouTube Music cookies: {error}"))?;
+    Ok(cookies
+        .into_iter()
+        .filter_map(|cookie| {
+            let name = cookie.name().to_string();
+            let domain = cookie.domain().unwrap_or("music.youtube.com").to_string();
+            if name.is_empty() || !wanted_cookie(&domain, &name) {
+                return None;
+            }
+            Some(AccountCookie {
+                domain,
+                path: cookie.path().unwrap_or("/").to_string(),
+                secure: cookie.secure() == Some(true),
+                name,
+                value: cookie.value().to_string(),
+            })
+        })
+        .collect())
+}
+
 /// Embedding puts YouTube Music inside Harbor's own window, so the sidebar and title bar stay
 /// around it, instead of it being a second window on the taskbar.
 ///
@@ -241,4 +310,18 @@ pub async fn ytmusic_unembed(app: AppHandle) -> Result<(), String> {
         let _ = window.close();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wanted_cookie;
+
+    #[test]
+    fn only_youtube_and_sign_in_google_cookies_cross_over() {
+        assert!(wanted_cookie(".youtube.com", "PREF"));
+        assert!(wanted_cookie("music.youtube.com", "PREF"));
+        assert!(wanted_cookie(".google.com", "SAPISID"));
+        assert!(!wanted_cookie(".google.com", "NID"));
+        assert!(!wanted_cookie(".example.com", "SID"));
+    }
 }

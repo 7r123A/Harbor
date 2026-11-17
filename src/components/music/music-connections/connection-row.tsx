@@ -18,6 +18,8 @@ import { MusicLastFm } from "@/components/music/music-lastfm";
 import { useT } from "@/lib/i18n";
 import "@/components/music/music-connect-field.css";
 import { connectSource, disconnectSource, scanLocalFolder } from "@/lib/music/catalog";
+import { PRIMARY_BUTTON, SECONDARY_BUTTON } from "./buttons";
+import { YouTubeMusicAccount } from "./youtube-account";
 import {
   isGatedMusicSource,
   type GatedMusicSource,
@@ -35,15 +37,11 @@ import type {
   MusicConnectionStatus,
 } from "@/lib/music/types";
 
+export { PRIMARY_BUTTON, SECONDARY_BUTTON } from "./buttons";
+
 export function errorText(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
-
-export const PRIMARY_BUTTON =
-  "inline-flex h-11 min-w-28 items-center justify-center gap-2 rounded-full bg-ink px-5 text-[12px] font-semibold text-canvas disabled:opacity-40";
-
-export const SECONDARY_BUTTON =
-  "inline-flex h-11 items-center gap-2 rounded-full border border-edge px-4 text-[12px] font-medium text-ink transition-colors duration-200 ease-out hover:bg-elevated disabled:opacity-40";
 
 const KIND_ICON: Record<MusicConnectionKind, MusicIconComponent> = {
   streaming: AudioLines,
@@ -280,6 +278,13 @@ export function MusicConnectionRow({
           />
         )}
       </div>
+
+      {connection.id === "youtube" && musicSourceAllowed("youtube") && (
+        <YouTubeMusicAccount
+          account={connection.status === "connected" ? (connection.account ?? null) : null}
+          onRefresh={onRefresh}
+        />
+      )}
 
       {lastFm && (
         <div className="border-t border-edge-soft px-4 py-4">

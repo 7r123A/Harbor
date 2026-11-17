@@ -1,4 +1,5 @@
 mod artist;
+pub(crate) mod auth;
 mod catalog;
 #[cfg(test)]
 mod clients;
@@ -119,6 +120,9 @@ impl MusicConnector for YouTubeMusicConnector {
     }
 
     async fn browse_home(&self, app: &tauri::AppHandle) -> Result<Vec<MusicCatalogRow>, String> {
+        // A signed-in tab turns these same shelves into the listener's own home. Look for the
+        // session once; without one the call stays anonymous exactly as before.
+        auth::ensure(app).await;
         let (home, charts) = tokio::join!(
             catalog::home_rows(&self.client, app),
             catalog::chart_rows(&self.client, app)
@@ -212,6 +216,24 @@ impl MusicConnector for YouTubeMusicConnector {
         catalog::video_stream(app, track, max_height).await
     }
 
+    async fn connect(
+        &self,
+        app: &tauri::AppHandle,
+        _fields: &std::collections::HashMap<String, String>,
+    ) -> Result<MusicConnection, String> {
+        let session = auth::session_from(app).await?;
+        auth::set(session);
+        auth::record_opt_in(app);
+        self.health.set(ConnectorHealth::Healthy);
+        Ok(self.connection())
+    }
+
+    async fn disconnect(&self, app: &tauri::AppHandle) -> Result<(), String> {
+        auth::clear();
+        auth::forget(app);
+        Ok(())
+    }
+
     fn set_health(&self, health: ConnectorHealth) {
         self.health.set(health);
     }
@@ -229,14 +251,24 @@ impl MusicConnector for YouTubeMusicConnector {
             ConnectorHealth::Offline => "error",
             _ => "connected",
         };
-        MusicConnection::new(
+        let mut connection = MusicConnection::new(
             "youtube",
             "YouTube Music",
             "streaming",
             status,
             &["search", "browse", "play"],
         )
-        .anonymous()
+        .anonymous();
+        if let Some(session) = auth::current() {
+            connection.account = Some(
+                session
+                    .account
+                    .clone()
+                    .unwrap_or_else(|| "YouTube Music".to_string()),
+            );
+            connection.detail = Some("Using your signed-in YouTube Music session".to_string());
+        }
+        connection
     }
 }
 

@@ -7,6 +7,7 @@
 //! and signature work that keeps a URL whole, and it is updated as YouTube tightens.
 
 use super::super::super::{MusicStream, MusicVideoStream};
+use std::path::PathBuf;
 use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(45);
@@ -15,8 +16,49 @@ const FORMAT: &str = "bestaudio[acodec=opus]/bestaudio/best";
 // handed the audio alongside it. `best` is the fallback for anything with no split rendition.
 const SEPARATOR: &str = "|||";
 
+/// yt-dlp only accepts cookies from a file. The file holds the listener's Google session, so
+/// it lives for the extraction and is removed on the way out, never persisted.
+struct CookieFile(PathBuf);
+
+impl Drop for CookieFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn cookie_file() -> Option<CookieFile> {
+    let session = super::auth::current()?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
+    let path = std::env::temp_dir().join(format!(
+        "harbor-ytmusic-{}-{stamp}.cookies",
+        std::process::id()
+    ));
+    std::fs::write(&path, super::auth::netscape(&session.cookies)).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+    Some(CookieFile(path))
+}
+
+fn cookie_args(file: &Option<CookieFile>) -> Vec<String> {
+    file.as_ref()
+        .map(|file| {
+            vec![
+                "--cookies".to_string(),
+                file.0.to_string_lossy().into_owned(),
+            ]
+        })
+        .unwrap_or_default()
+}
+
 pub async fn stream(app: &tauri::AppHandle, video_id: &str) -> Result<MusicStream, String> {
-    let args = vec![
+    let cookies = cookie_file();
+    let mut args = vec![
         "--js-runtimes".to_string(),
         "node".to_string(),
         "--extractor-args".to_string(),
@@ -26,13 +68,16 @@ pub async fn stream(app: &tauri::AppHandle, video_id: &str) -> Result<MusicStrea
         FORMAT.to_string(),
         "--print".to_string(),
         format!("%(url)s{SEPARATOR}%(ext)s{SEPARATOR}%(abr)s{SEPARATOR}%(http_headers)j"),
-        format!("https://www.youtube.com/watch?v={video_id}"),
     ];
-    crate::ytdlp_update::run_validated(app, args, TIMEOUT, "music stream", |output| async move {
+    args.extend(cookie_args(&cookies));
+    args.push(format!("https://www.youtube.com/watch?v={video_id}"));
+    let result = crate::ytdlp_update::run_validated(app, args, TIMEOUT, "music stream", |output| async move {
         let stream = parse(&String::from_utf8_lossy(&output.stdout))?;
         super::super::super::stream_probe::validate_stream(stream).await
     })
-    .await
+    .await;
+    drop(cookies);
+    result
 }
 
 /// The music video behind a track, for the YouTube Music style video pane.
@@ -43,7 +88,8 @@ pub async fn video_stream(
 ) -> Result<MusicVideoStream, String> {
     let cap = max_height.unwrap_or(1080).clamp(144, 2160);
     let format = video_format(cap);
-    let args = vec![
+    let cookies = cookie_file();
+    let mut args = vec![
         "--js-runtimes".to_string(),
         "node".to_string(),
         "--extractor-args".to_string(),
@@ -52,10 +98,12 @@ pub async fn video_stream(
         "-f".to_string(),
         format,
         "--dump-single-json".to_string(),
-        format!("https://www.youtube.com/watch?v={video_id}"),
     ];
-    let output = crate::ytdlp_update::run(app, args, TIMEOUT, "music video").await?;
-    parse_video(&String::from_utf8_lossy(&output.stdout))
+    args.extend(cookie_args(&cookies));
+    args.push(format!("https://www.youtube.com/watch?v={video_id}"));
+    let output = crate::ytdlp_update::run(app, args, TIMEOUT, "music video").await;
+    drop(cookies);
+    parse_video(&String::from_utf8_lossy(&output?.stdout))
 }
 
 /// Format selection for a video height cap.

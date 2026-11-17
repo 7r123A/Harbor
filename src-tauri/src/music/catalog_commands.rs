@@ -339,7 +339,13 @@ pub async fn music_video_stream(
 }
 
 #[tauri::command]
-pub async fn music_connections(state: tauri::State<'_, MusicState>) -> Result<Vec<MusicConnection>, String> {
+pub async fn music_connections(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, MusicState>,
+) -> Result<Vec<MusicConnection>, String> {
+    // Picks up a YouTube Music tab the listener signed into since the last check, so the row
+    // reports the account without a second sign-in.
+    super::connectors::youtube_music::auth::ensure(&app).await;
     // Avoid exposing librespot's immutable account ID in the Connections list.
     state.spotify.refresh_profile_display_name().await;
     Ok(state.registry.connections())

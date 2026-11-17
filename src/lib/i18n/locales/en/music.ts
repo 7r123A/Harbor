@@ -568,6 +568,17 @@ const music: Record<string, string> = {
   "music.connections.capability.play": "Play",
   "music.connections.capability.library": "Library",
   "music.connections.capability.scrobble": "Scrobble",
+  "music.youtubeAccount.intro":
+    "Harbor browses YouTube Music anonymously. Sign in inside the YouTube Music window to use your own home, mixes and a signed-in stream.",
+  "music.youtubeAccount.signedIn": "Signed in as {account}.",
+  "music.youtubeAccount.open": "Open YouTube Music",
+  "music.youtubeAccount.use": "Use this session",
+  "music.youtubeAccount.checking": "Checking the session",
+  "music.youtubeAccount.signOut": "Sign out",
+  "music.youtubeAccount.hint":
+    "Sign in inside the YouTube Music window, then choose Use this session.",
+  "music.youtubeAccount.sessionNote":
+    "Harbor borrows the session from that window and keeps it in memory; no password is stored.",
   "music.footer.setup": "Setup",
   "music.footer.harbor": "Harbor",
   "music.footer.connections": "Connections",
