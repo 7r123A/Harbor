@@ -8,6 +8,7 @@ import { FACET_DIMS, facetOptions, matchesFacets, type FacetState } from "./stre
 import { addonInstanceKey, buildAddonOptions, needsDownload } from "./picker-utils";
 import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
+import { INTENT_PREWARM_ABANDON_MS, prewarmP2pStream } from "@/lib/streams/p2p-prewarm";
 import type { CustomStreamFilter } from "@/lib/streams/custom-filters";
 import { sortStreams } from "@/lib/streams/source-sort";
 import { FacetMenuRow } from "./facet-menu-row";
@@ -204,6 +205,11 @@ export function StremioLayout({
             addonLogo={addonLogoMap.get(s.addonUrl ?? "") ?? addonLogoMap.get(s.addonId) ?? null}
             match={matchFor ? matchFor(s) : null}
             onPlay={() => onPlay(s)}
+            onIntent={
+              download
+                ? undefined
+                : () => prewarmP2pStream(s, { abandonAfterMs: INTENT_PREWARM_ABANDON_MS })
+            }
             download={download}
             downloadState={downloadStateFor?.(s)}
             isAnime={isAnime}

@@ -1,10 +1,8 @@
 import { Radio, Users, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Meta } from "@/lib/cinemeta";
-import { magnetFromHash } from "@/lib/debrid/types";
+import { abandonPrewarmedStream, prewarmP2pStream } from "@/lib/streams/p2p-prewarm";
 import { formatSize, streamSummaryParts } from "./picker-utils";
-import { scheduleAbandonedTorrentRemoval, torrentEngineAdd } from "@/lib/torrent/local-engine";
-import { trackersFromSources } from "@/lib/torrent/stremio-stream";
 import type { ScoredStream } from "@/lib/streams/types";
 
 export function P2pConfirmModal({
@@ -25,22 +23,11 @@ export function P2pConfirmModal({
   // bytes; without this the whole discovery path would run after the player has
   // already initialized. Cancelling the prompt cleans the prewarmed torrent up.
   useEffect(() => {
-    const infoHash = stream.infoHash;
-    if (!infoHash) return;
-    let cancelled = false;
-    const fileIdx = typeof stream.fileIdx === "number" ? stream.fileIdx : undefined;
-    void torrentEngineAdd(
-      magnetFromHash(infoHash),
-      trackersFromSources(stream.sources),
-      fileIdx,
-    ).then((added) => {
-      if (!added) return;
-      if (cancelled && !confirmed.current) scheduleAbandonedTorrentRemoval(added.info_hash);
-    });
+    prewarmP2pStream(stream);
     return () => {
-      cancelled = true;
+      if (!confirmed.current) abandonPrewarmedStream(stream);
     };
-  }, [stream.infoHash, stream.sources, stream.fileIdx]);
+  }, [stream]);
   const confirm = (rememberIt: boolean) => {
     confirmed.current = true;
     onConfirm(rememberIt);

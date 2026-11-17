@@ -1,4 +1,5 @@
 import { Check, Download } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { Play } from "@/components/icons/play-filled";
 import { AddonLogo } from "@/components/addon-logo";
 import { CopyLinkButton, resolveStreamLink } from "@/components/player/copy-link-button";
@@ -8,6 +9,7 @@ import { HostMatchChip } from "@/components/host-match-chip";
 import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
 import { bidiLines } from "@/lib/bidi";
+import { INTENT_PREWARM_DELAY_MS } from "@/lib/streams/p2p-prewarm";
 import type { ScoredStream } from "@/lib/streams/types";
 import { EditionChip } from "./edition-chip";
 
@@ -17,6 +19,7 @@ export function StremioRow({
   addonLogo,
   match = null,
   onPlay,
+  onIntent,
   download = false,
   downloadState = "idle",
   isAnime = false,
@@ -26,12 +29,34 @@ export function StremioRow({
   addonLogo: string | null;
   match?: "same" | "close" | null;
   onPlay: () => void;
+  /** Fired once a source is deliberately focused or hovered long enough to count as intent. */
+  onIntent?: () => void;
   download?: boolean;
   downloadState?: "idle" | "preparing" | "queued";
   isAnime?: boolean;
 }) {
   const t = useT();
   const { settings } = useSettings();
+  const intentTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearIntentTimer = () => {
+    if (intentTimer.current != null) {
+      clearTimeout(intentTimer.current);
+      intentTimer.current = null;
+    }
+  };
+  useEffect(
+    () => () => {
+      if (intentTimer.current != null) clearTimeout(intentTimer.current);
+    },
+    [],
+  );
+  const intentSoon = () => {
+    if (!onIntent || intentTimer.current != null) return;
+    intentTimer.current = setTimeout(() => {
+      intentTimer.current = null;
+      onIntent();
+    }, INTENT_PREWARM_DELAY_MS);
+  };
   const full = settings.fullStreamDescription;
   const addonName = stream.addonName ?? t("Source");
   const headline = stream.name?.trim() || addonName;
@@ -49,6 +74,9 @@ export function StremioRow({
       : t("Download");
   return (
     <div
+      onPointerEnter={onIntent ? intentSoon : undefined}
+      onPointerLeave={onIntent ? clearIntentTimer : undefined}
+      onFocus={onIntent}
       className={`flex items-stretch gap-5 rounded-2xl bg-elevated/40 p-5 ring-1 transition-colors ${
         failed ? "ring-danger/40 bg-danger/5" : "ring-edge-soft/50"
       }`}
