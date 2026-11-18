@@ -37,6 +37,7 @@ import {
 } from "@/lib/publicmetadb/session";
 import { type LibraryItem } from "@/lib/stremio";
 import { startupEvent } from "@/lib/startup-trace";
+import { TRACKER_PROGRESS_EVENT } from "@/lib/tracker-progress-events";
 
 const STALE_MS = 300_000;
 const FOCUS_STALE_MS = 30_000;
@@ -747,6 +748,12 @@ if (typeof window !== "undefined") {
       const nonNuvio = items.filter((i) => i.external !== "nuvio");
       setItems(merge([fresh, nonNuvio]));
     }
+  });
+  window.addEventListener(TRACKER_PROGRESS_EVENT, () => {
+    // A tracker confirmed new watched progress; refetch immediately instead of
+    // waiting for the next poll. The refresh generation drops any older
+    // in-flight response that started before the completion.
+    void refreshExternalCw(true, "data");
   });
 }
 

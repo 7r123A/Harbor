@@ -99,6 +99,10 @@ function fixture(initialNuvioActive = true, nuvioSignedIn = true) {
         listeners.trakt = fn;
       },
     },
+    "@/lib/tracker-progress-events": {
+      TRACKER_PROGRESS_EVENT: "harbor:tracker-progress-updated",
+      notifyTrackerProgress: () => {},
+    },
     "@/lib/stremio": {
       episodeFromVideoId: (vid?: string) => {
         if (!vid) return null;

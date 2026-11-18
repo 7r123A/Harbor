@@ -604,6 +604,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
     src: activeMediaSrc,
     season,
     episode,
+    snap,
     bridgeRef,
     liveUrl,
     liveStreamRef,

@@ -4,6 +4,7 @@ import { pushWatched } from "./history";
 import { scrobblePause, scrobbleStart, scrobbleStop } from "./scrobble";
 import { activeProfileId } from "@/lib/active-profile-id";
 import { getSession } from "./session";
+import { notifyTrackerProgress } from "@/lib/tracker-progress-events";
 import type { TraktTarget } from "./types";
 
 const WATCHED_PCT = 70;
@@ -92,11 +93,17 @@ export async function commitWatchedEpisode(
 ): Promise<CommitOutcome> {
   const owned = captureOwner();
   if (!owned() || target.kind === "show") return "failed";
+  // A confirmed terminal write must wake Continue Watching immediately, whether
+  // it came from the live stop or from the pending-stop replay.
+  const recorded = (outcome: CommitOutcome): CommitOutcome => {
+    if (outcome === "recorded" || outcome === "already-recorded") notifyTrackerProgress("trakt");
+    return outcome;
+  };
 
   const direct = await scrobbleStop(target, progress);
   if (!owned()) return "failed";
-  if (direct === "recorded" || direct === "already-recorded") return direct;
-  if (progress >= WATCHED_PCT && (await pushWatched(target))) return "recorded";
+  if (direct === "recorded" || direct === "already-recorded") return recorded(direct);
+  if (progress >= WATCHED_PCT && (await pushWatched(target))) return recorded("recorded");
   if (!owned() || target.kind !== "episode") return "failed";
   if (!isResolvableTarget(target)) return "failed";
 
@@ -110,9 +117,11 @@ export async function commitWatchedEpisode(
         const movieOutcome = await scrobbleStop(movieTarget, progress);
         if (!owned()) return "failed";
         if (movieOutcome === "recorded" || movieOutcome === "already-recorded") {
-          return movieOutcome;
+          return recorded(movieOutcome);
         }
-        return progress >= WATCHED_PCT && (await pushWatched(movieTarget)) ? "recorded" : "failed";
+        return progress >= WATCHED_PCT && (await pushWatched(movieTarget))
+          ? recorded("recorded")
+          : "failed";
       }
     }
     // Catalog searches are incomplete and can change. Keep an unconfirmed watch
@@ -123,6 +132,6 @@ export async function commitWatchedEpisode(
   const upgraded = resolvedToTraktTarget(resolved.episode);
   const outcome = await scrobbleStop(upgraded, progress);
   if (!owned()) return "failed";
-  if (outcome === "recorded" || outcome === "already-recorded") return outcome;
-  return progress >= WATCHED_PCT && (await pushWatched(upgraded)) ? "recorded" : "failed";
+  if (outcome === "recorded" || outcome === "already-recorded") return recorded(outcome);
+  return progress >= WATCHED_PCT && (await pushWatched(upgraded)) ? recorded("recorded") : "failed";
 }

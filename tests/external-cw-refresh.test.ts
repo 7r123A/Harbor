@@ -73,6 +73,10 @@ function fixture() {
       },
     },
     "@/lib/stremio": { episodeFromVideoId: () => null },
+    "@/lib/tracker-progress-events": {
+      TRACKER_PROGRESS_EVENT: "harbor:tracker-progress-updated",
+      notifyTrackerProgress: () => {},
+    },
     "@/lib/anime-detect": {
       detectAnimeForCw: async (items: LibraryItem[]) => {
         detectionBatches.push(items);
@@ -202,6 +206,23 @@ test("a stale Nuvio cache result does not mark the external refresh fresh", asyn
   const fetches = h.nuvio.fetches;
   await h.api.refreshExternalCw();
   assert.equal(h.nuvio.fetches, fetches + 1, "a non-fresh Nuvio read must not be cached as fresh");
+});
+
+test("a tracker completion event forces an external CW refresh", async () => {
+  const h = fixture();
+  let simklCalls = 0;
+  h.providers.simkl = async () => {
+    simklCalls++;
+    return [];
+  };
+  await h.api.refreshExternalCw(true);
+  const before = simklCalls;
+
+  h.listeners["harbor:tracker-progress-updated"]?.();
+  await settle();
+  await settle();
+
+  assert.ok(simklCalls > before, "the completion event refetched the tracker source");
 });
 
 test("changing linked accounts clears the old account even if its replacement is offline", async () => {
