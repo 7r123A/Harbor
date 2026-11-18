@@ -31,6 +31,7 @@ const MAX_MARKS = 12;
 const PUBLISH_INTERVAL = 1200;
 
 let index: FriendReviewIndex = new Map();
+const averageScores = new Map<string, number | null>();
 let builtAt = 0;
 let running = 0;
 let inflight: Promise<FriendReviewIndex> | null = null;
@@ -188,6 +189,21 @@ export function useFriendReviewIndex(): FriendReviewIndex | null {
   return snapshot;
 }
 
+export function useTitleAverageScore(mediaType: string, itemKey: string): number | null {
+  const key = markKeyForItem(mediaType, itemKey);
+  const [snapshot, setSnapshot] = useState<{ key: string; score: number | null }>(() => ({
+    key,
+    score: averageScores.get(key) ?? null,
+  }));
+  useEffect(() => {
+    const sync = () => setSnapshot({ key, score: averageScores.get(key) ?? null });
+    const off = subscribeFriendReviewIndex(sync);
+    sync();
+    return off;
+  }, [key]);
+  return snapshot.key === key ? snapshot.score : (averageScores.get(key) ?? null);
+}
+
 /**
  * Authoritative path: ask the review hub which friends reviewed this exact title.
  * The bounded friend-history scan above is a best-effort warm-up and, by construction,
@@ -218,12 +234,22 @@ async function flushSummaryBatch(): Promise<void> {
         contentType: string;
         contentId: string;
         friendsCount: number;
+        averageScore?: number | null;
         friends: Array<{ handle: string; displayName: string; avatarUrl?: string }>;
       }>;
     }>("/social/reviews/summaries", { items: batch });
     const next = new Map(index);
     for (const row of res.items ?? []) {
       const key = markKeyForItem(row.contentType, row.contentId);
+      averageScores.set(
+        key,
+        typeof row.averageScore === "number" &&
+          Number.isFinite(row.averageScore) &&
+          row.averageScore >= 0 &&
+          row.averageScore <= 10
+          ? row.averageScore
+          : null,
+      );
       const marks: FriendReviewMark[] = (row.friends ?? []).slice(0, MAX_MARKS).map((f) => ({
         handle: f.handle,
         alias: f.displayName || f.handle,

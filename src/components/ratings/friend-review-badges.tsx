@@ -4,7 +4,9 @@ import {
   ensureMarksForTitle,
   markKeyForItem,
   useFriendReviewIndex,
+  useTitleAverageScore,
 } from "@/lib/social/friend-review-index";
+import { HarborMark } from "@/components/icons/harbor-mark";
 import { Avatar } from "@/views/profile/profile-bits";
 import type { FriendReviewMark } from "@/lib/social/friend-review-index";
 
@@ -47,14 +49,14 @@ export function FriendReviewBadges({
 }) {
   const t = useT();
   const index = useFriendReviewIndex();
+  const contentType = contentTypeFor(metaId, kind);
+  const averageScore = useTitleAverageScore(contentType, metaId);
 
   useEffect(() => {
     ensureMarksForTitle(contentTypeFor(metaId, kind), metaId);
   }, [metaId, kind]);
-  if (!index) return null;
-
-  const marks = index.get(markKeyForItem(contentTypeFor(metaId, kind), metaId));
-  if (!marks || marks.length === 0) return null;
+  const marks = index?.get(markKeyForItem(contentType, metaId)) ?? [];
+  if (marks.length === 0 && averageScore === null) return null;
 
   const { shown, extra, total: totalCount } = friendBadgePlan(marks);
   const label =
@@ -64,26 +66,49 @@ export function FriendReviewBadges({
 
   return (
     <div
-      aria-hidden="true"
-      title={label}
-      className={`pointer-events-none z-10 flex items-center ${className}`}
+      role="img"
+      aria-label={[
+        totalCount > 0 ? label : "",
+        averageScore !== null
+          ? `${t("Harbor users average score")} ${averageScore.toFixed(1)}/10`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" · ")}
+      title={totalCount > 0 ? label : undefined}
+      className={`pointer-events-none z-10 flex flex-wrap items-center gap-y-1 ${className}`}
     >
-      {shown.map((mark, i) => (
-        <span
-          key={mark.handle}
-          className="inline-flex shrink-0 overflow-hidden rounded-full bg-canvas ring-1 ring-canvas"
-          style={{
-            width: avatarSize,
-            height: avatarSize,
-            marginInlineStart: i === 0 ? 0 : -Math.round(avatarSize / 3),
-          }}
-        >
-          <Avatar src={mark.avatarUrl} size={avatarSize} alias={mark.alias} />
+      {shown.length > 0 && (
+        <span className="inline-flex shrink-0 items-center">
+          {shown.map((mark, i) => (
+            <span
+              key={mark.handle}
+              className="relative inline-flex shrink-0 rounded-full bg-canvas ring-1 ring-canvas"
+              style={{
+                width: avatarSize,
+                height: avatarSize,
+                marginInlineStart: i === 0 ? 0 : -Math.round(avatarSize / 3),
+              }}
+            >
+              <span className="inline-flex overflow-hidden rounded-full">
+                <Avatar src={mark.avatarUrl} size={avatarSize} alias={mark.alias} />
+              </span>
+              {i === shown.length - 1 && extra > 0 && (
+                <span className="absolute -right-1 -top-1 z-10 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-elevated px-0.5 text-[9px] font-medium leading-none tabular-nums text-ink ring-1 ring-canvas">
+                  +{extra}
+                </span>
+              )}
+            </span>
+          ))}
         </span>
-      ))}
-      {extra > 0 && (
-        <span className="ms-0.5 rounded-full bg-canvas/90 px-1 text-[9px] font-bold leading-[14px] text-ink ring-1 ring-edge-soft">
-          +{extra}
+      )}
+      {averageScore !== null && (
+        <span
+          title={t("Harbor users average score")}
+          className={`${shown.length > 0 ? "ms-2 " : ""}inline-flex shrink-0 items-center gap-1 rounded-md bg-canvas/90 px-1.5 py-0.5 text-[11px] font-medium leading-4 tabular-nums text-ink ring-1 ring-edge-soft`}
+        >
+          <HarborMark className="h-3.5 w-3.5 shrink-0 text-accent" />
+          <span>{averageScore.toFixed(1)}</span>
         </span>
       )}
     </div>
