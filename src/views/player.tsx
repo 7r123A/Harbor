@@ -43,6 +43,7 @@ import {
   subscribePlaybackClock,
   resolvePlaybackDownloadedFraction,
   setPlaybackDownloaded,
+  setPlaybackDownloadedFromP2p,
 } from "@/lib/player/playback-clock";
 import {
   awaitCastServerReady,
@@ -255,6 +256,7 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
   useEffect(() => {
     const isLive = src.isLive || !!src.meta.id?.startsWith("iptv:");
     const isHls = src.url.includes("/hlsv2/");
+    setPlaybackDownloadedFromP2p(isP2pEngine);
     if (isP2pEngine) {
       setPlaybackDownloaded(
         resolvePlaybackDownloadedFraction({

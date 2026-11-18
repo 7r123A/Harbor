@@ -3067,6 +3067,9 @@ const uiFallback: Record<string, string> = {
   "Sync badge position": "Sync badge position",
   "Subtitle font size": "Subtitle font size",
   "Poster size": "Poster size",
+  "Cached · click to toggle P2P stats": "Cached · click to toggle P2P stats",
+  "Caching · click to toggle P2P stats": "Caching · click to toggle P2P stats",
+  "Toggle P2P stats": "Toggle P2P stats",
 };
 
 export default uiFallback;
