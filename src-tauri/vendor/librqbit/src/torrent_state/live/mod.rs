@@ -1460,10 +1460,45 @@ impl PeerHandler {
         {
             debug!("peer has full torrent");
         }
-        self.state
-            .peers
-            .update_bitfield(self.addr, bf, self.state.lengths.total_pieces() as usize);
+        self.state.peers.update_bitfield(
+            self.addr,
+            bf.clone(),
+            self.state.lengths.total_pieces() as usize,
+        );
         self.on_bitfield_notify.notify_waiters();
+
+        // A peer that has none of the pieces this torrent still needs cannot
+        // contribute, but it would still occupy a connection slot. Unreliable
+        // public trackers return plenty of those; disconnect them and leave the
+        // peer marked NotNeeded so the adder does not re-queue the address.
+        let useful = {
+            let g = self.state.lock_read("bitfield_usefulness");
+            match g.get_chunks() {
+                Ok(chunks) => {
+                    let mut needed_any = false;
+                    let mut useful = false;
+                    for piece in
+                        chunks.iter_queued_pieces(&g.file_priorities, &self.state.metadata.file_infos)
+                    {
+                        needed_any = true;
+                        if bf.get(piece.get_usize()).map(|value| *value).unwrap_or(false) {
+                            useful = true;
+                            break;
+                        }
+                    }
+                    needed_any.then_some(useful)
+                }
+                Err(_) => None,
+            }
+        };
+        if useful == Some(false) {
+            debug!(
+                peer = %self.addr,
+                "peer has none of the needed pieces, dropping"
+            );
+            self.state.peers.mark_peer_not_needed(self.addr);
+            anyhow::bail!("peer has none of the needed pieces");
+        }
         Ok(())
     }
 
