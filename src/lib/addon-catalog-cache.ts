@@ -10,7 +10,10 @@ import { registerEvictable } from "@/lib/maintenance";
 const TTL_MS = 10 * 60 * 1000;
 // A good row past its TTL is still returned at once for this long while a
 // background refresh replaces it, so returning to a tab never waits on every
-// addon again. Failed rows are never served stale.
+// addon again. The refreshed row reaches the next read, not the view that was
+// served the stale one, so a date-sorted catalog can show up to TTL + STALE old
+// items for one visit. Failed and empty rows are never served stale: a view
+// showing nothing would otherwise keep showing nothing until it remounts.
 const STALE_MS = 30 * 60 * 1000;
 const FAIL_TTL_MS = 15 * 1000;
 const MAX_ENTRIES = 80;
@@ -23,6 +26,7 @@ type Entry<T> = { v: CatalogLoad<T>; t: number; ttl: number; retryAt?: number };
 
 const rows = new Map<string, Entry<unknown>>();
 const inflight = new Map<string, Promise<CatalogLoad<unknown>>>();
+let generation = 0;
 
 registerEvictable("addon-catalog-rows", (aggressive) => {
   if (aggressive) return rows.clear();
@@ -31,15 +35,17 @@ registerEvictable("addon-catalog-rows", (aggressive) => {
 });
 
 function staleLimit(e: Entry<unknown>): number {
-  return e.v.ok ? e.ttl + STALE_MS : e.ttl;
+  return e.v.ok && e.v.value != null ? e.ttl + STALE_MS : e.ttl;
 }
 
 function refresh<T>(key: string, load: () => Promise<CatalogLoad<T>>): Promise<CatalogLoad<T>> {
   const existing = inflight.get(key);
   if (existing) return existing as Promise<CatalogLoad<T>>;
+  const started = generation;
   const p = (async () => {
     try {
       const v = await load();
+      if (started !== generation) return v;
       const prev = rows.get(key);
       // A failed background refresh keeps the last good row while it may still be served.
       if (!v.ok && prev?.v.ok && Date.now() - prev.t < staleLimit(prev)) {
@@ -49,7 +55,8 @@ function refresh<T>(key: string, load: () => Promise<CatalogLoad<T>>): Promise<C
       lruSet(rows, key, { v, t: Date.now(), ttl: v.ok ? TTL_MS : FAIL_TTL_MS }, MAX_ENTRIES);
       return v;
     } finally {
-      inflight.delete(key);
+      // After an invalidation the key may already belong to a newer load.
+      if (started === generation) inflight.delete(key);
     }
   })();
   inflight.set(key, p);
@@ -90,6 +97,22 @@ function refreshInBackground<T>(key: string, load: () => Promise<CatalogLoad<T>>
       });
   });
   pumpBackground();
+}
+
+// An addon reconfigured in place keeps its transportUrl, so its rows share keys
+// with the old configuration. Any addon change drops every row, and loads that
+// were already running are not stored, so the views that rebuild on the same
+// event fetch fresh rows.
+export function invalidateCatalogRows(): void {
+  generation += 1;
+  rows.clear();
+  inflight.clear();
+  backgroundQueue.length = 0;
+  backgroundKeys.clear();
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("harbor:addons-changed", invalidateCatalogRows);
 }
 
 export function cachedCatalogRow<T>(

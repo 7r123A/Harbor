@@ -11,6 +11,8 @@ const TTL = 60 * 24 * 60 * 60 * 1000;
 const RESTAMP_MS = 24 * 60 * 60 * 1000;
 const mem = new Map<string, Entry>();
 let loaded = false;
+// Set when the last write failed, so the next save writes again even when its art is unchanged.
+let unsaved = false;
 
 registerCache("anime:art", () => mem.size);
 registerEvictable("anime-art", (aggressive) => {
@@ -42,8 +44,9 @@ function persist(): void {
     entries.length > CAP ? entries.sort((a, b) => b[1].t - a[1].t).slice(0, CAP) : entries;
   try {
     localStorage.setItem(KEY, JSON.stringify({ map: Object.fromEntries(trimmed) }));
+    unsaved = false;
   } catch {
-    /* ignore */
+    unsaved = true;
   }
 }
 
@@ -75,6 +78,7 @@ export function saveAnimeArt(key: string | undefined | null, art: AnimeArt): voi
   // TTL on the next load without a write on every resolve.
   if (
     prev &&
+    !unsaved &&
     next.t - prev.t < RESTAMP_MS &&
     next.bg === prev.bg &&
     next.logo === prev.logo &&

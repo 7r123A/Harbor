@@ -175,6 +175,9 @@ const USER_ADDONS_TTL_MS = 60 * 1000;
 const userAddonsMemo = new Map<string, { at: number; list: Addon[] }>();
 const userAddonsInflight = new Map<string, Promise<Addon[]>>();
 let userAddonsGeneration = 0;
+// Reads that settle while a write is pending may return the list from before it,
+// so none are remembered until every pending write has finished.
+let userAddonsWrites = 0;
 
 export function invalidateUserAddons(): void {
   userAddonsGeneration += 1;
@@ -201,7 +204,12 @@ export function cachedUserAddons(authKey: string): Promise<Addon[]> {
       const list = result?.addons ?? [];
       // A failed call is not remembered, and a write that landed while this
       // read was in flight makes its result stale.
-      if (result && Array.isArray(result.addons) && generation === userAddonsGeneration) {
+      if (
+        result &&
+        Array.isArray(result.addons) &&
+        generation === userAddonsGeneration &&
+        userAddonsWrites === 0
+      ) {
         userAddonsMemo.set(authKey, { at: Date.now(), list });
       }
       return list;
@@ -213,25 +221,36 @@ export function cachedUserAddons(authKey: string): Promise<Addon[]> {
   return request.then((list) => list.slice());
 }
 
+async function writeUserAddons<T>(write: () => Promise<T>): Promise<T> {
+  userAddonsWrites += 1;
+  invalidateUserAddons();
+  try {
+    return await write();
+  } finally {
+    userAddonsWrites -= 1;
+    invalidateUserAddons();
+  }
+}
+
 export async function setUserAddons(authKey: string, addons: Addon[]): Promise<boolean> {
-  invalidateUserAddons();
-  const result = await call<{ success?: boolean }>("addonCollectionSet", {
-    authKey,
-    type: "user",
-    addons: addons.map((a) => {
-      const raw = a as Record<string, unknown>;
-      return {
-        transportUrl: a.transportUrl,
-        transportName: typeof raw.transportName === "string" ? raw.transportName : "",
-        manifest: a.manifest,
-        flags: (raw.flags as { official?: boolean; protected?: boolean } | undefined) ?? {
-          official: false,
-          protected: false,
-        },
-      };
+  const result = await writeUserAddons(() =>
+    call<{ success?: boolean }>("addonCollectionSet", {
+      authKey,
+      type: "user",
+      addons: addons.map((a) => {
+        const raw = a as Record<string, unknown>;
+        return {
+          transportUrl: a.transportUrl,
+          transportName: typeof raw.transportName === "string" ? raw.transportName : "",
+          manifest: a.manifest,
+          flags: (raw.flags as { official?: boolean; protected?: boolean } | undefined) ?? {
+            official: false,
+            protected: false,
+          },
+        };
+      }),
     }),
-  });
-  invalidateUserAddons();
+  );
   return result != null;
 }
 
@@ -247,13 +266,13 @@ export async function getUserAddonsRaw(authKey: string): Promise<Addon[] | null>
 
 export async function setUserAddonsRaw(authKey: string, addons: Addon[]): Promise<boolean> {
   if (addons.length === 0) return false;
-  invalidateUserAddons();
-  const result = await call<{ success?: boolean }>("addonCollectionSet", {
-    authKey,
-    type: "user",
-    addons,
-  });
-  invalidateUserAddons();
+  const result = await writeUserAddons(() =>
+    call<{ success?: boolean }>("addonCollectionSet", {
+      authKey,
+      type: "user",
+      addons,
+    }),
+  );
   return result != null;
 }
 
@@ -291,17 +310,11 @@ function addonAcceptLanguage(): string | null {
   }
 }
 
-// `acceptLanguage` lets a cached request send the language its cache key was
-// built with, even if the settings change while it waits in a queue.
-async function fetchWithTimeout(
-  url: string,
-  timeoutMs = 8000,
-  acceptLanguage: string | null = addonAcceptLanguage(),
-): Promise<Response | null> {
+async function fetchWithTimeout(url: string, timeoutMs = 8000): Promise<Response | null> {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
   try {
-    const al = acceptLanguage;
+    const al = addonAcceptLanguage();
     allowDirectHost(url);
     return await fetch(url, {
       signal: ac.signal,
@@ -311,6 +324,40 @@ async function fetchWithTimeout(
     return null;
   } finally {
     clearTimeout(t);
+  }
+}
+
+// A catalog row holds a catalog lane until it settles, so the body is read under
+// the same deadline as the request: a response that stalls mid-body fails the row
+// instead of holding the lane. `acceptLanguage` is the one the row's cache key was
+// built with, so a queued refresh never stores another language under that key.
+// Resolves undefined on any failure.
+async function fetchJsonWithTimeout(
+  url: string,
+  timeoutMs: number,
+  acceptLanguage: string | null,
+): Promise<unknown> {
+  const ac = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => {
+      ac.abort();
+      resolve(undefined);
+    }, timeoutMs);
+  });
+  const read = (async (): Promise<unknown> => {
+    allowDirectHost(url);
+    const res = await fetch(url, {
+      signal: ac.signal,
+      headers: acceptLanguage ? { "Accept-Language": acceptLanguage } : undefined,
+    });
+    if (!res.ok) return undefined;
+    return (await res.json()) as unknown;
+  })().catch(() => undefined);
+  try {
+    return await Promise.race([read, deadline]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -507,11 +554,10 @@ async function loadCatalogRow(
   const base = addonBaseUrl(addon.transportUrl);
   const url = catalogRequestUrl(base, cat);
   if (!url) return { value: null, ok: true };
-  const res = await fetchWithTimeout(url, undefined, acceptLanguage);
-  if (!res || !res.ok) return { value: null, ok: false };
+  const json = await fetchJsonWithTimeout(url, 8000, acceptLanguage);
+  if (json === undefined) return { value: null, ok: false };
   try {
-    const json = await res.json();
-    const raw: Meta[] = json.metas ?? [];
+    const raw: Meta[] = (json as { metas?: Meta[] }).metas ?? [];
     if (raw.length === 0) return { value: null, ok: true };
     const origin = {
       id: addon.manifest.id,

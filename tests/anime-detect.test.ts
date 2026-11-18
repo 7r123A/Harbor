@@ -15,6 +15,8 @@ function fixture(initial: Record<string, string> = {}) {
   const tmdbCalls: number[] = [];
   const timers: Array<() => void> = [];
   const pageListeners = new Map<string, () => void>();
+  const writes: string[] = [];
+  const io = { failWrites: false };
   const mocks: Record<string, unknown> = {
     react: { useSyncExternalStore: () => {} },
     "@/lib/cinemeta": {
@@ -35,7 +37,12 @@ function fixture(initial: Record<string, string> = {}) {
     },
     "@/lib/providers/kitsu": { kitsuAnime: async () => null },
     "@/lib/storage-recovery": {
-      setItemWithRecovery: (key: string, value: string) => storage.set(key, value),
+      setItemWithRecovery: (key: string, value: string) => {
+        writes.push(key);
+        if (io.failWrites) return false;
+        storage.set(key, value);
+        return true;
+      },
     },
     "@/lib/render-cause": { noteNotify: () => {} },
   };
@@ -84,6 +91,8 @@ function fixture(initial: Record<string, string> = {}) {
     storage,
     timers,
     pageListeners,
+    writes,
+    io,
   };
 }
 
@@ -171,4 +180,21 @@ test("detected anime are written in one batch and flushed when the page goes awa
     "tt201",
     "tt202",
   ]);
+  assert.equal(h.writes.filter((k) => k === "harbor.anime.detected.v2").length, 1);
+});
+
+test("a failed batch write of detected anime is retried when the page goes away", async () => {
+  const h = fixture();
+  h.metadata.set("tt301", { genres: ["Animation"], country: "Japan" });
+  await h.api.detectAnimeForCw([{ _id: "tt301", type: "series" }]);
+  h.io.failWrites = true;
+  for (const run of h.timers.splice(0)) run();
+  assert.equal(h.storage.has("harbor.anime.detected.v2"), false);
+  h.io.failWrites = false;
+  h.pageListeners.get("pagehide")?.();
+  assert.deepEqual(JSON.parse(h.storage.get("harbor.anime.detected.v2") ?? "[]"), ["tt301"]);
+  // Once written, a later pagehide has nothing left to write.
+  const count = h.writes.length;
+  h.pageListeners.get("pagehide")?.();
+  assert.equal(h.writes.length, count);
 });

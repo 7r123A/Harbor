@@ -99,19 +99,99 @@ test("an addon change or a write makes the next read fetch again", async () => {
   }
 });
 
+// Serves the account list from `list`, holding each read until `release` is called.
+function mockHeldStremioApi(list: { current: string[] }) {
+  const original = globalThis.fetch;
+  const calls: string[] = [];
+  const held: (() => void)[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(input);
+    calls.push(url);
+    let result: unknown = { success: true };
+    if (url.endsWith("/addonCollectionGet")) {
+      const ids = list.current.slice();
+      await new Promise<void>((resolve) => held.push(resolve));
+      result = {
+        addons: ids.map((id) => ({
+          transportUrl: `https://${id}.example/manifest.json`,
+          manifest: { id, name: id },
+        })),
+      };
+    } else {
+      const body = JSON.parse(String(init?.body)) as { addons: { manifest: { id: string } }[] };
+      list.current = body.addons.map((a) => a.manifest.id);
+    }
+    return new Response(JSON.stringify({ result }), {
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+  const release = () => held.splice(0).forEach((r) => r());
+  return { calls, release, restore: () => (globalThis.fetch = original) };
+}
+
+const ids = (list: { manifest: { id: string } }[]) => list.map((a) => a.manifest.id);
+
 test("a read that overlaps a write is not kept", async () => {
   addons.invalidateUserAddons();
-  const api = mockStremioApi();
+  const list = { current: ["a"] };
+  const api = mockHeldStremioApi(list);
   try {
+    // The read asks before the write lands and answers only after it, so its list is stale.
     const during = addons.cachedUserAddons("key");
+    await new Promise((r) => setTimeout(r, 0));
     await addons.setUserAddonsRaw("key", [
       { transportUrl: "https://b.example/manifest.json", manifest: { id: "b", name: "B" } },
     ]);
-    await during;
-    await addons.cachedUserAddons("key");
+    api.release();
+    assert.deepEqual(ids(await during), ["a"]);
+
+    const after = addons.cachedUserAddons("key");
+    await new Promise((r) => setTimeout(r, 0));
+    api.release();
+    assert.deepEqual(ids(await after), ["b"]);
     assert.equal(reads(api.calls), 2);
   } finally {
+    api.release();
     api.restore();
+  }
+});
+
+test("a read that settles while a write is pending is not kept", async () => {
+  addons.invalidateUserAddons();
+  const list = { current: ["a"] };
+  const original = globalThis.fetch;
+  let finishWrite = () => {};
+  const calls: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(input);
+    calls.push(url);
+    if (url.endsWith("/addonCollectionSet")) {
+      await new Promise<void>((resolve) => (finishWrite = resolve));
+      const body = JSON.parse(String(init?.body)) as { addons: { manifest: { id: string } }[] };
+      list.current = body.addons.map((a) => a.manifest.id);
+      return new Response(JSON.stringify({ result: { success: true } }));
+    }
+    const addonsList = list.current.map((id) => ({
+      transportUrl: `https://${id}.example/manifest.json`,
+      manifest: { id, name: id },
+    }));
+    return new Response(JSON.stringify({ result: { addons: addonsList } }));
+  }) as typeof fetch;
+  try {
+    const write = addons.setUserAddonsRaw("key", [
+      { transportUrl: "https://b.example/manifest.json", manifest: { id: "b", name: "B" } },
+    ]);
+    // Answered from the server's list before the write commits, so neither read is kept.
+    assert.deepEqual(ids(await addons.cachedUserAddons("key")), ["a"]);
+    await addons.cachedUserAddons("key");
+    assert.equal(reads(calls), 2);
+    finishWrite();
+    await write;
+    assert.deepEqual(ids(await addons.cachedUserAddons("key")), ["b"]);
+    assert.equal(reads(calls), 3);
+  } finally {
+    finishWrite();
+    globalThis.fetch = original;
   }
 });
 
@@ -302,6 +382,81 @@ test("the most used catalog rows survive eviction", async () => {
   const before = loads;
   await catalogCache.cachedCatalogRow("hot", load);
   assert.equal(loads, before);
+  // The least recently used row was the one evicted, so it loads again.
+  await catalogCache.cachedCatalogRow("cold-0", load);
+  assert.equal(loads, before + 1);
+});
+
+test("an empty catalog row is not served stale", () =>
+  withClock(11_000_000, async (advance) => {
+    let loads = 0;
+    const load = async () => ({ value: ++loads === 1 ? null : "filled", ok: true });
+    assert.equal((await catalogCache.cachedCatalogRow("empty", load)).value, null);
+    advance(11 * 60 * 1000);
+    // Past its TTL the caller waits for the reload instead of keeping the empty row.
+    assert.equal((await catalogCache.cachedCatalogRow("empty", load)).value, "filled");
+    assert.equal(loads, 2);
+  }));
+
+test("an addon change drops cached catalog rows and loads that were running", async () => {
+  let loads = 0;
+  const load = async () => ({ value: `v${++loads}`, ok: true });
+  assert.equal((await catalogCache.cachedCatalogRow("changed", load)).value, "v1");
+
+  let finish: (row: { value: string; ok: boolean }) => void = () => {};
+  const slow = () => new Promise<{ value: string; ok: boolean }>((resolve) => (finish = resolve));
+  const pending = catalogCache.cachedCatalogRow("changed-pending", slow);
+
+  events.dispatchEvent(new Event("harbor:addons-changed"));
+  assert.equal((await catalogCache.cachedCatalogRow("changed", load)).value, "v2");
+
+  // The load that began before the change still answers its caller, but is not stored.
+  finish({ value: "old", ok: true });
+  assert.equal((await pending).value, "old");
+  assert.equal((await catalogCache.cachedCatalogRow("changed-pending", load)).value, "v3");
+});
+
+test("an empty settings mirror still sends the default catalog language", async () => {
+  store.set("harbor.settings", "");
+  const original = globalThis.fetch;
+  const languages: (string | null)[] = [];
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    languages.push(new Headers(init?.headers).get("Accept-Language"));
+    return new Response(JSON.stringify({ metas: [] }));
+  }) as typeof fetch;
+  try {
+    const addon = {
+      transportUrl: "https://empty-settings.example/manifest.json",
+      manifest: { id: "empty-settings", name: "Empty" },
+    } as unknown as Parameters<typeof addons.fetchCatalogRow>[0];
+    await addons.fetchCatalogRow(addon, { id: "top", type: "movie", name: "Top" });
+    assert.deepEqual(languages, ["en-US,en;q=0.8"]);
+  } finally {
+    globalThis.fetch = original;
+    store.delete("harbor.settings");
+  }
+});
+
+test("a catalog response whose body stalls fails the row at the deadline", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    ({
+      ok: true,
+      json: () => new Promise(() => {}),
+    }) as unknown as Response) as typeof fetch;
+  try {
+    const addon = {
+      transportUrl: "https://stalled.example/manifest.json",
+      manifest: { id: "stalled", name: "Stalled" },
+    } as unknown as Parameters<typeof addons.fetchCatalogRow>[0];
+    const row = addons.fetchCatalogRow(addon, { id: "top", type: "movie", name: "Top" });
+    await Promise.resolve();
+    t.mock.timers.tick(8000);
+    assert.deepEqual(await row, { value: null, ok: false });
+  } finally {
+    globalThis.fetch = original;
+  }
 });
 
 test("settings flags follow every change to the stored settings", () => {
@@ -321,4 +476,10 @@ test("settings flags follow every change to the stored settings", () => {
   assert.equal(policy.useTmdbTopMatch(), true);
   store.set("harbor.settings", "null");
   assert.equal(policy.addonOnlyMetadata(), false);
+  // An empty or unparseable mirror reads as absent instead of throwing.
+  store.set("harbor.settings", "");
+  assert.equal(policy.readSettingsMirror(), null);
+  store.set("harbor.settings", "{not json");
+  assert.equal(policy.readSettingsMirror(), null);
+  store.delete("harbor.settings");
 });
