@@ -104,7 +104,7 @@ import { MusicTrackCollectionPage } from "./music/music-track-collection-page";
 import type { MusicCollectionEntry } from "@/lib/music/library-collections";
 import { gateBand, scrobbleShelf } from "./music/music-band-gates";
 import { tracksOf, type MusicBand, type MusicBandContext } from "./music/music-band-types";
-import { catalogBands } from "./music/music-catalog-bands";
+import { catalogBands, ytMusicBands } from "./music/music-catalog-bands";
 import { splitHomeRows } from "./music/music-home-rows";
 import { madeForYouBand } from "./music/music-made-for-you-band";
 import { jumpBackInBand } from "./music/music-jump-back-in";
@@ -1078,8 +1078,23 @@ function MusicViewContent({ active }: { active: boolean }) {
     return () => window.removeEventListener(MUSIC_LABEL_EVENT, receive);
   }, [openLabel]);
 
+  const youtubeRows = useMemo(
+    () => data.homeRows.filter((row) => row.source === "youtube" && row.items.length > 0),
+    [data.homeRows],
+  );
+  const spotifyHomeRows = useMemo(
+    () => data.homeRows.filter((row) => row.source === "spotify" && row.items.length > 0),
+    [data.homeRows],
+  );
   const slots = useMemo(
-    () => splitHomeRows(data.homeRows, connections),
+    () =>
+      splitHomeRows(
+        // Provider rows render in their own sections, so they do not also fill the generic
+        // new-releases / charts / extras slots (Spotify's "top tracks" used to fall through a
+        // chart-shaped id and end up in the page's extras tail).
+        data.homeRows.filter((row) => row.source !== "youtube" && row.source !== "spotify"),
+        connections,
+      ),
     [data.homeRows, connections],
   );
 
@@ -1153,7 +1168,7 @@ function MusicViewContent({ active }: { active: boolean }) {
   };
 
   const personal = personalBands(context);
-  const spotifyRows = spotifyBands(context);
+  const spotifyRows = spotifyBands(context, spotifyHomeRows);
   const catalog = catalogBands(context);
   const bands: MusicBand[] = [];
   // Sits between the hero's source options and Jump back in, so pinned
@@ -1214,6 +1229,9 @@ function MusicViewContent({ active }: { active: boolean }) {
   });
   const newReleaseCtas = newReleaseCtaBand(context);
   if (newReleaseCtas) bands.push(newReleaseCtas);
+  // YouTube Music's own shelves sit together above the video discovery instead of in the
+  // page's extras tail, where they were buried behind every Harbor row.
+  bands.push(...ytMusicBands(context, youtubeRows));
   bands.push({
     key: "music:videos",
     title: t("music.now.videos"),
