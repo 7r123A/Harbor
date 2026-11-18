@@ -6,9 +6,9 @@
 //! its very first read and mpv reports MPV_ERROR_LOADING_FAILED. yt-dlp carries the PO token
 //! and signature work that keeps a URL whole, and it is updated as YouTube tightens.
 //!
-//! The borrowed session is an upgrade, never a dependency: extraction runs anonymously when no
-//! session exists, and a failed signed-in attempt retries anonymously so revoked cookies cannot
-//! block a public track.
+//! The borrowed session is a fallback, never the first choice: anonymous extraction resolves
+//! public audio faster, so the session is only used when anonymous extraction is refused and
+//! the media actually needs the account.
 
 use super::super::super::{MusicStream, MusicVideoStream};
 use std::path::PathBuf;
@@ -74,6 +74,14 @@ fn note_downgrade(reason: &str) {
     eprintln!("[harbor::music] session downgraded to anonymous: {reason}");
 }
 
+/// Anonymous extraction answers public audio about 1.7s faster than a cookie-authenticated
+/// one, so the session is the retry for the content that actually needs it.
+fn note_session_retry(reason: &str) {
+    crate::music::trace::log(format!(
+        "anonymous extraction failed, retrying with the session: {reason}"
+    ));
+}
+
 fn stream_args(video_id: &str, cookies: &Option<CookieFile>) -> Vec<String> {
     let mut args = vec![
         "--js-runtimes".to_string(),
@@ -111,14 +119,13 @@ async fn extract_audio(
 
 pub async fn stream(app: &tauri::AppHandle, video_id: &str) -> Result<MusicStream, String> {
     let cookies = cookie_file();
-    let authenticated = cookies.is_some();
-    match extract_audio(app, video_id, &cookies).await {
+    // Public audio extracts faster anonymously; only restricted media needs the account. Try
+    // anonymously first and fall back to the session, rather than paying that cost on every song.
+    match extract_audio(app, video_id, &None).await {
         Ok(stream) => Ok(stream),
-        // A stale or revoked session must not cost the listener a public track.
-        Err(error) if authenticated => {
-            drop(cookies);
-            note_downgrade(&format!("signed-in audio extraction failed: {error}"));
-            extract_audio(app, video_id, &None).await
+        Err(anonymous_error) if cookies.is_some() => {
+            note_session_retry(&anonymous_error);
+            extract_audio(app, video_id, &cookies).await
         }
         Err(error) => Err(error),
     }
@@ -160,13 +167,11 @@ pub async fn video_stream(
 ) -> Result<MusicVideoStream, String> {
     let cap = max_height.unwrap_or(1080).clamp(144, 2160);
     let cookies = cookie_file();
-    let authenticated = cookies.is_some();
-    match extract_video(app, video_id, cap, &cookies).await {
+    match extract_video(app, video_id, cap, &None).await {
         Ok(stream) => Ok(stream),
-        Err(error) if authenticated => {
-            drop(cookies);
-            note_downgrade(&format!("signed-in video extraction failed: {error}"));
-            extract_video(app, video_id, cap, &None).await
+        Err(anonymous_error) if cookies.is_some() => {
+            note_session_retry(&anonymous_error);
+            extract_video(app, video_id, cap, &cookies).await
         }
         Err(error) => Err(error),
     }
