@@ -121,8 +121,13 @@ export function FriendReviewBadges({
         {averageScore !== null && (
           <span
             title={t("Harbor users average score")}
-            className={`${shown.length > 0 ? "-ms-2 ps-3 " : "rounded-full ps-2 "}inline-flex shrink-0 items-center rounded-e-full bg-elevated/80 pe-2 text-[12px] font-semibold leading-none tabular-nums text-ink`}
-            style={{ height: avatarSize }}
+            className="inline-flex shrink-0 items-center rounded-full pe-2 text-[12px] font-semibold leading-none tabular-nums text-ink"
+            style={{
+              height: Math.max(18, Math.round(avatarSize * 0.86)),
+              marginInlineStart: shown.length > 0 ? -Math.round(avatarSize / 2) : 0,
+              paddingInlineStart: shown.length > 0 ? Math.round(avatarSize / 2) + 4 : 8,
+              backgroundColor: "color-mix(in srgb, var(--color-ink) 10%, var(--color-canvas))",
+            }}
           >
             <span>{averageScore.toFixed(1)}</span>
           </span>
