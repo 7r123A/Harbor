@@ -5,7 +5,12 @@ import test from "node:test";
 
 // The prewarm helper reads the same browser globals as the engine callers.
 (globalThis as unknown as { window: unknown }).window = { __TAURI_INTERNALS__: {} };
-(globalThis as unknown as { localStorage: unknown }).localStorage = { getItem: () => null };
+const stored = new Map<string, string>();
+(globalThis as unknown as { localStorage: unknown }).localStorage = {
+  getItem: (key: string) => stored.get(key) ?? null,
+  setItem: (key: string, value: string) => void stored.set(key, value),
+  removeItem: (key: string) => void stored.delete(key),
+};
 
 const prewarm = await import("../src/lib/streams/p2p-prewarm.ts");
 
@@ -18,9 +23,14 @@ type Fake = {
 };
 
 const HASH = "0123456789abcdef0123456789abcdef01234567";
+const OTHER_HASH = "89abcdef0123456789abcdef0123456789abcdef";
 
-function target(overrides: Record<string, unknown> = {}) {
-  return { infoHash: HASH, sources: [], fileIdx: 2, ...overrides } as never;
+function hashOf(magnet: string): string {
+  return magnet.match(/urn:btih:([a-f0-9]{40})/)?.[1] ?? HASH;
+}
+
+function target(infoHash = HASH, overrides: Record<string, unknown> = {}) {
+  return { infoHash, sources: [], fileIdx: 2, ...overrides } as never;
 }
 
 function fakeDeps(options: { manual?: boolean } = {}): Fake {
@@ -31,14 +41,13 @@ function fakeDeps(options: { manual?: boolean } = {}): Fake {
     abandoned,
     add: (magnet, trackers, fileIdx) => {
       calls.push({ magnet, trackers, fileIdx });
-      if (!options.manual) {
-        return Promise.resolve({
-          info_hash: HASH,
-          stream_base: "http://127.0.0.1:1/stream",
-          already_managed: false,
-          files: [],
-        });
-      }
+      const added: Added = {
+        info_hash: hashOf(magnet),
+        stream_base: "http://127.0.0.1:1/stream",
+        already_managed: false,
+        files: [],
+      };
+      if (!options.manual) return Promise.resolve(added);
       return new Promise<Added>((resolve) => {
         fake.settle = resolve;
       });
@@ -49,7 +58,10 @@ function fakeDeps(options: { manual?: boolean } = {}): Fake {
 
 function install(fake: Fake) {
   prewarm.__resetPrewarmForTest();
-  prewarm.__setPrewarmDepsForTest({ add: fake.add, abandon: (hash) => fake.abandoned.push(hash) });
+  prewarm.__setPrewarmDepsForTest({
+    add: fake.add,
+    abandon: (hash) => fake.abandoned.push(hash),
+  });
   return fake;
 }
 
@@ -101,16 +113,50 @@ test("recent prewarms are not repeated for the same infohash", async () => {
   assert.equal(fake.calls.length, 1);
 });
 
+test("abandoning clears the cooldown so the next play can prewarm again", async () => {
+  const fake = install(fakeDeps());
+  await prewarm.prewarmP2pStream(target());
+  prewarm.abandonPrewarmedStream(target());
+  const again = prewarm.prewarmP2pStream(target());
+  assert.ok(again, "a fresh prewarm may start after an abandon");
+  await again;
+  assert.equal(fake.calls.length, 2);
+});
+
 test("non-P2P sources are ignored", () => {
   const fake = install(fakeDeps());
-  assert.equal(prewarm.prewarmP2pStream(target({ url: "https://example.test/a.mkv" })), null);
-  assert.equal(prewarm.prewarmP2pStream(target({ infoHash: null })), null);
+  assert.equal(prewarm.prewarmP2pStream(target(HASH, { url: "https://example.test/a.mkv" })), null);
+  assert.equal(prewarm.prewarmP2pStream(target(HASH, { infoHash: null })), null);
   assert.equal(fake.calls.length, 0);
 });
 
 test("the abandon timer removes a prewarm nobody played", async () => {
   const fake = install(fakeDeps());
   await prewarm.prewarmP2pStream(target(), { abandonAfterMs: 1 });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(fake.abandoned, [HASH]);
+});
+
+test("a new hovered source discards the previous hover prewarm", async () => {
+  const fake = install(fakeDeps());
+  await prewarm.prewarmP2pStream(target(HASH), { intent: true });
+  await prewarm.prewarmP2pStream(target(OTHER_HASH), { intent: true });
+  assert.deepEqual(fake.abandoned, [HASH], "browsing rows must not keep every source warm");
+  assert.equal(fake.calls.length, 2);
+});
+
+test("releasing the picker drops the active hover prewarm", async () => {
+  const fake = install(fakeDeps());
+  await prewarm.prewarmP2pStream(target(), { intent: true });
+  prewarm.releaseIntentPrewarm();
+  assert.deepEqual(fake.abandoned, [HASH]);
+});
+
+test("the play path prewarming another source keeps the hover prewarm", async () => {
+  const fake = install(fakeDeps());
+  await prewarm.prewarmP2pStream(target(HASH), { intent: true });
+  await prewarm.prewarmP2pStream(target(OTHER_HASH));
+  assert.deepEqual(fake.abandoned, []);
+  prewarm.releaseIntentPrewarm();
   assert.deepEqual(fake.abandoned, [HASH]);
 });

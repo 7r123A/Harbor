@@ -49,6 +49,7 @@ import { isAddonRanked } from "@/lib/streams/addon-detect";
 import { isFilterEmpty, matchesCustomFilter } from "@/lib/streams/custom-filters";
 import { useScrollMemory, useView, type PlayEpisode, type PlayerSrc } from "@/lib/view";
 import { prefetchSegments } from "@/lib/skip-intro";
+import { releaseIntentPrewarm } from "@/lib/streams/p2p-prewarm";
 import { exitWindowFullscreen } from "@/lib/fullscreen-state";
 import { useWindowFullscreen } from "@/lib/use-window-fullscreen";
 import { AutoExhaustedModal } from "./play-picker/auto-exhausted-modal";
@@ -173,6 +174,9 @@ export function PlayPicker({
   } = useTogether();
   const inSession = roomSnapshot.state === "joined";
   const resolvedImdb = useImdbId(meta, settings.tmdbKey);
+  // Leaving the picker (play, back, or a source switch) drops any hover/focus
+  // prewarm so it cannot outlive the list that started it.
+  useEffect(() => () => releaseIntentPrewarm(), []);
   useEffect(() => {
     prefetchSegments(meta, episode);
   }, [meta, episode]);

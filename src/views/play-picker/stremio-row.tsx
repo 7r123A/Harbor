@@ -20,6 +20,7 @@ export function StremioRow({
   match = null,
   onPlay,
   onIntent,
+  onIntentCancel,
   download = false,
   downloadState = "idle",
   isAnime = false,
@@ -31,6 +32,8 @@ export function StremioRow({
   onPlay: () => void;
   /** Fired once a source is deliberately focused or hovered long enough to count as intent. */
   onIntent?: () => void;
+  /** Fired when that intent leaves the row; any prewarm it started is no longer wanted. */
+  onIntentCancel?: () => void;
   download?: boolean;
   downloadState?: "idle" | "preparing" | "queued";
   isAnime?: boolean;
@@ -38,6 +41,7 @@ export function StremioRow({
   const t = useT();
   const { settings } = useSettings();
   const intentTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const intentFired = useRef(false);
   const clearIntentTimer = () => {
     if (intentTimer.current != null) {
       clearTimeout(intentTimer.current);
@@ -54,8 +58,15 @@ export function StremioRow({
     if (!onIntent || intentTimer.current != null) return;
     intentTimer.current = setTimeout(() => {
       intentTimer.current = null;
+      intentFired.current = true;
       onIntent();
     }, INTENT_PREWARM_DELAY_MS);
+  };
+  const cancelIntent = () => {
+    const fired = intentFired.current;
+    intentFired.current = false;
+    clearIntentTimer();
+    if (fired) onIntentCancel?.();
   };
   const full = settings.fullStreamDescription;
   const addonName = stream.addonName ?? t("Source");
@@ -75,8 +86,8 @@ export function StremioRow({
   return (
     <div
       onPointerEnter={onIntent ? intentSoon : undefined}
-      onPointerLeave={onIntent ? clearIntentTimer : undefined}
-      onFocus={onIntent}
+      onPointerLeave={onIntent ? cancelIntent : undefined}
+      onFocus={onIntent ? intentSoon : undefined}
       className={`flex items-stretch gap-5 rounded-2xl bg-elevated/40 p-5 ring-1 transition-colors ${
         failed ? "ring-danger/40 bg-danger/5" : "ring-edge-soft/50"
       }`}

@@ -26,6 +26,10 @@ const playerDownload = read("src/views/player/hooks/use-video-download.ts");
 const magnetCard = read("src/components/search/magnet-card.tsx");
 const app = read("src/App.tsx");
 const dhtBoot = read("src-tauri/src/torrent_engine/dht_boot.rs");
+const p2pModal = read("src/views/play-picker/p2p-confirm-modal.tsx");
+const prewarmHelper = read("src/lib/streams/p2p-prewarm.ts");
+const stremioLayout = read("src/views/play-picker/stremio-layout.tsx");
+const stremioRow = read("src/views/play-picker/stremio-row.tsx");
 const autoRetry = read("src/views/player/hooks/use-auto-retry.ts");
 
 test("selecting a torrent file starts discovery and prefetch while the player boots", () => {
@@ -41,6 +45,17 @@ test("selecting a torrent file starts discovery and prefetch while the player bo
 test("starting playback reuses the prewarmed magnet add", () => {
   assert.match(resolve, /prewarmP2pStream\(stream\)/);
   assert.match(resolve, /prewarmed\s*\?\s*await prewarmed/);
+});
+
+test("the consent prompt ignores StrictMode cleanup before remounting", () => {
+  assert.match(p2pModal, /const mountGeneration = useRef\(0\)/);
+  assert.match(p2pModal, /mountGeneration\.current === generation/);
+});
+
+test("magnet adds record their origin for diagnostics", () => {
+  assert.match(engine, /origin=\{origin\}/);
+  assert.match(prewarmHelper, /"prewarm"/);
+  assert.match(resolve, /"resolve"/);
 });
 
 test("the local HTTP stream request starts a paused torrent on demand", () => {
@@ -266,4 +281,30 @@ test("closing magnet setup removes a newly-created torrent before player handoff
   assert.match(magnetCard, /scheduleAbandonedTorrentRemoval\(infoHash, 0\)/);
   assert.match(magnetCard, /if \(added\.already_managed !== true\)/);
   assert.match(magnetCard, /startPlay\(videos\[0\]\.idx, videos\[0\]\.name, added\)/);
+});
+
+test("hover prewarm is exclusive and drops a source when the row is left", () => {
+  assert.match(prewarmHelper, /INTENT_PREWARM_DELAY_MS = 1000/);
+  assert.match(prewarmHelper, /let intentKey: string \| null = null/);
+  assert.match(prewarmHelper, /claimIntentKey\(key\)/);
+  assert.match(prewarmHelper, /export function releaseIntentPrewarm/);
+  assert.match(prewarmHelper, /if \(intentKey === key\) intentKey = null/);
+  assert.match(stremioLayout, /intent: true/);
+  assert.match(
+    stremioLayout,
+    /onIntentCancel=\{download \? undefined : \(\) => abandonPrewarmedStream\(s\)\}/,
+  );
+  assert.match(stremioRow, /onPointerLeave=\{onIntent \? cancelIntent : undefined\}/);
+  assert.match(stremioRow, /onFocus=\{onIntent \? intentSoon : undefined\}/);
+  assert.match(stremioRow, /if \(fired\) onIntentCancel\?\.\(\)/);
+  assert.match(picker, /releaseIntentPrewarm\(\)/);
+});
+
+test("prewarm-only torrents left by a closed session are removed on startup", () => {
+  assert.match(usage, /PREWARM_LEDGER_KEY/);
+  assert.match(usage, /export function registerPrewarmTorrent/);
+  assert.match(usage, /export function reconcilePrewarmTorrents/);
+  assert.match(usage, /if \(origin === "prewarm" && added\.already_managed !== true\)/);
+  assert.match(usage, /unregisterPrewarmTorrent\(infoHash\)/);
+  assert.match(app, /void reconcilePrewarmTorrents\(\)/);
 });

@@ -157,6 +157,7 @@ import { mountHarborCursor } from "@/lib/harbor-cursor";
 import {
   flushPendingTorrentRemovals,
   reconcilePendingTorrentRemovals,
+  reconcilePrewarmTorrents,
   torrentEngineSetOptions,
 } from "@/lib/torrent/local-engine";
 import { findHotkeyMatch, shouldHandleGlobalKeyboardEvent } from "@/lib/hotkeys";
@@ -1347,6 +1348,7 @@ function Shell({ onReady }: { onReady?: () => void }) {
   useEffect(() => {
     if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
     void reconcilePendingTorrentRemovals();
+    void reconcilePrewarmTorrents();
   }, []);
 
   useEffect(() => {
