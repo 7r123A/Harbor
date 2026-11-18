@@ -284,14 +284,17 @@ export async function loadFriendTitleRatings(
  * Everyone: your friends plus the public community graph. This is deliberately loaded only when
  * the Everyone tab is opened, because it costs one history scan per person.
  */
-async function loadCommunityTitleRatings(target: TitleRef): Promise<TitleRatingsSnapshot> {
+async function loadCommunityTitleRatings(
+  target: TitleRef,
+  includeMatch = true,
+): Promise<TitleRatingsSnapshot> {
   const self = currentAuthor();
   const hub = await loadHubTitleRatings(
     target,
     "all",
     self?.handle ?? undefined,
     !self?.handle,
-    true,
+    includeMatch,
   );
   if (hub) return hub;
 
@@ -344,6 +347,31 @@ async function loadCommunityTitleRatings(target: TitleRef): Promise<TitleRatings
   };
 }
 
+const averageCache = new Map<string, { at: number; promise: Promise<number | null> }>();
+
+/** The same visible rating pool as Everyone, without fetching reviewer match scores. */
+export function loadTitleAverageScore(target: TitleRef): Promise<number | null> {
+  const key = `${currentAuthor()?.id ?? "anon"}|${target.mediaType}|${target.itemKey}`;
+  const hit = averageCache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL) return hit.promise;
+  const isCurrent = captureSessionScope();
+  const promise = loadCommunityTitleRatings(target, false)
+    .then((snapshot) => {
+      if (!isCurrent()) throw new Error("Account changed");
+      if (!snapshot.ratings.length) return null;
+      return (
+        snapshot.ratings.reduce((total, rating) => total + rating.score, 0) /
+        snapshot.ratings.length
+      );
+    })
+    .catch((error) => {
+      if (averageCache.get(key)?.promise === promise) averageCache.delete(key);
+      throw error;
+    });
+  averageCache.set(key, { at: Date.now(), promise });
+  return promise;
+}
+
 /** Publish the title's reviews and match scores together, even on older servers. */
 export async function loadTitleReviewsWithMatches(
   target: TitleRef,
@@ -380,4 +408,5 @@ export async function loadTitleReviewsWithMatches(
 /** Drops every cached history, so the next open reflects ratings changed elsewhere. */
 export function invalidateTitleReviewCaches(): void {
   historyCache.clear();
+  averageCache.clear();
 }

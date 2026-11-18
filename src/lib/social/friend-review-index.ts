@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { authToken, currentAuthor } from "@/lib/theme-auth";
+import { authToken, captureSessionScope, currentAuthor } from "@/lib/theme-auth";
+import type { RatingMediaType } from "@/lib/ratings/types";
 import { socialPost } from "./client";
 import { fetchFriends, type Friend } from "./friends";
 import { fetchUserRatings } from "./ratings-api";
 import { foldHandle } from "./review-rank";
+import { loadTitleAverageScore } from "./title-reviews";
 
 /**
  * Poster badges need "which friends rated this title" for every card without a request per card.
@@ -228,6 +230,8 @@ async function flushSummaryBatch(): Promise<void> {
   const batch = [...summaryPending.values()].slice(0, SUMMARIES_MAX);
   for (const item of batch) summaryPending.delete(item.contentType + "\u0000" + item.contentId);
   if (!batch.length) return;
+  const isCurrent = captureSessionScope();
+  let fallbackItems: typeof batch = [];
   try {
     const res = await socialPost<{
       items: Array<{
@@ -241,6 +245,9 @@ async function flushSummaryBatch(): Promise<void> {
     const next = new Map(index);
     for (const row of res.items ?? []) {
       const key = markKeyForItem(row.contentType, row.contentId);
+      if (row.averageScore === undefined) {
+        fallbackItems.push({ contentType: row.contentType, contentId: row.contentId });
+      }
       averageScores.set(
         key,
         typeof row.averageScore === "number" &&
@@ -262,9 +269,21 @@ async function flushSummaryBatch(): Promise<void> {
     }
     index = next;
     publish(true);
-  } catch {
-    /* The scan may still fill these in; a failure here just leaves the badge absent. */
+  } catch (error) {
+    const status = (error as { status?: number }).status;
+    if (status === 404 || status === 405) fallbackItems = batch;
   } finally {
+    await Promise.allSettled(
+      fallbackItems.map(async (item) => {
+        const score = await loadTitleAverageScore({
+          mediaType: item.contentType as RatingMediaType,
+          itemKey: item.contentId,
+        });
+        if (!isCurrent()) return;
+        averageScores.set(markKeyForItem(item.contentType, item.contentId), score);
+        publish(true);
+      }),
+    );
     if (summaryPending.size) {
       summaryTimer = window.setTimeout(() => {
         summaryTimer = null;
