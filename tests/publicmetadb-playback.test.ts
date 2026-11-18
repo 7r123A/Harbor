@@ -107,6 +107,9 @@ function harness(
     requestedPages,
     cache: cached,
     async fetch(): Promise<LibraryItem[]> {
+      return (await api.fetchPublicMetaDbPlaybackItems()).items;
+    },
+    async fetchResult() {
       return api.fetchPublicMetaDbPlaybackItems();
     },
     async snapshot() {
@@ -271,4 +274,39 @@ test("an absent totalPages makes the snapshot incomplete", async () => {
   const snapshot = await h.snapshot();
 
   assert.equal(snapshot.complete, false);
+});
+
+test("a partial PMDB walk is reported as not fresh", async () => {
+  const h = harness(
+    [],
+    {},
+    {
+      respond: (page) => {
+        if (page === 1) {
+          return {
+            items: [resumePoint()],
+            total: 1,
+            page,
+            perPage: 100,
+            totalPages: 2,
+          };
+        }
+        throw new Error("HTTP 500");
+      },
+    },
+  );
+
+  const result = await h.fetchResult();
+
+  assert.equal(result.fresh, false);
+  assert.equal(result.items.length, 1);
+});
+
+test("a complete PMDB read is reported as fresh", async () => {
+  const h = harness([resumePoint()]);
+
+  const result = await h.fetchResult();
+
+  assert.equal(result.fresh, true);
+  assert.equal(result.items.length, 1);
 });

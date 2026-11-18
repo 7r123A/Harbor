@@ -305,3 +305,13 @@ test("Trakt playback cache is account-scoped and never leaks across accounts", a
   assert.equal(fallback.items.length, 1);
   assert.equal(fallback.items[0]._id, "tt123");
 });
+
+test("reading the account cache drops the unattributable legacy cache", () => {
+  const storage = new Map<string, string>();
+  storage.set("harbor.trakt.playback_items", JSON.stringify([{ _id: "legacy" }]));
+  const h = load(async () => ({ data: [] }), { storage });
+  h.setSession({ username: "acct-a" });
+
+  assert.deepEqual(h.api.readCachedTraktPlaybackItems(), []);
+  assert.equal(storage.has("harbor.trakt.playback_items"), false);
+});

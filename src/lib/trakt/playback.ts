@@ -115,6 +115,18 @@ function traktAccountCacheKey(): string | null {
 
 const memoryTraktPlaybackCache = new Map<string, LibraryItem[]>();
 
+/**
+ * The old cache was a single global key that cannot be attributed to an
+ * account. It is never read by the account-scoped implementation, so remove it
+ * instead of leaving another account's progress on disk.
+ */
+function dropLegacyTraktPlaybackCache(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(TRAKT_LEGACY_PLAYBACK_CACHE_KEY);
+  } catch {}
+}
+
 function isValidTraktPlaybackItem(item: LibraryItem): boolean {
   if (!item || item.external !== "trakt" || !item.state) return false;
   if (item.upNext) return false;
@@ -126,6 +138,7 @@ function isValidTraktPlaybackItem(item: LibraryItem): boolean {
 }
 
 export function readCachedTraktPlaybackItems(): LibraryItem[] {
+  dropLegacyTraktPlaybackCache();
   const key = traktAccountCacheKey();
   if (!key) return [];
   const memory = memoryTraktPlaybackCache.get(key);
@@ -153,6 +166,7 @@ export function readCachedTraktPlaybackItems(): LibraryItem[] {
 }
 
 export function writeCachedTraktPlaybackItems(items: LibraryItem[]): void {
+  dropLegacyTraktPlaybackCache();
   const key = traktAccountCacheKey();
   if (!key) return;
   memoryTraktPlaybackCache.set(key, items);

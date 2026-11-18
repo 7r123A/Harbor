@@ -21,6 +21,8 @@ function fixture() {
   const timers = new Map<object, { callback: () => void; delay: number }>();
   const listeners: Record<string, () => void> = {};
   type ProviderReply = LibraryItem[] | { items: LibraryItem[]; fresh: boolean };
+  const reply = (value: ProviderReply): { items: LibraryItem[]; fresh: boolean } =>
+    Array.isArray(value) ? { items: value, fresh: true } : value;
   const providers: Record<"simkl" | "trakt" | "publicmetadb", () => Promise<ProviderReply>> = {
     simkl: async () => [],
     trakt: async () => [],
@@ -33,23 +35,24 @@ function fixture() {
     signedIn: false,
     active: false,
     fetches: 0,
+    fresh: true,
     accountId: "account-a",
     fetch: async (): Promise<LibraryItem[]> => [],
   };
   const mocks: Record<string, unknown> = {
     react: {},
     "@/lib/simkl/playback": {
-      fetchSimklPlaybackItems: () => providers.simkl(),
+      fetchSimklPlaybackItems: async () => reply(await providers.simkl()),
       readCachedSimklPlaybackItems: () => [],
       clearCachedSimklPlaybackItems: () => {},
     },
     "@/lib/trakt/playback": {
-      fetchTraktPlaybackItems: () => providers.trakt(),
+      fetchTraktPlaybackItems: async () => reply(await providers.trakt()),
       readCachedTraktPlaybackItems: () => [],
       clearCachedTraktPlaybackItems: () => {},
     },
     "@/lib/publicmetadb/playback": {
-      fetchPublicMetaDbPlaybackItems: () => providers.publicmetadb(),
+      fetchPublicMetaDbPlaybackItems: async () => reply(await providers.publicmetadb()),
     },
     "@/lib/publicmetadb/session": {
       getSession: () => (connected.publicmetadb ? sessions.publicmetadb : null),
@@ -80,7 +83,7 @@ function fixture() {
     "@/lib/nuvio/nuvio-playback": {
       fetchNuvioPlaybackItems: async () => {
         nuvio.fetches++;
-        return nuvio.fetch();
+        return { items: await nuvio.fetch(), fresh: nuvio.fresh };
       },
       readCachedNuvioPlaybackItems: () => [],
       writeCachedNuvioPlaybackItems: () => {},
@@ -159,6 +162,46 @@ test("a partial tracker failure retains its cards and retries without toggling t
     new Set(["new-simkl", fresh._id]),
   );
   assert.equal(h.timers.size, 0);
+});
+
+test("a stale provider result keeps its cards and retries instead of counting as fresh", async () => {
+  const h = fixture();
+  const cached = item("simkl", "cached-simkl");
+  h.providers.simkl = async () => ({ items: [cached], fresh: false });
+  h.providers.trakt = async () => [];
+  await h.api.refreshExternalCw(true);
+  assert.deepEqual(
+    h.api.listExternalCw().map((i) => i._id),
+    [cached._id],
+  );
+
+  h.providers.simkl = async () => [item("simkl", "live-simkl")];
+  assert.equal(await h.retry(), 1000);
+  assert.deepEqual(
+    h.api.listExternalCw().map((i) => i._id),
+    ["live-simkl"],
+  );
+});
+
+test("a stale Nuvio cache result does not mark the external refresh fresh", async () => {
+  const h = fixture();
+  h.connected.simkl = false;
+  h.connected.trakt = false;
+  h.nuvio.signedIn = true;
+  h.nuvio.active = true;
+  h.nuvio.fresh = false;
+  h.nuvio.fetch = async () => [{ ...item("simkl", "nuvio-cached"), external: "nuvio" }];
+  h.api.setExternalCwSources({ simkl: false, trakt: false, publicmetadb: false, nuvio: true });
+  await settle();
+  await settle();
+  assert.deepEqual(
+    h.api.listExternalCw().map((i) => i._id),
+    ["nuvio-cached"],
+  );
+
+  const fetches = h.nuvio.fetches;
+  await h.api.refreshExternalCw();
+  assert.equal(h.nuvio.fetches, fetches + 1, "a non-fresh Nuvio read must not be cached as fresh");
 });
 
 test("changing linked accounts clears the old account even if its replacement is offline", async () => {

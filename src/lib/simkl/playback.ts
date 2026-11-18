@@ -201,6 +201,18 @@ function simklAccountCacheKey(): string | null {
 
 const memorySimklPlaybackCache = new Map<string, LibraryItem[]>();
 
+/**
+ * The old cache was a single global key that cannot be attributed to an
+ * account. It is never read by the account-scoped implementation, so remove it
+ * instead of leaving another account's progress on disk.
+ */
+function dropLegacySimklPlaybackCache(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(SIMKL_LEGACY_PLAYBACK_CACHE_KEY);
+  } catch {}
+}
+
 function isValidSimklPlaybackItem(item: LibraryItem): boolean {
   if (!item || item.external !== "simkl" || !item.state) return false;
   if (item.upNext || item.waitingForAir) {
@@ -221,6 +233,7 @@ function isValidSimklPlaybackItem(item: LibraryItem): boolean {
 }
 
 export function readCachedSimklPlaybackItems(): LibraryItem[] {
+  dropLegacySimklPlaybackCache();
   const key = simklAccountCacheKey();
   if (!key) return [];
   const memory = memorySimklPlaybackCache.get(key);
@@ -248,6 +261,7 @@ export function readCachedSimklPlaybackItems(): LibraryItem[] {
 }
 
 export function writeCachedSimklPlaybackItems(items: LibraryItem[]): void {
+  dropLegacySimklPlaybackCache();
   const key = simklAccountCacheKey();
   if (!key) return;
   memorySimklPlaybackCache.set(key, items);

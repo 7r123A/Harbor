@@ -38,6 +38,10 @@ function fixture(initialNuvioActive = true, nuvioSignedIn = true) {
   const timers = new Map<object, { callback: () => void; delay: number }>();
   const listeners: Record<string, (e?: unknown) => void> = {};
   let nuvioItems: LibraryItem[] = [];
+  const reply = (items: LibraryItem[]): { items: LibraryItem[]; fresh: boolean } => ({
+    items,
+    fresh: true,
+  });
   const providers = {
     simkl: async (): Promise<LibraryItem[]> => [],
     trakt: async (): Promise<LibraryItem[]> => [],
@@ -55,7 +59,7 @@ function fixture(initialNuvioActive = true, nuvioSignedIn = true) {
   const mocks: Record<string, unknown> = {
     react: {},
     "@/lib/simkl/playback": {
-      fetchSimklPlaybackItems: () => providers.simkl(),
+      fetchSimklPlaybackItems: async () => reply(await providers.simkl()),
       readCachedSimklPlaybackItems: () => simklCache,
       writeCachedSimklPlaybackItems: (_items: LibraryItem[]) => {
         simklCache = _items;
@@ -65,7 +69,7 @@ function fixture(initialNuvioActive = true, nuvioSignedIn = true) {
       },
     },
     "@/lib/trakt/playback": {
-      fetchTraktPlaybackItems: () => providers.trakt(),
+      fetchTraktPlaybackItems: async () => reply(await providers.trakt()),
       readCachedTraktPlaybackItems: () => traktCache,
       writeCachedTraktPlaybackItems: (_items: LibraryItem[]) => {
         traktCache = _items;
@@ -75,7 +79,7 @@ function fixture(initialNuvioActive = true, nuvioSignedIn = true) {
       },
     },
     "@/lib/publicmetadb/playback": {
-      fetchPublicMetaDbPlaybackItems: () => providers.publicmetadb(),
+      fetchPublicMetaDbPlaybackItems: async () => reply(await providers.publicmetadb()),
     },
     "@/lib/publicmetadb/session": {
       getSession: () => (connected.publicmetadb ? sessions.publicmetadb : null),
@@ -111,7 +115,7 @@ function fixture(initialNuvioActive = true, nuvioSignedIn = true) {
     "@/lib/render-cause": { noteNotify: () => {} },
     "@/lib/startup-trace": { startupEvent: () => {} },
     "@/lib/nuvio/nuvio-playback": {
-      fetchNuvioPlaybackItems: async () => providers.nuvio(),
+      fetchNuvioPlaybackItems: async () => reply(await providers.nuvio()),
       readCachedNuvioPlaybackItems: () => nuvioItems,
       writeCachedNuvioPlaybackItems: (_slot: number, items: LibraryItem[]) => {
         nuvioItems = items;

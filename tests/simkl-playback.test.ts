@@ -451,3 +451,13 @@ test("clearing one Simkl account cache leaves another account cache intact", () 
   assert.equal(storage.has("harbor.simkl.playback_items.v2.acct-a"), false);
   assert.equal(storage.has("harbor.simkl.playback_items.v2.acct-b"), true);
 });
+
+test("reading the account cache drops the unattributable legacy cache", () => {
+  const storage = new Map<string, string>();
+  storage.set("harbor.simkl.playback_items", JSON.stringify([{ _id: "legacy" }]));
+  const h = playback([], undefined, { storage });
+  h.setSession({ username: "acct-a", accessToken: "a" });
+
+  assert.deepEqual(h.api.readCachedSimklPlaybackItems(), []);
+  assert.equal(storage.has("harbor.simkl.playback_items"), false);
+});
