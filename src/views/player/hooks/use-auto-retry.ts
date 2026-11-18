@@ -81,6 +81,13 @@ export function useAutoRetry(params: {
     src.continuation?.id,
   ]);
   const ENGINE_FIRST_FRAME_GRACE_MS = 20_000;
+  /**
+   * The engine now fails a stream request after ~12 s without a byte from the
+   * swarm. Treat a load error after that window as a real source failure instead
+   * of a slow start, so the picker moves on instead of waiting for the 20 s
+   * first-frame grace.
+   */
+  const ENGINE_LOAD_ERROR_GRACE_MS = 10_000;
   const ENGINE_HARD_CEILING_MS = 75_000;
   const ENGINE_COMPLETE_RELOAD_MS = 8_000;
   const ENGINE_COMPLETE_FAILURE_MS = 20_000;
@@ -330,11 +337,7 @@ export function useAutoRetry(params: {
       return;
     }
     if (playedPastStartRef.current || getPlaybackPosition() > 5) return;
-    if (
-      isP2pEngine &&
-      !engineFailure &&
-      Date.now() - urlAtRef.current < ENGINE_FIRST_FRAME_GRACE_MS
-    )
+    if (isP2pEngine && !engineFailure && Date.now() - urlAtRef.current < ENGINE_LOAD_ERROR_GRACE_MS)
       return;
     const recoveryBridge = bridgeRef.current;
     if (!recoveryBridge) return;
