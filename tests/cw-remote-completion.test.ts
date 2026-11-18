@@ -364,6 +364,11 @@ test("remote completion advances an old pause and skips following remotely watch
   assert.equal(out.state.episode, 4);
   assert.equal(out.upNext, true);
   assert.equal(out.state.timeOffset, 0);
+  assert.equal(
+    out.state.lastWatched,
+    iso(0),
+    "the advanced card must carry the remote completion time, not the old checkpoint",
+  );
 });
 
 test("rapid input changes coalesce into one trailing pass with the latest items", async () => {

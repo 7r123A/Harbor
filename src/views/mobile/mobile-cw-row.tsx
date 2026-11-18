@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/auth";
 import { providerMappedEpisode } from "@/lib/cw-anime-episode";
 import { resolveCwAnimeVideo } from "@/lib/cw-anime-video";
 import { dedupeCwItems } from "@/lib/cw-dedupe";
+import { sortCwFinal } from "@/lib/cw-order";
 import { useInViewport } from "@/lib/visibility";
 import { anyProfileSharesStremioWith, useProfiles } from "@/lib/profiles";
 import { useHideAnime } from "@/lib/anime-hide";
@@ -231,7 +232,7 @@ export function useMobileCw(limit = 14): LibraryItem[] {
       .map((i) => ({ i, k: cwSortKey(i) }))
       .sort((a, b) => b.k - a.k)
       .map((e) => e.i);
-    return dedupeCwItems(dedupeAnimeCw(merged), limit);
+    return sortCwFinal(dedupeCwItems(dedupeAnimeCw(merged), Infinity)).slice(0, limit);
   }, [
     items,
     externalCw,

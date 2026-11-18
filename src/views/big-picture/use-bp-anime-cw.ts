@@ -10,6 +10,7 @@ import { setExternalCwSources, useExternalCw } from "@/lib/feed/external-cw";
 import { isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import { animeCwIdsVersion, subscribeAnimeCwIds } from "@/lib/anime-cw-ids";
 import { dedupeAnimeCw, warmCwAnimeIdentities } from "@/lib/cw-anime-identity";
+import { sortCwFinal } from "@/lib/cw-order";
 import { publishResumeStates } from "@/lib/hover-preview/store";
 import {
   listLocalCw,
@@ -176,7 +177,7 @@ export function useBpAnimeCwBase(): BpAnimeCwBase {
         return true;
       })
       .sort((a, b) => cwSortKey(b) - cwSortKey(a));
-    return dedupeAnimeCw(sorted).slice(0, CW_CAP);
+    return sortCwFinal(dedupeAnimeCw(sorted)).slice(0, CW_CAP);
   }, [pool, cwVersion, animeDetectVer, animeIdsVersion, hideSharedCw]);
 
   useEffect(() => {

@@ -85,6 +85,7 @@ import {
   dedupeAnimeCw,
   warmCwAnimeIdentities,
 } from "@/lib/cw-anime-identity";
+import { sortCwFinal } from "@/lib/cw-order";
 import { cwCacheOwnerKey } from "@/lib/cw-derived-caches";
 import {
   cwAnimeVersion,
@@ -832,7 +833,7 @@ export function Home({
       if (manualToAdd.length > 0) candidateEligible = [...eligible, ...manualToAdd];
     }
 
-    return dedupeAnimeCw(candidateEligible).slice(0, 100);
+    return sortCwFinal(dedupeAnimeCw(candidateEligible)).slice(0, 100);
   }, [
     items,
     externalCw,

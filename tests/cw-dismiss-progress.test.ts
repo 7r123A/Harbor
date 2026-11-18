@@ -438,6 +438,7 @@ function advanceHarness(
       cwWarmIdentityKey: (item: any) => JSON.stringify(item),
     },
     "@/lib/cw-dedupe": { dedupeCwItems },
+    "@/lib/cw-order": { sortCwFinal: (items: LibraryItem[]) => items },
     "@/lib/cw-next-display": { cwNextDisplayCoords },
     "@/lib/stremio": {
       isAnimeCwItem: (item: LibraryItem) => /^(kitsu|mal|anilist|anidb):/.test(item._id),

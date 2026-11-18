@@ -60,6 +60,7 @@ import {
   warmCwAnimeIdentities,
 } from "@/lib/cw-anime-identity";
 import { dedupeCwItems } from "@/lib/cw-dedupe";
+import { sortCwFinal } from "@/lib/cw-order";
 import {
   cwDisplayInputFingerprint,
   cwDisplayOwnerKey,
@@ -1074,11 +1075,15 @@ export function useCwAdvance(
       // switch. Only the snapshot tied to this session can drive advancement.
       const effectiveSimklWatched = simkl?.watched ?? EMPTY_SIMKL_WATCHED;
       const effectiveSimklStatus = simkl?.statuses ?? EMPTY_SIMKL_STATUS;
+      const remoteCompletionAt = (i: LibraryItem): number | null => {
+        const cur = currentEpisode(i);
+        if (!cur || i.type !== "series" || !simkl) return null;
+        return simkl.watchedAt.get(i._id)?.get(`${cur.season}:${cur.episode}`) ?? null;
+      };
       const completedRemotely = (i: LibraryItem): boolean => {
         const cur = currentEpisode(i);
-        if (!cur || i.type !== "series" || !simkl) return false;
-        const at = simkl.watchedAt.get(i._id)?.get(`${cur.season}:${cur.episode}`);
-        if (!at) return false;
+        const at = remoteCompletionAt(i);
+        if (!cur || at == null) return false;
         const resume = readResumeEntry(i._id, cur.season, cur.episode);
         const lastPlayed = lastPlayedEpisode(i._id);
         // Imported resume timestamps record fetch time, not playback time. Only
@@ -1102,6 +1107,18 @@ export function useCwAdvance(
             effectiveSimklStatus,
           )(cur.season, cur.episode)
         );
+      };
+      /**
+       * A card that advances is being watched now (or was completed remotely at a
+       * known time), so it must carry that activity. Without it the advanced card
+       * keeps the finished checkpoint's old timestamp and sinks to the end of the
+       * row. Local advancement already has a fresh local playback/resume
+       * timestamp; only a remote completion needs to be stamped explicitly so a
+       * repeated pass cannot rewrite "now" onto an unchanged card.
+       */
+      const remoteLastWatched = (i: LibraryItem): { lastWatched?: string } => {
+        const at = remoteCompletionAt(i);
+        return at != null ? { lastWatched: new Date(at).toISOString() } : {};
       };
       const candidates = items.filter((i) => {
         if (i.external === "nuvio" && i.upNext === true) {
@@ -1227,6 +1244,7 @@ export function useCwAdvance(
         const setCaughtUp = () => {
           next.set(i._id, {
             ...base,
+            ...(base.state ? { state: { ...base.state, ...remoteLastWatched(i) } } : {}),
             upNext: undefined,
             waitingForAir: undefined,
             nextAirDate: undefined,
@@ -1306,6 +1324,7 @@ export function useCwAdvance(
                         video_id: `${i._id}:${nextUnwatched.season}:${nextUnwatched.episode}`,
                         timeOffset: 0,
                         flaggedWatched: 0,
+                        ...remoteLastWatched(i),
                       },
                       upNext: true,
                     });
@@ -1319,6 +1338,7 @@ export function useCwAdvance(
                         video_id: `${i._id}:${nextUnwatched.season}:${nextUnwatched.episode}`,
                         timeOffset: 0,
                         flaggedWatched: 0,
+                        ...remoteLastWatched(i),
                       },
                       upNext: true,
                       waitingForAir: true as const,
@@ -1591,6 +1611,7 @@ export function useCwAdvance(
         ) {
           next.set(i._id, {
             ...base,
+            ...(base.state ? { state: { ...base.state, ...remoteLastWatched(i) } } : {}),
             waitingForAir: true as const,
             nextAirDate: unplacedFollowUp.airDate,
           } as LibraryItem);
@@ -1623,6 +1644,7 @@ export function useCwAdvance(
               video_id: nextEp.kitsuStreamId ?? `${i._id}:${display.season}:${display.episode}`,
               timeOffset: 0,
               flaggedWatched: 0,
+              ...remoteLastWatched(i),
             },
             upNext: true,
           });
@@ -1646,6 +1668,7 @@ export function useCwAdvance(
               video_id: `${i._id}:${displaySeason}:${nextEp.episode}`,
               timeOffset: 0,
               flaggedWatched: 0,
+              ...remoteLastWatched(i),
             },
             upNext: true,
             waitingForAir: true as const,
@@ -1920,19 +1943,21 @@ export function useCwAdvance(
     resolvedOwner.simklSession !== simklSession ||
     resolvedOwner.simklEnabled !== simklEnabled
   )
-    return dedupeCwItems(
-      // Do not reuse the previous account's in-memory advancement during owner
-      // hydration. An exact checkpoint proof restored under the *new* owner
-      // scope is safe to display until its live pass finishes.
-      items
-        .map((i) => (i.removed && i.temp ? i : (restoredDisplay.advanced.get(i._id) ?? i)))
-        .filter(
-          (i) =>
-            isPlayableCwDisplay(i, enabled) &&
-            !isCwDismissed(i) &&
-            (animeMode !== "exclude" || !isAnimeCwItem(i)),
-        ),
-      Infinity,
+    return sortCwFinal(
+      dedupeCwItems(
+        // Do not reuse the previous account's in-memory advancement during owner
+        // hydration. An exact checkpoint proof restored under the *new* owner
+        // scope is safe to display until its live pass finishes.
+        items
+          .map((i) => (i.removed && i.temp ? i : (restoredDisplay.advanced.get(i._id) ?? i)))
+          .filter(
+            (i) =>
+              isPlayableCwDisplay(i, enabled) &&
+              !isCwDismissed(i) &&
+              (animeMode !== "exclude" || !isAnimeCwItem(i)),
+          ),
+        Infinity,
+      ),
     );
   // Dismissal targets the displayed up-next episode, which may differ from the
   // library entry. Filter stored display results immediately, without refetching.
@@ -1947,7 +1972,7 @@ export function useCwAdvance(
         !isCwDismissed(i) &&
         (animeMode !== "exclude" || !isAnimeCwItem(i)),
     );
-  if (displayExtra.length === 0) return dedupeCwItems(dedupeAnimeCw(base), Infinity);
+  if (displayExtra.length === 0) return sortCwFinal(dedupeCwItems(dedupeAnimeCw(base), Infinity));
   const keyOf = (i: LibraryItem) => `${i.type}|${franchiseDedupKey(i.name ?? "")}`;
   const animeIdentity = (i: LibraryItem) =>
     isAnimeCwItem(i) || cwAnimeIdentityKey(i._id, i.state?.video_id, i.state) != null;
@@ -1958,8 +1983,10 @@ export function useCwAdvance(
       !isCwDismissed(i) &&
       (animeMode !== "exclude" || !isAnimeCwItem(i)),
   );
-  return dedupeCwItems(
-    dedupeAnimeCw(dedupExtra.length === 0 ? base : base.concat(dedupExtra)),
-    Infinity,
+  return sortCwFinal(
+    dedupeCwItems(
+      dedupeAnimeCw(dedupExtra.length === 0 ? base : base.concat(dedupExtra)),
+      Infinity,
+    ),
   );
 }

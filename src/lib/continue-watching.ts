@@ -5,6 +5,7 @@ import { useSettings } from "@/lib/settings";
 import { listLocalCw, localCwSourceEnabled, subscribeLocalCw } from "@/lib/local-cw";
 import { animeCwIdsVersion, subscribeAnimeCwIds } from "@/lib/anime-cw-ids";
 import { dedupeAnimeCw, warmCwAnimeIdentities } from "@/lib/cw-anime-identity";
+import { sortCwFinal } from "@/lib/cw-order";
 import { isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import { setExternalCwSources } from "@/lib/feed/external-cw";
 import { useExternalCw } from "@/lib/feed/external-cw";
@@ -248,7 +249,7 @@ export function useContinueWatching(excludeId?: string, limit = 12): CwCard[] {
       .map((i) => ({ i, k: cwSortKey(i) }))
       .sort((a, b) => b.k - a.k)
       .map((e) => e.i);
-    return dedupeAnimeCw(merged.filter((i) => i._id !== excludeId))
+    return sortCwFinal(dedupeAnimeCw(merged.filter((i) => i._id !== excludeId)))
       .slice(0, limit)
       .map(toCard);
   }, [
