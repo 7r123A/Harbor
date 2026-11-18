@@ -15,8 +15,21 @@ pub async fn music_source_candidates(
     app: tauri::AppHandle,
     state: tauri::State<'_, MusicState>,
     track: MusicTrack,
+    connector: Option<String>,
 ) -> Result<Vec<MusicSourceCandidate>, String> {
-    let candidates = state.registry.candidates(&app, &track).await;
+    let only = connector
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
+    let candidates = match only {
+        Some(connector_id) => {
+            state
+                .registry
+                .candidates_for(&app, &track, connector_id)
+                .await
+        }
+        None => state.registry.candidates(&app, &track).await,
+    };
     for candidate in &candidates {
         state.db.upsert_track(&candidate.track)?;
     }

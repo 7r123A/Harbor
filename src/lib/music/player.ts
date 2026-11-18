@@ -918,6 +918,11 @@ async function nextPlayableSource(
 }
 
 
+/** Warm the cross-source candidate cache without making the listener wait for it. */
+export function warmMusicSourceCache(track: MusicTrack): void {
+  void sourcesFor(track).catch(() => {});
+}
+
 export async function playMusic(
   track: MusicTrack,
   queue = [track],
