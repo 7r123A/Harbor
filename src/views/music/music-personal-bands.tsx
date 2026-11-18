@@ -346,7 +346,7 @@ function playlistsBand(ctx: MusicBandContext): MusicBand {
         <MusicCatalogRow
           row={localRow("playlists", title, subtitle, "covers", items)}
           status={ctx.data.libraryStatus === "loading" ? "loading" : "ready"}
-          leadingCard={tile}
+          trailingCard={tile}
           onOpen={(item) => ctx.openLibrary({ view: "playlists", playlistId: item.id })}
           onPlay={(_item, index) => {
             const tracks = playlists[index]?.tracks ?? [];

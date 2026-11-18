@@ -154,6 +154,7 @@ export function MusicCatalogRow({
   count,
   emptyLabel,
   leadingCard,
+  trailingCard,
   badgeFor,
   artistArtwork,
   artistSubtitle,
@@ -182,6 +183,7 @@ export function MusicCatalogRow({
   count?: number;
   emptyLabel?: string;
   leadingCard?: ReactNode;
+  trailingCard?: ReactNode;
   badgeFor?: (item: MusicCatalogItem, index: number) => MusicCardBadge | null | undefined;
   artistArtwork?: (artist: MusicArtistRef) => readonly (string | null | undefined)[];
   artistSubtitle?: (artist: MusicArtistRef) => string | undefined;
@@ -386,6 +388,13 @@ export function MusicCatalogRow({
     ),
   );
 
+  // Edge cards sit outside the item cards, so a "create new" tile can lead or trail the shelf.
+  const shelfChildren = [
+    ...(leadingCard ? [<Fragment key="music-row-lead">{leadingCard}</Fragment>] : []),
+    ...cards,
+    ...(trailingCard ? [<Fragment key="music-row-trail">{trailingCard}</Fragment>] : []),
+  ];
+
   const body = grid ? (
     <section className={`flex min-w-0 flex-col gap-4 ${className}`}>
       {head}
@@ -393,7 +402,7 @@ export function MusicCatalogRow({
         className="grid gap-x-5 gap-y-7"
         style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${cellMin}px, 1fr))` }}
       >
-        {leadingCard ? [<Fragment key="music-row-lead">{leadingCard}</Fragment>, ...cards] : cards}
+        {shelfChildren}
       </div>
     </section>
   ) : (
@@ -407,7 +416,7 @@ export function MusicCatalogRow({
       onEndReached={onEndReached}
       className={className}
     >
-      {leadingCard ? [<Fragment key="music-row-lead">{leadingCard}</Fragment>, ...cards] : cards}
+      {shelfChildren}
     </Row>
   );
 
