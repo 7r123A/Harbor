@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LogIn } from "lucide-react";
 import stremioWordmark from "@/assets/stremio-wordmark.png";
 import nuvioLogo from "@/assets/nuvio.png";
@@ -29,6 +29,20 @@ export function CWSection({ signedIn, isNuvio, items, watchedSet, onDismiss, loa
   const showQueueCard = queueResumeItem !== null;
   const headKey = showQueueCard ? "queue" : (items[0]?._id ?? "");
   const [showAuth, setShowAuth] = useState(false);
+
+  // Shadow phase: observe what identity would resolve for these cards without
+  // changing the row. Loaded lazily and gated by the shadow flag.
+  useEffect(() => {
+    let cancelled = false;
+    void import("@/lib/identity/shadow-observer")
+      .then(({ observeIdentityShadow }) => {
+        if (!cancelled) void observeIdentityShadow(items);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [items]);
 
   const signInButton = signedIn ? null : (
     <button
