@@ -398,23 +398,32 @@ test("an empty catalog row is not served stale", () =>
     assert.equal(loads, 2);
   }));
 
-test("an addon change drops cached catalog rows and loads that were running", async () => {
-  let loads = 0;
-  const load = async () => ({ value: `v${++loads}`, ok: true });
-  assert.equal((await catalogCache.cachedCatalogRow("changed", load)).value, "v1");
+test("an addon change marks cached catalog rows stale and drops loads that were running", () =>
+  withClock(12_000_000, async () => {
+    let loads = 0;
+    const load = async () => ({ value: `v${++loads}`, ok: true });
+    assert.equal((await catalogCache.cachedCatalogRow("changed", load)).value, "v1");
+    let emptyLoads = 0;
+    const empty = async () => ({ value: ++emptyLoads === 1 ? null : "filled", ok: true });
+    await catalogCache.cachedCatalogRow("changed-empty", empty);
 
-  let finish: (row: { value: string; ok: boolean }) => void = () => {};
-  const slow = () => new Promise<{ value: string; ok: boolean }>((resolve) => (finish = resolve));
-  const pending = catalogCache.cachedCatalogRow("changed-pending", slow);
+    let finish: (row: { value: string; ok: boolean }) => void = () => {};
+    const slow = () => new Promise<{ value: string; ok: boolean }>((resolve) => (finish = resolve));
+    const pending = catalogCache.cachedCatalogRow("changed-pending", slow);
 
-  events.dispatchEvent(new Event("harbor:addons-changed"));
-  assert.equal((await catalogCache.cachedCatalogRow("changed", load)).value, "v2");
+    events.dispatchEvent(new Event("harbor:addons-changed"));
+    // The old row still paints at once, and a background refresh replaces it.
+    assert.equal((await catalogCache.cachedCatalogRow("changed", load)).value, "v1");
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal((await catalogCache.cachedCatalogRow("changed", load)).value, "v2");
+    // A row that cannot be served stale is dropped and loads again.
+    assert.equal((await catalogCache.cachedCatalogRow("changed-empty", empty)).value, "filled");
 
-  // The load that began before the change still answers its caller, but is not stored.
-  finish({ value: "old", ok: true });
-  assert.equal((await pending).value, "old");
-  assert.equal((await catalogCache.cachedCatalogRow("changed-pending", load)).value, "v3");
-});
+    // The load that began before the change still answers its caller, but is not stored.
+    finish({ value: "old", ok: true });
+    assert.equal((await pending).value, "old");
+    assert.equal((await catalogCache.cachedCatalogRow("changed-pending", load)).value, "v3");
+  }));
 
 test("an empty settings mirror still sends the default catalog language", async () => {
   store.set("harbor.settings", "");

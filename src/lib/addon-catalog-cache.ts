@@ -100,15 +100,25 @@ function refreshInBackground<T>(key: string, load: () => Promise<CatalogLoad<T>>
 }
 
 // An addon reconfigured in place keeps its transportUrl, so its rows share keys
-// with the old configuration. Any addon change drops every row, and loads that
-// were already running are not stored, so the views that rebuild on the same
-// event fetch fresh rows.
+// with the old configuration. Dropping every row would refetch every catalog on
+// each enable or disable toggle, so good rows are marked stale instead: the view
+// that rebuilds on the same event still paints them at once while the background
+// lanes replace them. Rows that cannot be served stale are dropped, and loads
+// that were already running are not stored.
 export function invalidateCatalogRows(): void {
   generation += 1;
-  rows.clear();
   inflight.clear();
   backgroundQueue.length = 0;
   backgroundKeys.clear();
+  const expired = Date.now();
+  for (const [key, e] of rows) {
+    if (staleLimit(e) === e.ttl) {
+      rows.delete(key);
+      continue;
+    }
+    e.t = Math.min(e.t, expired - e.ttl);
+    e.retryAt = undefined;
+  }
 }
 
 if (typeof window !== "undefined") {
