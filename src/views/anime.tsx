@@ -103,7 +103,7 @@ import {
 } from "@/lib/stremio";
 import {
   clearLocalCw,
-  listLocalCw,
+  listLocalCwMerged,
   localCwSourceEnabled,
   localCwVersion,
   subscribeLocalCw,
@@ -428,7 +428,7 @@ export function AnimeView({ active = true }: { active?: boolean }) {
   const localCwVer = useSyncExternalStore(subscribeLocalCw, localCwVersion);
   const localAnimeCw = useMemo<LibraryItem[]>(() => {
     void localCwVer;
-    return listLocalCw(hideSharedCw)
+    return listLocalCwMerged(hideSharedCw)
       .filter((e) => localCwSourceEnabled(e, settings.cwSources))
       .filter((e) => ANIME_CLOUD_ID.test(e.id) || e.isAnime)
       .map((e) => ({

@@ -23,6 +23,7 @@ function load(
   options: { storage?: Map<string, string> } = {},
 ) {
   const requests: Array<{ path: string; method?: string }> = [];
+  const resumeWrites: unknown[][] = [];
   let session: { username?: string | null } = {};
   const storage = options.storage ?? new Map<string, string>();
   const storageApi = {
@@ -50,10 +51,10 @@ function load(
       TraktApiError: StubTraktApiError,
     },
     "./session": { getSession: () => session },
-    "@/lib/cw-dismiss": { isCwDismissed: () => true },
+    "@/lib/cw-dismiss": { isCwDismissed: () => false },
     "@/lib/resume": {
       readResumeEntry: () => undefined,
-      saveResumeMs: () => {},
+      saveResumeMs: (...args: unknown[]) => resumeWrites.push(args),
     },
   };
   const module = { exports: {} };
@@ -75,6 +76,7 @@ function load(
     requests,
     session,
     storage,
+    resumeWrites,
     setSession: (next: { username?: string | null }) => {
       session = next;
     },
@@ -129,6 +131,25 @@ test("Trakt playback keeps the playback id and the TMDB alias for cross-source m
   assert.deepEqual(items[0].altIds, ["tmdb:movie:456"]);
   assert.deepEqual(items[1].providerPlaybackIds, { trakt: "43" });
   assert.deepEqual(items[1].altIds, ["tmdb:tv:987"]);
+});
+
+test("Trakt backfill stores paused_at as the resume timestamp", async () => {
+  const pausedAt = "2026-09-29T10:30:00.000Z";
+  const h = playback([
+    {
+      id: 44,
+      progress: 40,
+      paused_at: pausedAt,
+      show: { title: "Show", ids: { imdb: "tt789", tmdb: 987 } },
+      episode: { season: 1, number: 3 },
+    },
+  ]);
+
+  await h.api.fetchTraktPlaybackItems();
+
+  const write = h.resumeWrites.find((args) => args[0] === "tt789");
+  assert.ok(write, "the episode was backfilled into resume");
+  assert.equal(write[8], Date.parse(pausedAt), "resume t is the paused_at time");
 });
 
 test("Trakt playback deletion treats a missing item as already cleared", async () => {

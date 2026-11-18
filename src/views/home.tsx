@@ -63,7 +63,7 @@ import { clearResume, readResumeEntry, saveResumeBatch } from "@/lib/resume";
 import { dismissCw, isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import {
   clearLocalCw,
-  listLocalCw,
+  listLocalCwMerged,
   localCwSourceEnabled,
   localCwVersion,
   subscribeLocalCw,
@@ -741,7 +741,7 @@ export function Home({
   }, [items]);
   const localCwItems = useMemo<LibraryItem[]>(() => {
     void localCwVer;
-    return listLocalCw(isNuvioProvider ? false : hideSharedCw)
+    return listLocalCwMerged(isNuvioProvider ? false : hideSharedCw)
       .filter((e) => isNuvioProvider || localCwSourceEnabled(e, settings.cwSources))
       .map((e) => ({
         _id: e.id,

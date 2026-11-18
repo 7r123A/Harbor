@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useAuth } from "@/lib/auth";
 import { anyProfileSharesStremioWith, useProfiles } from "@/lib/profiles";
 import { useSettings } from "@/lib/settings";
-import { listLocalCw, localCwSourceEnabled, subscribeLocalCw } from "@/lib/local-cw";
+import {
+  listLocalCwMerged,
+  localCwSourceEnabled,
+  subscribeLocalCw,
+  type LocalCwEntry,
+} from "@/lib/local-cw";
 import { animeCwIdsVersion, subscribeAnimeCwIds } from "@/lib/anime-cw-ids";
 import { dedupeAnimeCw, warmCwAnimeIdentities } from "@/lib/cw-anime-identity";
 import { sortCwFinal } from "@/lib/cw-order";
@@ -39,7 +44,7 @@ export type CwCard = {
   caughtUp?: boolean;
 };
 
-export function localToLibraryItem(e: ReturnType<typeof listLocalCw>[number]): LibraryItem {
+export function localToLibraryItem(e: LocalCwEntry): LibraryItem {
   return {
     _id: e.id,
     type: e.type,
@@ -231,7 +236,7 @@ export function useContinueWatching(excludeId?: string, limit = 12): CwCard[] {
             ...(cwSources.library ? items.filter((i) => !ANIME_CLOUD_ID.test(i._id)) : []),
             ...externalAllowed.filter((i) => i.external !== "nuvio"),
           ];
-    const local = listLocalCw(hideSharedCw).filter((e) =>
+    const local = listLocalCwMerged(hideSharedCw).filter((e) =>
       isNuvio ? false : localCwSourceEnabled(e, cwSources),
     );
     const merged = [...base, ...local.map(localToLibraryItem)]

@@ -16,7 +16,7 @@ import { useHeroLogos } from "@/components/anime-hero/use-hero-logos";
 import { dismissCw, isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import {
   clearLocalCw,
-  listLocalCw,
+  listLocalCwMerged,
   localCwSourceEnabled,
   subscribeLocalCw,
   type LocalCwEntry,
@@ -213,7 +213,7 @@ export function useMobileCw(limit = 14): LibraryItem[] {
           ];
     const merged = [
       ...base,
-      ...listLocalCw(isNuvioProvider ? false : hideSharedCw)
+      ...listLocalCwMerged(isNuvioProvider ? false : hideSharedCw)
         .filter((e) => isNuvioProvider || localCwSourceEnabled(e, settings.cwSources))
         .map((e) =>
           isNuvioProvider

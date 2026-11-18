@@ -312,6 +312,10 @@ function itemsFromRaw(raw: RawPlayback[], backfill: boolean, dedupe = true): Lib
         undefined,
         pct01,
         "trakt",
+        undefined,
+        // Preserve the real pause time instead of the import time; sorting and
+        // newer-wins reconciliation must see when the episode was actually paused.
+        remoteValid ? remoteT : undefined,
       );
     }
   }

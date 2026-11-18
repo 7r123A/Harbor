@@ -41,6 +41,7 @@ function harness(bigPicture: boolean, sources: any, privateProfile = false) {
     "@/lib/settings": { useSettings: () => ({ settings }) },
     "@/lib/local-cw": {
       listLocalCw: () => local,
+      listLocalCwMerged: () => local,
       localCwSourceEnabled: (entry: any, sources: any) =>
         entry.source === "library" ? sources.library : sources.local,
       subscribeLocalCw: () => noop,
