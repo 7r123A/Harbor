@@ -80,7 +80,8 @@ export function detectLargestFace(
   let best: DetectedFace | null = null;
   for (const detection of detector.detect(bitmap).detections) {
     const face = toDetectedFace(detection);
-    if (face && (!best || face.box.w * face.box.h > best.box.w * best.box.h)) best = face;
+    if (!face || face.box.w <= 0 || face.box.h <= 0) continue;
+    if (!best || face.box.w * face.box.h > best.box.w * best.box.h) best = face;
   }
   return best;
 }

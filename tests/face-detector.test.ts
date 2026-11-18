@@ -24,7 +24,7 @@ const bitmap = {} as ImageBitmap;
 test("scan faces drop tiny boxes and missing keypoints, largest first, capped at 8", () => {
   const faces = detectScanFaces(
     detector([
-      { w: 30, h: 80 },
+      { w: 30, h: 300 },
       { w: 60, h: 60 },
       { w: 100, h: 100, points: 3 },
       { w: 90, h: 90 },
