@@ -45,6 +45,7 @@ import {
   MUSIC_PLAY_EVENT,
   MUSIC_PLAYLIST_EVENT,
   MUSIC_SEARCH_EVENT,
+  MUSIC_VIDEO_EVENT,
   takeMusicExploreRequest,
   takeMusicGenreRequest,
   takeMusicLabelRequest,
@@ -53,6 +54,7 @@ import {
   takeMusicPlayRequest,
   takeMusicPlaylistRequest,
   takeMusicSearchRequest,
+  takeMusicVideoRequest,
 } from "@/lib/music/navigation";
 import { artistNameKey } from "@/lib/music/artist-profile";
 import { displayClusters, identityForRef, resolveArtist } from "@/lib/music/artist-authority";
@@ -261,11 +263,14 @@ function MusicViewContent({ active }: { active: boolean }) {
   } | null>(null);
   const similarRun = useRef(0);
   const watchFromVideos = useRef(false);
-  const openVideo = (track: MusicTrack, queue: MusicTrack[]) => {
-    watchFromVideos.current = discoveryPage === "videos";
-    if (watchFromVideos.current) setDiscoveryPage(null);
-    setWatch({ track, queue });
-  };
+  const openVideo = useCallback(
+    (track: MusicTrack, queue: MusicTrack[]) => {
+      watchFromVideos.current = discoveryPage === "videos";
+      if (watchFromVideos.current) setDiscoveryPage(null);
+      setWatch({ track, queue });
+    },
+    [discoveryPage],
+  );
   const closeSimilar = useCallback(() => {
     similarRun.current += 1;
     setSimilar(null);
@@ -573,9 +578,15 @@ function MusicViewContent({ active }: { active: boolean }) {
 
   const playTrack = useCallback(
     (track: MusicTrack, queue: MusicTrack[]) => {
+      // A music video plays in the video surface; the source picker is for audio.
+      if (track.mediaKind === "video") {
+        const videos = queue.filter((entry) => entry.mediaKind === "video");
+        openVideo(track, videos.length > 0 ? videos : [track]);
+        return;
+      }
       openSourcePicker(track, queue.length > 0 ? queue : [track]);
     },
-    [openSourcePicker],
+    [openSourcePicker, openVideo],
   );
 
   const openItem = useCallback(
@@ -930,6 +941,16 @@ function MusicViewContent({ active }: { active: boolean }) {
     receive();
     return () => window.removeEventListener(MUSIC_PLAY_EVENT, receive);
   }, [playTrack]);
+
+  useEffect(() => {
+    const receive = () => {
+      const request = takeMusicVideoRequest();
+      if (request) openVideo(request.track, request.queue);
+    };
+    window.addEventListener(MUSIC_VIDEO_EVENT, receive);
+    receive();
+    return () => window.removeEventListener(MUSIC_VIDEO_EVENT, receive);
+  }, [openVideo]);
 
   useEffect(() => {
     const receive = () => {
@@ -1391,7 +1412,7 @@ function MusicViewContent({ active }: { active: boolean }) {
                 detail={detail}
                 onBack={closeDetail}
                 onPlay={(track, queue) => {
-                  registerMusicCatalogOrigin(detail.item, queue);
+                  if (track.mediaKind !== "video") registerMusicCatalogOrigin(detail.item, queue);
                   playTrack(track, queue);
                 }}
                 onOpen={openItem}
