@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { authToken, captureSessionScope, currentAuthor } from "@/lib/theme-auth";
 import type { RatingMediaType } from "@/lib/ratings/types";
 import { socialPost } from "./client";
 import { fetchFriends, type Friend } from "./friends";
 import { fetchUserRatings } from "./ratings-api";
 import { foldHandle } from "./review-rank";
-import { loadTitleAverageScore } from "./title-reviews";
+import { loadTitleRatingSummary } from "./title-reviews";
 
 /**
  * Poster badges need "which friends rated this title" for every card without a request per card.
@@ -33,7 +33,13 @@ const MAX_MARKS = 12;
 const PUBLISH_INTERVAL = 1200;
 
 let index: FriendReviewIndex = new Map();
-const averageScores = new Map<string, number | null>();
+type HoverRatingSummary = {
+  averageScore: number | null;
+  community: FriendReviewMark[];
+  friends?: FriendReviewMark[];
+  total: number;
+};
+const hoverSummaries = new Map<string, HoverRatingSummary>();
 let builtAt = 0;
 let running = 0;
 let inflight: Promise<FriendReviewIndex> | null = null;
@@ -191,19 +197,16 @@ export function useFriendReviewIndex(): FriendReviewIndex | null {
   return snapshot;
 }
 
-export function useTitleAverageScore(mediaType: string, itemKey: string): number | null {
+export function useTitleHoverSummary(
+  mediaType: string,
+  itemKey: string,
+): HoverRatingSummary | undefined {
   const key = markKeyForItem(mediaType, itemKey);
-  const [snapshot, setSnapshot] = useState<{ key: string; score: number | null }>(() => ({
-    key,
-    score: averageScores.get(key) ?? null,
-  }));
-  useEffect(() => {
-    const sync = () => setSnapshot({ key, score: averageScores.get(key) ?? null });
-    const off = subscribeFriendReviewIndex(sync);
-    sync();
-    return off;
-  }, [key]);
-  return snapshot.key === key ? snapshot.score : (averageScores.get(key) ?? null);
+  return useSyncExternalStore(
+    subscribeFriendReviewIndex,
+    () => hoverSummaries.get(key),
+    () => undefined,
+  );
 }
 
 /**
@@ -238,6 +241,9 @@ async function flushSummaryBatch(): Promise<void> {
         contentType: string;
         contentId: string;
         friendsCount: number;
+        totalVisible: number;
+        ratersCount?: number;
+        recentRaters?: Array<{ handle: string; displayName: string; avatarUrl?: string }>;
         averageScore?: number | null;
         friends: Array<{ handle: string; displayName: string; avatarUrl?: string }>;
       }>;
@@ -245,18 +251,9 @@ async function flushSummaryBatch(): Promise<void> {
     const next = new Map(index);
     for (const row of res.items ?? []) {
       const key = markKeyForItem(row.contentType, row.contentId);
-      if (row.averageScore === undefined) {
+      if (row.averageScore === undefined || row.recentRaters === undefined) {
         fallbackItems.push({ contentType: row.contentType, contentId: row.contentId });
       }
-      averageScores.set(
-        key,
-        typeof row.averageScore === "number" &&
-          Number.isFinite(row.averageScore) &&
-          row.averageScore >= 0 &&
-          row.averageScore <= 10
-          ? row.averageScore
-          : null,
-      );
       const marks: FriendReviewMark[] = (row.friends ?? []).slice(0, MAX_MARKS).map((f) => ({
         handle: f.handle,
         alias: f.displayName || f.handle,
@@ -264,6 +261,24 @@ async function flushSummaryBatch(): Promise<void> {
         at: 0,
         totalCount: row.friendsCount,
       }));
+      hoverSummaries.set(key, {
+        friends: marks,
+        averageScore:
+          typeof row.averageScore === "number" &&
+          Number.isFinite(row.averageScore) &&
+          row.averageScore >= 0 &&
+          row.averageScore <= 10
+            ? row.averageScore
+            : null,
+        community: (row.recentRaters ?? []).map((user) => ({
+          handle: user.handle,
+          alias: user.displayName || user.handle,
+          avatarUrl: user.avatarUrl,
+          at: 0,
+          totalCount: row.ratersCount ?? row.totalVisible,
+        })),
+        total: row.ratersCount ?? row.totalVisible,
+      });
       if (marks.length) next.set(key, marks);
       else next.delete(key);
     }
@@ -275,12 +290,25 @@ async function flushSummaryBatch(): Promise<void> {
   } finally {
     await Promise.allSettled(
       fallbackItems.map(async (item) => {
-        const score = await loadTitleAverageScore({
+        const summary = await loadTitleRatingSummary({
           mediaType: item.contentType as RatingMediaType,
           itemKey: item.contentId,
         });
         if (!isCurrent()) return;
-        averageScores.set(markKeyForItem(item.contentType, item.contentId), score);
+        const key = markKeyForItem(item.contentType, item.contentId);
+        const existing = hoverSummaries.get(key);
+        hoverSummaries.set(key, {
+          friends: existing?.friends,
+          averageScore: existing?.averageScore ?? summary.averageScore,
+          total: existing?.total ?? summary.total,
+          community: summary.recentRatings.map((rating) => ({
+            handle: rating.handle,
+            alias: rating.alias,
+            avatarUrl: rating.avatarUrl,
+            at: Date.parse(rating.at) || 0,
+            totalCount: existing?.total ?? summary.total,
+          })),
+        });
         publish(true);
       }),
     );

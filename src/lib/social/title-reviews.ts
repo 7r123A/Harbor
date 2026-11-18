@@ -347,28 +347,37 @@ async function loadCommunityTitleRatings(
   };
 }
 
-const averageCache = new Map<string, { at: number; promise: Promise<number | null> }>();
+export type TitleRatingSummary = {
+  averageScore: number | null;
+  recentRatings: TitleRating[];
+  total: number;
+};
+
+const summaryCache = new Map<string, { at: number; promise: Promise<TitleRatingSummary> }>();
 
 /** The same visible rating pool as Everyone, without fetching reviewer match scores. */
-export function loadTitleAverageScore(target: TitleRef): Promise<number | null> {
+export function loadTitleRatingSummary(target: TitleRef): Promise<TitleRatingSummary> {
   const key = `${currentAuthor()?.id ?? "anon"}|${target.mediaType}|${target.itemKey}`;
-  const hit = averageCache.get(key);
+  const hit = summaryCache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL) return hit.promise;
   const isCurrent = captureSessionScope();
   const promise = loadCommunityTitleRatings(target, false)
     .then((snapshot) => {
       if (!isCurrent()) throw new Error("Account changed");
-      if (!snapshot.ratings.length) return null;
-      return (
-        snapshot.ratings.reduce((total, rating) => total + rating.score, 0) /
-        snapshot.ratings.length
-      );
+      return {
+        averageScore: snapshot.ratings.length
+          ? snapshot.ratings.reduce((total, rating) => total + rating.score, 0) /
+            snapshot.ratings.length
+          : null,
+        recentRatings: snapshot.ratings.slice(0, 3),
+        total: snapshot.ratings.length,
+      };
     })
     .catch((error) => {
-      if (averageCache.get(key)?.promise === promise) averageCache.delete(key);
+      if (summaryCache.get(key)?.promise === promise) summaryCache.delete(key);
       throw error;
     });
-  averageCache.set(key, { at: Date.now(), promise });
+  summaryCache.set(key, { at: Date.now(), promise });
   return promise;
 }
 
@@ -408,5 +417,5 @@ export async function loadTitleReviewsWithMatches(
 /** Drops every cached history, so the next open reflects ratings changed elsewhere. */
 export function invalidateTitleReviewCaches(): void {
   historyCache.clear();
-  averageCache.clear();
+  summaryCache.clear();
 }

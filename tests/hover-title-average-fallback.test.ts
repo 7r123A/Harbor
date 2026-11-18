@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { invalidateTitleReviewCaches, loadTitleAverageScore } from "@/lib/social/title-reviews";
+import { invalidateTitleReviewCaches, loadTitleRatingSummary } from "@/lib/social/title-reviews";
 import { clearUserDirectoryCache } from "@/lib/social/user-directory";
 
 test("hover averages use cached community histories on older servers without loading matches", async () => {
@@ -30,7 +30,7 @@ test("hover averages use cached community histories on older servers without loa
             ...target,
             score: path.includes("/alpha/") ? 6 : 10,
             title: "Test title",
-            at: "2026-11-19T00:00:00.000Z",
+            at: path.includes("/alpha/") ? "2026-11-18T00:00:00.000Z" : "2026-11-19T00:00:00.000Z",
           },
           {
             itemKey: target.itemKey,
@@ -44,17 +44,28 @@ test("hover averages use cached community histories on older servers without loa
     throw new Error(`Unexpected request ${path}`);
   };
   try {
+    const [first, duplicate] = await Promise.all([
+      loadTitleRatingSummary(target),
+      loadTitleRatingSummary(target),
+    ]);
+    assert.equal(first.averageScore, 8);
+    assert.equal(first.total, 2);
     assert.deepEqual(
-      await Promise.all([loadTitleAverageScore(target), loadTitleAverageScore(target)]),
-      [8, 8],
+      first.recentRatings.map((rating) => rating.handle),
+      ["beta", "alpha"],
     );
-    assert.equal(await loadTitleAverageScore(target), 8);
+    assert.deepEqual(duplicate, first);
+    assert.deepEqual(await loadTitleRatingSummary(target), first);
     assert.equal(requests.filter((path) => path.endsWith("/ratings")).length, 2);
     assert.equal(
       requests.some((path) => path.includes("/mutual")),
       false,
     );
-    assert.equal(await loadTitleAverageScore({ ...target, itemKey: "unrated" }), null);
+    assert.deepEqual(await loadTitleRatingSummary({ ...target, itemKey: "unrated" }), {
+      averageScore: null,
+      total: 0,
+      recentRatings: [],
+    });
   } finally {
     globalThis.fetch = originalFetch;
     invalidateTitleReviewCaches();
