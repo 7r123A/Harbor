@@ -4,6 +4,7 @@ import { embedLargestFace } from "./face-engine";
 import type { GalleryEntry } from "./match";
 
 const MODEL_VERSION = "sface-int8-v3";
+// AppCache, not AppData: on Linux AppData is AppLocalData, which fs:default denies.
 const CACHE_DIR = "xray/face-gallery";
 const TMDB_IMG = "https://image.tmdb.org/t/p/w185";
 const PRIMARY_CAST = 24;
@@ -26,10 +27,10 @@ function cachePath(key: string): string {
 
 async function readCache(key: string): Promise<GalleryEntry[] | null> {
   const path = cachePath(key);
-  if (!(await exists(path, { baseDir: BaseDirectory.AppData }))) return null;
   try {
+    if (!(await exists(path, { baseDir: BaseDirectory.AppCache }))) return null;
     const raw = JSON.parse(
-      await readTextFile(path, { baseDir: BaseDirectory.AppData }),
+      await readTextFile(path, { baseDir: BaseDirectory.AppCache }),
     ) as CacheShape;
     if (raw.version !== MODEL_VERSION) return null;
     return raw.entries.map((e) => ({ ...e, emb: Float32Array.from(e.emb) }));
@@ -39,7 +40,7 @@ async function readCache(key: string): Promise<GalleryEntry[] | null> {
 }
 
 async function writeCache(key: string, entries: GalleryEntry[]): Promise<void> {
-  await mkdir(CACHE_DIR, { baseDir: BaseDirectory.AppData, recursive: true });
+  await mkdir(CACHE_DIR, { baseDir: BaseDirectory.AppCache, recursive: true });
   const shape: CacheShape = {
     version: MODEL_VERSION,
     entries: entries.map((e) => ({
@@ -50,7 +51,7 @@ async function writeCache(key: string, entries: GalleryEntry[]): Promise<void> {
       emb: Array.from(e.emb),
     })),
   };
-  await writeTextFile(cachePath(key), JSON.stringify(shape), { baseDir: BaseDirectory.AppData });
+  await writeTextFile(cachePath(key), JSON.stringify(shape), { baseDir: BaseDirectory.AppCache });
 }
 
 async function runPool<T>(
