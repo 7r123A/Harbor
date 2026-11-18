@@ -181,10 +181,18 @@ function currentEpisode(i: LibraryItem): { season: number; episode: number } | n
 /** A locally completed checkpoint is input for advancement, not a resume card.
  * Keep synthetic external-provider checkpoints visible on lookup failure: their
  * zero-duration "watched" marker is not a local playback completion proof.
- * A verified next episode resets watched state; airing timers stay visible. */
-function isPlayableCwDisplay(i: LibraryItem, advancementEnabled: boolean): boolean {
+ * A verified next episode resets watched state; airing timers stay visible.
+ *
+ * `unresolved` carries cards whose next-episode lookup failed in the current
+ * pass. Their finished card is the last good state and must stay readable until
+ * a later pass resolves or verifies removal. */
+function isPlayableCwDisplay(
+  i: LibraryItem,
+  advancementEnabled: boolean,
+  unresolved?: ReadonlySet<string>,
+): boolean {
   if (!isCwDisplayReady(i)) return false;
-  if (i.caughtUp) return true;
+  if (i.caughtUp || unresolved?.has(i._id)) return true;
   if (
     !advancementEnabled ||
     i.type !== "series" ||
@@ -639,6 +647,9 @@ export function useCwAdvance(
   const [advanced, setAdvanced] = useState<Map<string, LibraryItem>>(new Map());
   const [extra, setExtra] = useState<LibraryItem[]>([]);
   const [removed, setRemoved] = useState<Set<string>>(new Set());
+  // Finished cards whose next-episode lookup failed in the latest pass. Bypassing
+  // the finished-card hide for them keeps the last good card readable on outage.
+  const [displayFailures, setDisplayFailures] = useState<Set<string>>(new Set());
   // A stored presentation is provisional until this owner has completed a live
   // pass. Keep it distinct from provider progress and deletion ownership.
   const displayScope = cwDisplayOwnerKey([
@@ -703,6 +714,7 @@ export function useCwAdvance(
   }, [hasLiveDisplay, advanced, restoredDisplay.advanced, verifiedInputs, items, displayScope]);
   const displayRemoved = hasLiveDisplay ? removed : restoredDisplay.removed;
   const displayExtra = hasLiveDisplay ? extra : restoredDisplay.extra;
+  const unresolvedDisplayIds = displayFailures;
   const listCacheRef = useRef<Map<string, PlayEpisode[]>>(new Map());
   const listExpiryRef = useRef(new Map<string, number>());
   const listTokenRef = useRef<string | null>(null);
@@ -710,6 +722,8 @@ export function useCwAdvance(
   const advancedRef = useRef(advanced);
   const extraRef = useRef(extra);
   const removedRef = useRef(removed);
+  const displayFailuresRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     advancedRef.current = advanced;
   }, [advanced]);
@@ -719,6 +733,10 @@ export function useCwAdvance(
   useEffect(() => {
     removedRef.current = removed;
   }, [removed]);
+  useEffect(() => {
+    displayFailuresRef.current = displayFailures;
+  }, [displayFailures]);
+
   const [airTick, setAirTick] = useState(0);
   const airTimerRef = useRef<number | null>(null);
   const owner: AdvanceOwner = {
@@ -1005,7 +1023,7 @@ export function useCwAdvance(
       active?.passId ?? null,
     );
     if (active && activeAdvanceRef.current === active) finishAdvance(active, "complete");
-  }, [advanced, extra, removed]);
+  }, [advanced, extra, removed, displayFailures]);
   const simkl =
     !privacyOwner &&
     simklEnabled &&
@@ -1197,6 +1215,9 @@ export function useCwAdvance(
           : null;
       const decisions = new Map<string, PassDecision>();
       const fetched = new Map<string, ListFetch>();
+      // Finished cards whose lookup failed during this pass. They remain
+      // readable until a later pass advances, removes or verifies them.
+      const failedIds = new Set<string>();
       await prefetchAdvanceLists(candidates, signal, fetched, ctx.isSuperseded);
       if (!ctx.isCurrent()) return;
       // Newer inputs are already queued: release this pass now so the queued one
@@ -1238,18 +1259,26 @@ export function useCwAdvance(
             return;
           }
           fetchOk = res.ok;
-          if (!res.ok) cwAdvanceOutcome(i._id, res.aborted ? "cancelled" : "failure", passId);
-          if (res.aborted) return;
-          if (res.ok) list = res.eps;
+          if (!res.ok) {
+            cwAdvanceOutcome(i._id, res.aborted ? "cancelled" : "failure", passId);
+            if (res.aborted) return;
+            failedIds.add(i._id);
+            continue;
+          }
+          list = res.eps;
         }
         // An empty list is not proof the show has no episodes. Advancing or
         // removing on it would drop a card because a provider was unreachable;
         // leave the card in place and let a later pass retry.
         if (list?.length === 0) {
           cwAdvanceOutcome(i._id, "failure", passId);
+          failedIds.add(i._id);
           continue;
         }
-        if (!list) continue;
+        if (!list) {
+          failedIds.add(i._id);
+          continue;
+        }
         // Bulletproof phantom guard: an entry can never show an episode past the last one
         // its own fully-fetched list actually contains. Ordering key = season*1e5+episode so
         // it holds for both season-relative and absolute numbering. Only fires on a clean
@@ -1606,6 +1635,7 @@ export function useCwAdvance(
             if (!ctx.isCurrent()) return;
             // An unavailable sequel list is not a finished series. Keep the card.
             cwAdvanceOutcome(i._id, "failure", passId);
+            failedIds.add(i._id);
             continue;
           }
         }
@@ -1894,12 +1924,22 @@ export function useCwAdvance(
         const advancedChanged = !sameMap(advancedRef.current, next);
         const extraChanged = !sameList(extraRef.current, extraItems);
         const removedChanged = !sameSet(removedRef.current, remove);
+        // An empty pass must not introduce a display commit. Only publish when
+        // there is a failure to show or a previous failure to clear.
+        const failuresChanged =
+          failedIds.size > 0 || displayFailuresRef.current.size > 0
+            ? !sameSet(displayFailuresRef.current, failedIds)
+            : false;
+        if (failuresChanged) {
+          displayFailuresRef.current = failedIds;
+          setDisplayFailures(failedIds);
+        }
         // Skip the dispatch itself when the result is equivalent: returning
         // `prev` prevents a write but still schedules the update.
         if (advancedChanged) setAdvanced(next);
         if (extraChanged) setExtra(extraItems);
         if (removedChanged) setRemoved(remove);
-        if (advancedChanged || extraChanged || removedChanged) {
+        if (advancedChanged || extraChanged || removedChanged || failuresChanged) {
           ctx.markCommit();
         } else {
           // Nothing to publish: complete without a state commit. Completion
@@ -1983,7 +2023,7 @@ export function useCwAdvance(
     // `items`, but cannot flash as resumable cards before next-up verification.
     .filter(
       (i) =>
-        isPlayableCwDisplay(i, enabled) &&
+        isPlayableCwDisplay(i, enabled, unresolvedDisplayIds) &&
         !displayRemoved.has(i._id) &&
         !isCwDismissed(i) &&
         (animeMode !== "exclude" || !isAnimeCwItem(i)),

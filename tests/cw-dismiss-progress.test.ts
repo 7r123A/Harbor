@@ -404,6 +404,7 @@ function advanceHarness(
     advanced,
     extra,
     new Set<string>(),
+    new Set<string>(),
     0,
   ];
   let slot = 0;

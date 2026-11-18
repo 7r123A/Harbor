@@ -234,7 +234,10 @@ test("the worker retains completed sources while only the final CW row hides unr
   assert.doesNotMatch(home, /isCwDisplayReady\(i\)/);
   assert.match(hook, /const candidates = items\.filter/);
   assert.match(hook, /restoredDisplay\.advanced\.get\(i\._id\)/);
-  assert.match(hook, /function isPlayableCwDisplay\(i: LibraryItem, advancementEnabled: boolean\)/);
+  assert.match(
+    hook,
+    /function isPlayableCwDisplay\(\s*i: LibraryItem,\s*advancementEnabled: boolean,\s*unresolved\?: ReadonlySet<string>,?\s*\)/,
+  );
   assert.match(hook, /if \(!isCwDisplayReady\(i\)\) return false/);
   assert.match(
     hook,
@@ -243,7 +246,7 @@ test("the worker retains completed sources while only the final CW row hides unr
   assert.match(hook, /\.map\(\(i\) => displayAdvanced\.get\(i\._id\) \?\? i\)/);
   assert.match(
     hook,
-    /\.filter\(\s*\(i\) =>\s*isPlayableCwDisplay\(i, enabled\) &&\s*!displayRemoved\.has\(i\._id\)/,
+    /\.filter\(\s*\(i\) =>\s*isPlayableCwDisplay\(i, enabled, unresolvedDisplayIds\) &&\s*!displayRemoved\.has\(i\._id\)/,
   );
 });
 

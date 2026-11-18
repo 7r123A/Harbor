@@ -29,6 +29,14 @@ const anchor = (episode = 1, id = "tt100") => ({
   external: "simkl",
   state: { ...item(episode, iso(), id).state, timeOffset: 0, duration: 0, flaggedWatched: 1 },
 });
+/** A locally finished card: hidden until a verified next episode/removal. */
+const finishedLocal = (episode = 1, id = "tt300") => {
+  const base = item(episode, iso(-3600000), id);
+  return {
+    ...base,
+    state: { ...base.state, timeOffset: 1800000, duration: 1800000, flaggedWatched: 1 },
+  };
+};
 const progress = (episodes = [1], id = "tt100", completedSeries: any[] = []) => ({
   statuses: new Map([[id, "watching"]]),
   watched: new Map([[id, new Set(episodes.map((e) => `1:${e}`))]]),
@@ -990,6 +998,58 @@ test("an unplaceable anime row with no anime entry still drops in hide mode", as
     "hide",
   );
   assert.deepEqual(await h.flush(), []);
+});
+
+test("a finished local card stays visible when its episode list cannot be fetched", async () => {
+  const h = harness();
+  h.failFetchFor("tt300");
+  h.render([finishedLocal(1, "tt300")], "", true);
+
+  const out = await h.flush();
+
+  assert.equal(out.length, 1);
+  assert.equal(out[0]._id, "tt300");
+  assert.equal(out[0].state.episode, 1, "the last good finished card stays readable");
+  assert.equal(out[0].upNext, undefined);
+});
+
+test("a finished local card stays visible when the episode list is empty", async () => {
+  const h = harness();
+  h.setEpisodes([]);
+  h.render([finishedLocal(1, "tt301")], "", true);
+
+  const out = await h.flush();
+
+  assert.equal(out.length, 1);
+  assert.equal(out[0]._id, "tt301");
+});
+
+test("a later successful pass advances a finished card that failed earlier", async () => {
+  const h = harness();
+  const items = [finishedLocal(1, "tt302")];
+  h.setEpisodes([]);
+  h.render(items, "", true);
+  assert.equal((await h.flush()).length, 1, "failure keeps the finished card visible");
+
+  h.setEpisodes([
+    { season: 1, episode: 1, airDate: "2020-01-01" },
+    { season: 1, episode: 2, airDate: "2020-01-02" },
+  ]);
+  h.render([...items], "", true);
+  const out = await h.flush();
+
+  assert.equal(out[0]?.state.episode, 2);
+  assert.equal(out[0]?.upNext, true);
+});
+
+test("a verified removal still hides a finished local card", async () => {
+  const h = harness();
+  h.setEpisodes([{ season: 1, episode: 1, airDate: "2020-01-01" }]);
+  h.render([finishedLocal(1, "tt303")], "", true);
+
+  const out = await h.flush();
+
+  assert.equal(out.length, 0);
 });
 
 test("an unavailable episode list keeps the card instead of dropping it in hide mode", async () => {
