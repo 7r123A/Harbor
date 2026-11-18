@@ -264,6 +264,7 @@ function harness() {
   const load = (name: string): any => {
     if (name in mocks) return mocks[name];
     if (name === "./anime-detect") return mocks["@/lib/anime-detect"];
+    if (name === "@/lib/cw-derived-caches") return { cwCacheOwnerKey: () => "test-owner" };
     assert.ok(name.startsWith("@/"), `unexpected import ${name}`);
     if (!modules.has(name)) modules.set(name, compile(`src/${name.slice(2)}.ts`, load));
     return modules.get(name);

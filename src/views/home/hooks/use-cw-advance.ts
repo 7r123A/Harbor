@@ -27,6 +27,7 @@ import {
   fetchCachedCwEpisodeList,
 } from "@/lib/cw-episode-list-cache";
 import {
+  clearResurfaceCache,
   isNextAired,
   resurfaceCandidates,
   staleCwIds,
@@ -583,6 +584,21 @@ export function useCwAdvance(
   const dismissVersion = useCwDismissVersion();
   const { settings } = useSettings();
   const hideCaughtUp = settings.cwHideCaughtUp;
+  // Resurface decisions are keyed by these settings; a change must not reuse a
+  // timer, caught-up or negative decision computed under the previous values.
+  const resurfaceCacheKey = [
+    hideCaughtUp,
+    settings.animeCwEnd,
+    settings.addonOnlyMetadata,
+    JSON.stringify(settings.metadataSources?.episodes ?? null),
+    JSON.stringify(settings.metadataAddonOrder ?? null),
+    settings.tmdbKey ?? "",
+    settings.tvdbKey ?? "",
+    settings.tvdbSeasonType ?? "",
+  ].join("|");
+  useEffect(() => {
+    clearResurfaceCache();
+  }, [resurfaceCacheKey]);
   const { activeProfile, profiles } = useProfiles();
   const privacyOwner =
     settings.cwPerProfile && anyProfileSharesStremioWith(activeProfile, profiles)

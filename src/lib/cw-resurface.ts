@@ -9,7 +9,7 @@ import {
   type LibraryItem,
 } from "@/lib/stremio";
 import { isCwDismissed } from "@/lib/cw-dismiss";
-import { privateCwProfileId } from "@/lib/cw-profile";
+import { cwCacheOwnerKey } from "@/lib/cw-derived-caches";
 import {
   differentImdbTitles,
   isFurther,
@@ -125,6 +125,8 @@ function currentEpisode(i: LibraryItem): { season: number; episode: number } | n
 }
 
 const RESURFACE_TTL = 6 * 3600 * 1000;
+/** A negative answer can become positive when the next episode appears; retry it soon. */
+const RESURFACE_NEGATIVE_TTL = 3 * 60 * 1000;
 const RECENT_MS = 45 * 864e5;
 
 export type ResurfaceOptions = {
@@ -161,8 +163,11 @@ export async function resurfaceCandidates(
   watchedFor?: WatchedFor,
 ): Promise<Map<string, ResurfaceTarget>> {
   const now = Date.now();
-  const profileScope = privateCwProfileId() ?? "shared";
+  // Account/profile scope: a resurface decision must not cross an account switch
+  // that keeps the same local profile id.
+  const ownerScope = cwCacheOwnerKey();
   const endMode = opts.animeCwEnd ?? "hide";
+  const caughtUpMode = opts.hideCaughtUp ? "hide" : "keep";
   const out = new Map<string, ResurfaceTarget>();
   const candidates = library.filter((i) => {
     if (i.type !== "series" && !ANIME_ID.test(i._id)) return false;
@@ -190,7 +195,7 @@ export async function resurfaceCandidates(
   for (const i of candidates) {
     const cur = currentEpisode(i)!;
     const isAnime = isAnimeCwItem(i) || ANIME_ID.test(i._id);
-    const key = `${profileScope}|${endMode}|${i._id}:${cur.season}:${cur.episode}`;
+    const key = `${ownerScope}|${endMode}|${caughtUpMode}|${i._id}:${cur.season}:${cur.episode}`;
     const cached = cache.get(key);
     let nx: ResurfaceTarget | null;
     const meta: Meta = {
@@ -246,10 +251,14 @@ export async function resurfaceCandidates(
           nx = null;
         }
         const airTime = adj.next?.airDate ? Date.parse(adj.next.airDate) : NaN;
+        // A negative answer is the common case while a show is caught up; do not
+        // hide a newly available episode behind the six-hour positive TTL.
         const cacheTtl =
-          Number.isFinite(airTime) && airTime > now
-            ? Math.max(1000, Math.min(RESURFACE_TTL, airTime - now + 1000))
-            : RESURFACE_TTL;
+          nx == null
+            ? RESURFACE_NEGATIVE_TTL
+            : Number.isFinite(airTime) && airTime > now
+              ? Math.max(1000, Math.min(RESURFACE_TTL, airTime - now + 1000))
+              : RESURFACE_TTL;
         cache.set(key, { next: nx, t: now - (RESURFACE_TTL - cacheTtl) });
       } catch {
         // A failed lookup must remain retryable on the next refresh.
