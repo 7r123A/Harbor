@@ -46,6 +46,14 @@ function hostOf(url: string): string {
   }
 }
 
+/**
+ * The provider host the viewer picked. Playback may run through the local relay
+ * (127.0.0.1), whose address says nothing to the viewer and cannot be checked.
+ */
+function sourceHost(src: { url: string; historyUrl?: string }): string {
+  return hostOf(src.historyUrl ?? "") || hostOf(src.url);
+}
+
 export function useAutoRetry(params: {
   bridgeRef: RefObject<PlayerBridge | null>;
   src: PlayerSrc;
@@ -265,14 +273,14 @@ export function useAutoRetry(params: {
       // or a genuine mpv error own the visible failure state.
       if (!instantPlay && !inRoom) {
         console.warn(`[player] manual source failed (${reason})`);
-        setSourceError((prev) => prev ?? { status: 0, host: hostOf(src.url) });
+        setSourceError((prev) => prev ?? { status: 0, host: sourceHost(src) });
         return;
       }
       const currentAttempt = src.attempt ?? 0;
       if (currentAttempt >= MAX_AUTORETRY_ATTEMPTS) {
         console.warn(`[player] giving up after ${currentAttempt} attempts (${reason})`);
         if (!isP2pEngine && getPlaybackPosition() < 0.5) {
-          setSourceError((prev) => prev ?? { status: 0, host: hostOf(src.url), exhausted: true });
+          setSourceError((prev) => prev ?? { status: 0, host: sourceHost(src), exhausted: true });
         }
         return;
       }
@@ -666,7 +674,7 @@ export function useAutoRetry(params: {
           return;
         }
         console.warn(`[player] source never started within ${NEVER_STARTED_CEILING_MS}ms`);
-        setSourceError((prev) => prev ?? { status: 0, host: hostOf(src.url) });
+        setSourceError((prev) => prev ?? { status: 0, host: sourceHost(src) });
       },
       Math.max(0, remaining),
     );

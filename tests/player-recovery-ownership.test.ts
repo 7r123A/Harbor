@@ -534,6 +534,24 @@ test("manual source recovery failure does not silently choose another title or s
   assert.equal(h.render().sourceError?.host, "media.test");
 });
 
+test("a source error names the provider the viewer picked, not the play URL", async () => {
+  const h = recoveryHarness();
+  h.render({
+    instantPlay: false,
+    src: {
+      ...h.params.src,
+      // The player may be handed a relay URL; the viewer picked the provider URL.
+      url: "https://relay.test/s/fixture",
+      historyUrl: "https://nzbdav.test/content/episode.mkv",
+    },
+  });
+  h.fail();
+  h.cycle();
+  h.proxyRequests[0].job.reject(new Error("relay unavailable"));
+  await settle();
+  assert.equal(h.render().sourceError?.host, "nzbdav.test");
+});
+
 test("showing an ordinary manual source error does not restart its recovery effect", async () => {
   const h = recoveryHarness();
   h.render({ instantPlay: false });

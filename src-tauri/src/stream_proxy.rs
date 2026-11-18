@@ -114,6 +114,11 @@ impl ProxyState {
             local_port: 0,
             client: reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
+                // Providers are frequently on the LAN (NzbDAV, media servers) while
+                // VPN and proxy tools export HTTP(S)_PROXY for the public internet.
+                // Every other Harbor HTTP client disables the environment proxy;
+                // without this the relay fails for exactly those sources.
+                .no_proxy()
                 .build()
                 .expect("proxy HTTP client"),
             hls: HlsState::new(),
@@ -147,6 +152,9 @@ impl ProxyState {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .pool_idle_timeout(std::time::Duration::from_secs(60))
+            // See ProxyState::placeholder: a LAN provider must not be routed
+            // through an environment proxy meant for public traffic.
+            .no_proxy()
             .build()
             .map_err(|e| format!("client build: {}", e))?;
         let hls = HlsState::new();
@@ -751,7 +759,7 @@ async fn fetch_prebuffer_prefix(
         }
         req = req.header(key, value);
     }
-    let upstream = crate::http_redirect::send_get(&client, req, url).await?;
+    let upstream = crate::http_redirect::send_get_playback(&client, req, url).await?;
     let status = upstream.status();
     if status != StatusCode::PARTIAL_CONTENT {
         return Err("range");
@@ -983,12 +991,13 @@ async fn forward_upstream(
         req = req.header(k, v);
     }
 
-    let upstream = match crate::http_redirect::send_get(&state.client, req, &session.url).await {
-        Ok(r) => r,
-        Err(e) => {
-            return (StatusCode::BAD_GATEWAY, format!("upstream error: {}", e)).into_response();
-        }
-    };
+    let upstream =
+        match crate::http_redirect::send_get_playback(&state.client, req, &session.url).await {
+            Ok(r) => r,
+            Err(e) => {
+                return (StatusCode::BAD_GATEWAY, format!("upstream error: {}", e)).into_response();
+            }
+        };
 
     let status =
         StatusCode::from_u16(upstream.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
