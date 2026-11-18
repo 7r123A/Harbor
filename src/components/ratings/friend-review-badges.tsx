@@ -6,7 +6,7 @@ import {
   useFriendReviewIndex,
   useTitleHoverSummary,
 } from "@/lib/social/friend-review-index";
-import { Star } from "lucide-react";
+import { HarborMark } from "@/components/icons/harbor-mark";
 import { Avatar } from "@/views/profile/profile-bits";
 import type { FriendReviewMark } from "@/lib/social/friend-review-index";
 
@@ -72,8 +72,8 @@ export function FriendReviewBadges({
     return (
       <div className={`pointer-events-none z-10 flex items-center ${className}`}>
         <span className="inline-flex items-center gap-1 rounded-full bg-elevated/80 px-2 py-1 text-[11px] font-medium leading-none text-ink-muted">
-          <Star size={12} aria-hidden />
-          {t("Rate it")}
+          <HarborMark className="h-3 w-3 shrink-0 text-white" />
+          {t("Be first to rate!")}
         </span>
       </div>
     );
@@ -93,7 +93,10 @@ export function FriendReviewBadges({
       title={totalCount > 0 ? label : undefined}
       className={`pointer-events-none z-10 flex items-center ${className}`}
     >
-      <span className="inline-flex shrink-0 items-center">
+      <span
+        className="inline-flex shrink-0 items-center rounded-full p-0.5"
+        style={{ backgroundColor: "color-mix(in srgb, var(--color-ink) 20%, var(--color-canvas))" }}
+      >
         {shown.length > 0 && (
           <span className="relative z-10 inline-flex shrink-0 items-center">
             {shown.map((mark, i) => (
@@ -110,7 +113,7 @@ export function FriendReviewBadges({
                   <Avatar src={mark.avatarUrl} size={avatarSize} alias={mark.alias} />
                 </span>
                 {i === shown.length - 1 && extra > 0 && (
-                  <span className="absolute -right-1 -top-1 z-10 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-elevated px-0.5 text-[9px] font-medium leading-none tabular-nums text-ink ring-1 ring-canvas">
+                  <span className="absolute -right-1 -top-0.5 z-10 inline-flex h-3 min-w-3 items-center justify-center rounded-full bg-elevated px-0.5 text-[8px] font-medium leading-none tabular-nums text-ink ring-1 ring-edge-soft">
                     +{extra}
                   </span>
                 )}
@@ -121,13 +124,8 @@ export function FriendReviewBadges({
         {averageScore !== null && (
           <span
             title={t("Harbor users average score")}
-            className="inline-flex shrink-0 items-center rounded-full pe-2 text-[12px] font-semibold leading-none tabular-nums text-ink"
-            style={{
-              height: Math.max(18, Math.round(avatarSize * 0.86)),
-              marginInlineStart: shown.length > 0 ? -Math.round(avatarSize / 2) : 0,
-              paddingInlineStart: shown.length > 0 ? Math.round(avatarSize / 2) + 4 : 8,
-              backgroundColor: "color-mix(in srgb, var(--color-ink) 10%, var(--color-canvas))",
-            }}
+            className="inline-flex shrink-0 items-center ps-1.5 pe-2 text-[12px] font-semibold leading-none tabular-nums text-ink"
+            style={{ height: avatarSize }}
           >
             <span>{averageScore.toFixed(1)}</span>
           </span>
