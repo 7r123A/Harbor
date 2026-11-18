@@ -108,10 +108,16 @@ export function releaseFaceEngine(): void {
   stopWorker(worker, new Error("X-Ray face worker stopped"));
 }
 
-async function readyWorker(): Promise<Worker> {
-  await ensureFaceEngine();
-  if (!worker) throw new Error("X-Ray face worker is unavailable");
-  return worker;
+// The bitmap is still ours until it is transferred, so close it if startup fails.
+async function readyWorker(bitmap: ImageBitmap): Promise<Worker> {
+  try {
+    await ensureFaceEngine();
+    if (!worker) throw new Error("X-Ray face worker is unavailable");
+    return worker;
+  } catch (error) {
+    bitmap.close();
+    throw error;
+  }
 }
 
 function detectOnMain<T>(
@@ -128,7 +134,7 @@ function detectOnMain<T>(
 }
 
 export async function scanFrame(bitmap: ImageBitmap): Promise<WireFace[]> {
-  const current = await readyWorker();
+  const current = await readyWorker(bitmap);
   if (!mainDetector) return request<"scan">(current, { type: "scan", bitmap }, [bitmap]);
   const faces = detectOnMain(bitmap, (m) => m.lib.detectScanFaces(m.detector, bitmap));
   if (faces.length === 0) {
@@ -139,7 +145,7 @@ export async function scanFrame(bitmap: ImageBitmap): Promise<WireFace[]> {
 }
 
 export async function embedLargestFace(bitmap: ImageBitmap): Promise<number[] | null> {
-  const current = await readyWorker();
+  const current = await readyWorker(bitmap);
   if (!mainDetector)
     return request<"embed-largest">(current, { type: "embed-largest", bitmap }, [bitmap]);
   const face = detectOnMain(bitmap, (m) => m.lib.detectLargestFace(m.detector, bitmap));
