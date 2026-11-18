@@ -18,8 +18,22 @@ class StubTraktApiError extends Error {
 
 type Response = { data: unknown; headers?: Record<string, string> };
 
-function load(respond: (path: string, opts: { method?: string }) => Promise<Response>) {
+function load(
+  respond: (path: string, opts: { method?: string }) => Promise<Response>,
+  options: { storage?: Map<string, string> } = {},
+) {
   const requests: Array<{ path: string; method?: string }> = [];
+  let session: { username?: string | null } = {};
+  const storage = options.storage ?? new Map<string, string>();
+  const storageApi = {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key),
+    key: (index: number) => [...storage.keys()][index] ?? null,
+    get length() {
+      return storage.size;
+    },
+  };
   const source = readFileSync(new URL("../src/lib/trakt/playback.ts", import.meta.url), "utf8");
   const mocks: Record<string, unknown> = {
     "./client": {
@@ -35,7 +49,7 @@ function load(respond: (path: string, opts: { method?: string }) => Promise<Resp
       },
       TraktApiError: StubTraktApiError,
     },
-    "./session": { getSession: () => ({}) },
+    "./session": { getSession: () => session },
     "@/lib/cw-dismiss": { isCwDismissed: () => true },
     "@/lib/resume": {
       readResumeEntry: () => undefined,
@@ -46,17 +60,24 @@ function load(respond: (path: string, opts: { method?: string }) => Promise<Resp
   const output = ts.transpileModule(source, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText;
-  new Function("require", "module", "exports", output)(
+  new Function("require", "module", "exports", "window", "localStorage", output)(
     (name: string) => {
       assert.ok(Object.hasOwn(mocks, name), `Unexpected dependency: ${name}`);
       return mocks[name];
     },
     module,
     module.exports,
+    options.storage ? {} : undefined,
+    storageApi,
   );
   return {
     api: module.exports as typeof import("../src/lib/trakt/playback"),
     requests,
+    session,
+    storage,
+    setSession: (next: { username?: string | null }) => {
+      session = next;
+    },
   };
 }
 
@@ -98,7 +119,7 @@ test("Trakt playback keeps the playback id and the TMDB alias for cross-source m
     },
   ]);
 
-  const items = await h.api.fetchTraktPlaybackItems();
+  const items = (await h.api.fetchTraktPlaybackItems()).items;
 
   assert.deepEqual(
     items.map((item) => item.state?.video_id),
@@ -209,4 +230,78 @@ test("Trakt snapshot keeps distinct playback ids for the same episode", async ()
     "1",
     "2",
   ]);
+});
+
+test("a Trakt token refresh for the same account does not fail the playback fetch", async () => {
+  let h: ReturnType<typeof load>;
+  h = load(async () => {
+    // Simulate the session being replaced by a token refresh during the request.
+    h.setSession({ username: "acct-a" });
+    return {
+      data: [
+        {
+          id: 42,
+          progress: 50,
+          paused_at: "2026-09-29T10:30:00.000Z",
+          movie: { title: "Movie", ids: { imdb: "tt123", tmdb: 456 } },
+        },
+      ],
+    };
+  });
+  h.session.username = "acct-a";
+  const result = await h.api.fetchTraktPlaybackItems();
+  assert.equal(result.fresh, true);
+  assert.equal(result.items.length, 1);
+});
+
+test("clearing one Trakt account cache leaves another account cache intact", () => {
+  const storage = new Map<string, string>();
+  storage.set("harbor.trakt.playback_items.v2.acct-a", "[]");
+  storage.set("harbor.trakt.playback_items.v2.acct-b", "[]");
+  const h = load(async () => ({ data: [] }), { storage });
+  h.api.clearCachedTraktPlaybackItems("acct-a");
+  assert.equal(storage.has("harbor.trakt.playback_items.v2.acct-a"), false);
+  assert.equal(storage.has("harbor.trakt.playback_items.v2.acct-b"), true);
+});
+
+test("Trakt playback cache is account-scoped and never leaks across accounts", async () => {
+  let failure: Error | null = null;
+  const storage = new Map<string, string>();
+  const h = load(
+    async () => {
+      if (failure) throw failure;
+      return {
+        data: [
+          {
+            id: 42,
+            progress: 50,
+            paused_at: "2026-09-29T10:30:00.000Z",
+            movie: { title: "Movie", ids: { imdb: "tt123", tmdb: 456 } },
+          },
+        ],
+      };
+    },
+    { storage },
+  );
+  h.session.username = "acct-a";
+  const first = await h.api.fetchTraktPlaybackItems();
+  assert.equal(first.fresh, true);
+  assert.equal(first.items.length, 1);
+  const keyA = [...storage.keys()].find((key) => key.includes("acct-a"));
+  assert.ok(keyA, "account A cache key was not written");
+
+  h.session.username = "acct-b";
+  failure = new StubTraktApiError(500);
+  await assert.rejects(
+    () => h.api.fetchTraktPlaybackItems(),
+    /Trakt HTTP 500/,
+    "account B must not receive account A's cache",
+  );
+  assert.equal(storage.has(keyA), true);
+
+  h.session.username = "acct-a";
+  const fallback = await h.api.fetchTraktPlaybackItems();
+  assert.equal(fallback.fresh, false);
+  assert.equal(fallback.items.length, 1);
+  assert.equal(fallback.items[0]._id, "tt123");
 });

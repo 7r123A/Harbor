@@ -60,12 +60,18 @@ function fixture(initialNuvioActive = true, nuvioSignedIn = true) {
       writeCachedSimklPlaybackItems: (_items: LibraryItem[]) => {
         simklCache = _items;
       },
+      clearCachedSimklPlaybackItems: () => {
+        simklCache = [];
+      },
     },
     "@/lib/trakt/playback": {
       fetchTraktPlaybackItems: () => providers.trakt(),
       readCachedTraktPlaybackItems: () => traktCache,
       writeCachedTraktPlaybackItems: (_items: LibraryItem[]) => {
         traktCache = _items;
+      },
+      clearCachedTraktPlaybackItems: () => {
+        traktCache = [];
       },
     },
     "@/lib/publicmetadb/playback": {

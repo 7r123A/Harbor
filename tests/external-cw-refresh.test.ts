@@ -20,10 +20,11 @@ const item = (source: "simkl" | "trakt" | "publicmetadb", id: string): LibraryIt
 function fixture() {
   const timers = new Map<object, { callback: () => void; delay: number }>();
   const listeners: Record<string, () => void> = {};
-  const providers = {
-    simkl: async (): Promise<LibraryItem[]> => [],
-    trakt: async (): Promise<LibraryItem[]> => [],
-    publicmetadb: async (): Promise<LibraryItem[]> => [],
+  type ProviderReply = LibraryItem[] | { items: LibraryItem[]; fresh: boolean };
+  const providers: Record<"simkl" | "trakt" | "publicmetadb", () => Promise<ProviderReply>> = {
+    simkl: async () => [],
+    trakt: async () => [],
+    publicmetadb: async () => [],
   };
   const connected = { simkl: true, trakt: true, publicmetadb: false };
   const sessions = { simkl: {}, trakt: {}, publicmetadb: {} };
@@ -37,8 +38,16 @@ function fixture() {
   };
   const mocks: Record<string, unknown> = {
     react: {},
-    "@/lib/simkl/playback": { fetchSimklPlaybackItems: () => providers.simkl() },
-    "@/lib/trakt/playback": { fetchTraktPlaybackItems: () => providers.trakt() },
+    "@/lib/simkl/playback": {
+      fetchSimklPlaybackItems: () => providers.simkl(),
+      readCachedSimklPlaybackItems: () => [],
+      clearCachedSimklPlaybackItems: () => {},
+    },
+    "@/lib/trakt/playback": {
+      fetchTraktPlaybackItems: () => providers.trakt(),
+      readCachedTraktPlaybackItems: () => [],
+      clearCachedTraktPlaybackItems: () => {},
+    },
     "@/lib/publicmetadb/playback": {
       fetchPublicMetaDbPlaybackItems: () => providers.publicmetadb(),
     },
@@ -464,12 +473,19 @@ test("switching Nuvio accounts on the same slot discards an in-flight response",
 
   assert.equal(h.nuvio.fetches, 2, "account B must receive its own fetch");
   assert.deepEqual(h.api.listExternalCw(), [], "account A must never become visible");
-  assert.deepEqual(h.api.getCachedNuvioItemsForSlot(1), [], "late A data must not pollute slot cache");
+  assert.deepEqual(
+    h.api.getCachedNuvioItemsForSlot(1),
+    [],
+    "late A data must not pollute slot cache",
+  );
 
   pending[1]([{ ...item("simkl", "new-account"), external: "nuvio" }]);
   await settle();
   await settle();
-  assert.deepEqual(h.api.listExternalCw().map((entry) => entry._id), ["new-account"]);
+  assert.deepEqual(
+    h.api.listExternalCw().map((entry) => entry._id),
+    ["new-account"],
+  );
 });
 
 test("switching Nuvio accounts clears visible cards even when the replacement is offline", async () => {
@@ -485,7 +501,10 @@ test("switching Nuvio accounts clears visible cards even when the replacement is
   h.listeners["harbor:nuvio-state-changed"]();
   await settle();
   await settle();
-  assert.deepEqual(h.api.listExternalCw().map((entry) => entry._id), ["account-a-card"]);
+  assert.deepEqual(
+    h.api.listExternalCw().map((entry) => entry._id),
+    ["account-a-card"],
+  );
 
   h.nuvio.accountId = "account-b";
   h.nuvio.fetch = async () => {
@@ -508,7 +527,10 @@ test("a profile-change event does not restore previous Nuvio account's slot cach
   h.api.setExternalCwSources({ simkl: false, trakt: false, publicmetadb: false, nuvio: true });
   await settle();
   await settle();
-  assert.deepEqual(h.api.getCachedNuvioItemsForSlot(1).map((entry) => entry._id), ["account-a-card"]);
+  assert.deepEqual(
+    h.api.getCachedNuvioItemsForSlot(1).map((entry) => entry._id),
+    ["account-a-card"],
+  );
 
   h.nuvio.accountId = "account-b";
   h.nuvio.fetch = async () => {
@@ -530,6 +552,23 @@ test("a successful empty response removes old cards, unlike a failed response", 
   await h.api.refreshExternalCw(true);
   assert.deepEqual(h.api.listExternalCw(), []);
   assert.equal(h.timers.size, 0);
+});
+
+test("a stale provider result is shown but does not count as a fresh refresh", async () => {
+  const h = fixture();
+  let calls = 0;
+  h.providers.simkl = async () => {
+    calls += 1;
+    return { items: [item("simkl", "cached-simkl")], fresh: false };
+  };
+  await h.api.refreshExternalCw(true);
+  assert.deepEqual(
+    h.api.listExternalCw().map((i) => i._id),
+    ["cached-simkl"],
+  );
+  // The stale result leaves fetchedAt at zero, so a normal refresh fetches again.
+  await h.api.refreshExternalCw();
+  assert.equal(calls, 2);
 });
 
 test("willRefreshExternalCw reflects provider mode and freshness", async () => {

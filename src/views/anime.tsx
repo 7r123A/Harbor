@@ -410,8 +410,8 @@ export function AnimeView({ active = true }: { active?: boolean }) {
     }
     let cancelled = false;
     fetchSimklPlaybackItems()
-      .then((cw) => {
-        if (!cancelled) setSimklCw(cw.filter(isAnimeCwItem));
+      .then(({ items }) => {
+        if (!cancelled) setSimklCw(items.filter(isAnimeCwItem));
       })
       .catch(() => {});
     return () => {

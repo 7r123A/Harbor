@@ -1,8 +1,16 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { noteNotify } from "@/lib/render-cause";
 import { detectAnimeForCw } from "@/lib/anime-detect";
-import { fetchSimklPlaybackItems, readCachedSimklPlaybackItems } from "@/lib/simkl/playback";
-import { fetchTraktPlaybackItems, readCachedTraktPlaybackItems } from "@/lib/trakt/playback";
+import {
+  clearCachedSimklPlaybackItems,
+  fetchSimklPlaybackItems,
+  readCachedSimklPlaybackItems,
+} from "@/lib/simkl/playback";
+import {
+  clearCachedTraktPlaybackItems,
+  fetchTraktPlaybackItems,
+  readCachedTraktPlaybackItems,
+} from "@/lib/trakt/playback";
 import {
   fetchNuvioPlaybackItems,
   readCachedNuvioPlaybackItems,
@@ -34,6 +42,14 @@ const STALE_MS = 300_000;
 const FOCUS_STALE_MS = 30_000;
 const RETRY_DELAYS_MS = [1000, 4000, 10000];
 const EMPTY: LibraryItem[] = [];
+
+type ProviderResult = { items: LibraryItem[]; fresh: boolean };
+type ProviderRawResult = LibraryItem[] | ProviderResult;
+
+/** Keep existing provider/test callers working while the adapters migrate. */
+function normalizeProviderResult(value: ProviderRawResult): ProviderResult {
+  return Array.isArray(value) ? { items: value, fresh: true } : value;
+}
 
 // Per-slot in-memory cache for snappy instant profile switches
 const slotCwMemoryCache = new Map<number, LibraryItem[]>();
@@ -328,24 +344,30 @@ async function runRefresh(
 ): Promise<boolean> {
   const enabled: Array<{
     source: "simkl" | "trakt" | "publicmetadb" | "nuvio";
-    fetch: () => Promise<LibraryItem[]>;
+    fetch: (force: boolean) => Promise<ProviderRawResult>;
   }> = [];
   if (getSimklSession() && sourceMask.simkl)
     enabled.push({ source: "simkl", fetch: fetchSimklPlaybackItems });
   if (getTraktSession() && sourceMask.trakt)
     enabled.push({ source: "trakt", fetch: fetchTraktPlaybackItems });
   if (getPmdbSession() && sourceMask.publicmetadb)
-    enabled.push({ source: "publicmetadb", fetch: fetchPublicMetaDbPlaybackItems });
+    enabled.push({
+      source: "publicmetadb",
+      fetch: async (refresh) => ({
+        items: await fetchPublicMetaDbPlaybackItems(refresh),
+        fresh: true,
+      }),
+    });
   if (isNuvioSignedIn() && sourceMask.nuvio && isNuvioProviderActive()) {
     enabled.push({
       source: "nuvio",
-      fetch: async () => {
+      fetch: async (refresh) => {
         const slot = resolveNuvioProfileIndex();
-        const fresh = await fetchNuvioPlaybackItems(slot, force);
+        const fresh = await fetchNuvioPlaybackItems(slot, refresh);
         // An older account's response must not repopulate the slot cache after
         // an account switch, even when both accounts use the same slot.
         if (sameRefreshOwner(ownerAtStart, refreshOwner())) slotCwMemoryCache.set(slot, fresh);
-        return fresh;
+        return { items: fresh, fresh: true };
       },
     });
   }
@@ -357,10 +379,11 @@ async function runRefresh(
     enabled.map(async ({ source, fetch }) => {
       const started = typeof performance !== "undefined" ? performance.now() : 0;
       try {
-        const value = await fetch();
+        const value = normalizeProviderResult(await fetch(force));
         startupEvent("cw.external.source", {
           source,
           ok: true,
+          fresh: value.fresh,
           ms: Math.round((performance.now() - started) * 10) / 10,
         });
         return value;
@@ -368,6 +391,7 @@ async function runRefresh(
         startupEvent("cw.external.source", {
           source,
           ok: false,
+          fresh: false,
           ms: Math.round((performance.now() - started) * 10) / 10,
         });
         return null;
@@ -375,14 +399,23 @@ async function runRefresh(
     }),
   );
 
-  const complete = results.every((result) => result !== null);
+  const complete = results.every((result) => result !== null && result.fresh);
   const failedSources = new Set(
     enabled.filter((_, index) => results[index] === null).map(({ source }) => source),
+  );
+  const staleSources = new Set(
+    enabled
+      .filter((_, index) => {
+        const result = results[index];
+        return result !== null && !result.fresh;
+      })
+      .map(({ source }) => source),
   );
   startupEvent("cw.external.refresh.end", {
     complete,
     succeeded: results.filter((result) => result !== null).length,
     failed: [...failedSources],
+    stale: [...staleSources],
     superseded: gen < lastAppliedGen,
   });
 
@@ -395,10 +428,13 @@ async function runRefresh(
   lastAppliedGen = gen;
 
   fetchedAt = complete ? Date.now() : 0;
-  const succeeded = results.filter((r): r is LibraryItem[] => r !== null);
+  const succeeded = results.filter((result): result is ProviderResult => result !== null);
   if (succeeded.length === 0) return false;
-  const retained = items.filter((i) => i.external && failedSources.has(i.external));
-  const activeItems = [...succeeded, retained].flat().filter((i) => {
+  // A stale cache is shown, but the previous source rows are retained so an
+  // empty stale fallback cannot erase the last good row.
+  const retainedSources = new Set([...failedSources, ...staleSources]);
+  const retained = items.filter((i) => i.external && retainedSources.has(i.external));
+  const activeItems = [...succeeded.flatMap((result) => result.items), ...retained].filter((i) => {
     if (i.external === "trakt") return sourceMask.trakt && !!getTraktSession();
     if (i.external === "simkl") return sourceMask.simkl && !!getSimklSession();
     if (i.external === "publicmetadb") return sourceMask.publicmetadb && !!getPmdbSession();
@@ -560,6 +596,14 @@ function onSessionChange(): void {
     nuvioAccount === lastNuvioAccount
   )
     return;
+  const previousSimklUser = lastSimkl?.username?.trim().toLowerCase() ?? null;
+  const nextSimklUser = simkl?.username?.trim().toLowerCase() ?? null;
+  if (previousSimklUser && previousSimklUser !== nextSimklUser)
+    clearCachedSimklPlaybackItems(previousSimklUser);
+  const previousTraktUser = lastTrakt?.username?.trim().toLowerCase() ?? null;
+  const nextTraktUser = trakt?.username?.trim().toLowerCase() ?? null;
+  if (previousTraktUser && previousTraktUser !== nextTraktUser)
+    clearCachedTraktPlaybackItems(previousTraktUser);
   setItems(
     items.filter(
       (i) =>

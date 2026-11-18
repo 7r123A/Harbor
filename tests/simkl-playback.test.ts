@@ -36,12 +36,26 @@ class StubSimklApiError extends Error {
   }
 }
 
-function playback(sessions: unknown[], existing?: { ms: number; t: number }) {
+function playback(
+  sessions: unknown[],
+  existing?: { ms: number; t: number },
+  options: { storage?: Map<string, string> } = {},
+) {
   const writes: unknown[][] = [];
   const requests: string[] = [];
   let failure: Error | null = null;
   let session = {};
   let onRequest: (() => void) | null = null;
+  const storage = options.storage ?? new Map<string, string>();
+  const storageApi = {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key),
+    key: (index: number) => [...storage.keys()][index] ?? null,
+    get length() {
+      return storage.size;
+    },
+  };
   const source = readFileSync(new URL("../src/lib/simkl/playback.ts", import.meta.url), "utf8");
   const mocks: Record<string, unknown> = {
     "./session": { getSession: () => session },
@@ -68,18 +82,21 @@ function playback(sessions: unknown[], existing?: { ms: number; t: number }) {
   const output = ts.transpileModule(source, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText;
-  new Function("require", "module", "exports", output)(
+  new Function("require", "module", "exports", "window", "localStorage", output)(
     (name: string) => {
       assert.ok(Object.hasOwn(mocks, name), `Unexpected dependency: ${name}`);
       return mocks[name];
     },
     module,
     module.exports,
+    options.storage ? {} : undefined,
+    storageApi,
   );
   return {
     api: module.exports as typeof import("../src/lib/simkl/playback"),
     writes,
     requests,
+    storage,
     StubSimklApiError,
     failRequests: (error: Error | null) => {
       failure = error;
@@ -110,7 +127,7 @@ test("Simkl paused episodes retain timestamp, episode identity and resume progre
       episode: { season: 1, number: 6 },
     },
   ]);
-  const items = await h.api.fetchSimklPlaybackItems();
+  const items = (await h.api.fetchSimklPlaybackItems()).items;
   assert.equal(items.length, 2, "distinct episodes must not collapse into one session");
   assert.deepEqual(
     items.map((item) => item.state?.video_id),
@@ -147,7 +164,7 @@ test("anime progress uses a season-scoped ID or an explicit franchise episode ma
     },
     { progress: 40, anime: { title: "Unmapped", ids: { imdb: "tt300" } }, episode: { number: 5 } },
   ]);
-  const items = await h.api.fetchSimklPlaybackItems();
+  const items = (await h.api.fetchSimklPlaybackItems()).items;
   assert.deepEqual(
     items.map((i) => i.state?.video_id),
     ["kitsu:42:1:3", "tt200:2:4"],
@@ -175,7 +192,7 @@ test("Simkl prefers paused_at while retaining legacy watched_at compatibility", 
     },
     { progress: 30, watched_at: watchedAt, movie: { ids: { imdb: "tt2345678" } } },
   ]);
-  const items = await h.api.fetchSimklPlaybackItems();
+  const items = (await h.api.fetchSimklPlaybackItems()).items;
   assert.deepEqual(
     items.map((item) => item.state?.lastWatched),
     [pausedAt, watchedAt],
@@ -190,7 +207,7 @@ test("Simkl still excludes unstarted and finished sessions", async () => {
       movie: { ids: { imdb: `tt123456${index}` } },
     })),
   );
-  const items = await h.api.fetchSimklPlaybackItems();
+  const items = (await h.api.fetchSimklPlaybackItems()).items;
   assert.deepEqual(
     items.map((item) => item._id),
     ["tt1234561"],
@@ -207,7 +224,7 @@ test("Simkl keeps the anime-native id and entry-relative coords for a mal-only n
       episode: { season: 1, number: 6 },
     },
   ]);
-  const items = await h.api.fetchSimklPlaybackItems();
+  const items = (await h.api.fetchSimklPlaybackItems()).items;
   assert.equal(items[0]._id, "mal:51715");
   assert.equal(items[0].isAnime, true);
   assert.deepEqual(items[0].state?.video_id, "mal:51715:1:6");
@@ -343,4 +360,94 @@ test("the deletion snapshot keeps distinct playback ids for the same episode", a
     "1",
     "2",
   ]);
+});
+
+test("Simkl playback cache is account-scoped and never leaks across accounts", async () => {
+  const storage = new Map<string, string>();
+  const h = playback(
+    [
+      {
+        progress: 45,
+        paused_at: "2026-09-29T10:30:00.000Z",
+        show: { title: "Fixture show", ids: { imdb: "tt1234567" } },
+        episode: { season: 1, episode: 5 },
+      },
+    ],
+    undefined,
+    { storage },
+  );
+  h.setSession({ username: "acct-a", accessToken: "a" });
+  const first = await h.api.fetchSimklPlaybackItems();
+  assert.equal(first.fresh, true);
+  assert.equal(first.items.length, 1);
+  const keyA = [...storage.keys()].find((key) => key.includes("acct-a"));
+  assert.ok(keyA, "account A cache key was not written");
+
+  h.setSession({ username: "acct-b", accessToken: "b" });
+  h.failRequests(new Error("offline"));
+  await assert.rejects(
+    () => h.api.fetchSimklPlaybackItems(),
+    /offline/,
+    "account B must not receive account A's cache",
+  );
+  assert.equal(storage.has(keyA), true);
+
+  h.setSession({ username: "acct-a", accessToken: "a" });
+  const fallback = await h.api.fetchSimklPlaybackItems();
+  assert.equal(fallback.fresh, false);
+  assert.equal(fallback.items.length, 1);
+  assert.equal(fallback.items[0]._id, "tt1234567");
+});
+
+test("Simkl cached old Watching anchors are filtered", () => {
+  const storage = new Map<string, string>();
+  const base = {
+    type: "series",
+    name: "Fixture",
+    external: "simkl",
+    removed: false,
+    temp: false,
+    _ctime: "2022-01-01T00:00:00.000Z",
+    _mtime: "2022-01-01T00:00:00.000Z",
+    upNext: true,
+  };
+  storage.set(
+    "harbor.simkl.playback_items.v2.acct-a",
+    JSON.stringify([
+      {
+        ...base,
+        _id: "mal:1",
+        state: {
+          timeOffset: 0,
+          duration: 0,
+          lastWatched: "2022-09-08T00:00:00.000Z",
+        },
+      },
+      {
+        ...base,
+        _id: "mal:2",
+        state: {
+          timeOffset: 0,
+          duration: 0,
+          lastWatched: new Date().toISOString(),
+        },
+      },
+    ]),
+  );
+  const h = playback([], undefined, { storage });
+  h.setSession({ username: "acct-a", accessToken: "a" });
+  assert.deepEqual(
+    h.api.readCachedSimklPlaybackItems().map((item) => item._id),
+    ["mal:2"],
+  );
+});
+
+test("clearing one Simkl account cache leaves another account cache intact", () => {
+  const storage = new Map<string, string>();
+  storage.set("harbor.simkl.playback_items.v2.acct-a", "[]");
+  storage.set("harbor.simkl.playback_items.v2.acct-b", "[]");
+  const h = playback([], undefined, { storage });
+  h.api.clearCachedSimklPlaybackItems("acct-a");
+  assert.equal(storage.has("harbor.simkl.playback_items.v2.acct-a"), false);
+  assert.equal(storage.has("harbor.simkl.playback_items.v2.acct-b"), true);
 });

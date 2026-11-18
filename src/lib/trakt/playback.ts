@@ -99,8 +99,21 @@ function toLibraryItem(raw: RawPlayback): LibraryItem | null {
   return item;
 }
 
-export const TRAKT_PLAYBACK_CACHE_KEY = "harbor.trakt.playback_items";
-let memoryTraktPlaybackCache: LibraryItem[] | null = null;
+const TRAKT_PLAYBACK_CACHE_PREFIX = "harbor.trakt.playback_items.v2.";
+const TRAKT_LEGACY_PLAYBACK_CACHE_KEY = "harbor.trakt.playback_items";
+
+export type TraktPlaybackResult = { items: LibraryItem[]; fresh: boolean };
+
+function traktCacheKeyFor(username?: string | null): string | null {
+  const value = username?.trim().toLowerCase();
+  return value ? `${TRAKT_PLAYBACK_CACHE_PREFIX}${encodeURIComponent(value)}` : null;
+}
+
+function traktAccountCacheKey(): string | null {
+  return traktCacheKeyFor(getSession()?.username);
+}
+
+const memoryTraktPlaybackCache = new Map<string, LibraryItem[]>();
 
 function isValidTraktPlaybackItem(item: LibraryItem): boolean {
   if (!item || item.external !== "trakt" || !item.state) return false;
@@ -113,20 +126,23 @@ function isValidTraktPlaybackItem(item: LibraryItem): boolean {
 }
 
 export function readCachedTraktPlaybackItems(): LibraryItem[] {
-  if (memoryTraktPlaybackCache && memoryTraktPlaybackCache.length > 0) {
-    return memoryTraktPlaybackCache.filter(isValidTraktPlaybackItem);
+  const key = traktAccountCacheKey();
+  if (!key) return [];
+  const memory = memoryTraktPlaybackCache.get(key);
+  if (memory && memory.length > 0) {
+    return memory.filter(isValidTraktPlaybackItem);
   }
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(TRAKT_PLAYBACK_CACHE_KEY);
+    const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         const valid = parsed.filter(isValidTraktPlaybackItem);
-        memoryTraktPlaybackCache = valid;
+        memoryTraktPlaybackCache.set(key, valid);
         if (valid.length !== parsed.length) {
           try {
-            localStorage.setItem(TRAKT_PLAYBACK_CACHE_KEY, JSON.stringify(valid));
+            localStorage.setItem(key, JSON.stringify(valid));
           } catch {}
         }
         return valid;
@@ -137,18 +153,39 @@ export function readCachedTraktPlaybackItems(): LibraryItem[] {
 }
 
 export function writeCachedTraktPlaybackItems(items: LibraryItem[]): void {
-  memoryTraktPlaybackCache = items;
+  const key = traktAccountCacheKey();
+  if (!key) return;
+  memoryTraktPlaybackCache.set(key, items);
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(TRAKT_PLAYBACK_CACHE_KEY, JSON.stringify(items));
+    localStorage.setItem(key, JSON.stringify(items));
   } catch {}
 }
 
-export function clearCachedTraktPlaybackItems(): void {
-  memoryTraktPlaybackCache = null;
+export function clearCachedTraktPlaybackItems(username?: string | null): void {
+  const target = username === undefined ? null : traktCacheKeyFor(username);
+  if (target) {
+    memoryTraktPlaybackCache.delete(target);
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.removeItem(target);
+    } catch {}
+    return;
+  }
+  memoryTraktPlaybackCache.clear();
   if (typeof window === "undefined") return;
   try {
-    localStorage.removeItem(TRAKT_PLAYBACK_CACHE_KEY);
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (
+        key &&
+        (key.startsWith(TRAKT_PLAYBACK_CACHE_PREFIX) || key === TRAKT_LEGACY_PLAYBACK_CACHE_KEY)
+      ) {
+        keys.push(key);
+      }
+    }
+    for (const key of keys) localStorage.removeItem(key);
   } catch {}
 }
 
@@ -267,24 +304,36 @@ function itemsFromRaw(raw: RawPlayback[], backfill: boolean, dedupe = true): Lib
   return items;
 }
 
-export async function fetchTraktPlaybackItems(fresh = false): Promise<LibraryItem[]> {
-  if (!getSession()) return [];
+export async function fetchTraktPlaybackItems(force = false): Promise<TraktPlaybackResult> {
+  const owner = getSession();
+  if (!owner) return { items: [], fresh: false };
   let raw: RawPlayback[];
   try {
     raw = await traktRequest<RawPlayback[]>("/sync/playback?limit=40");
   } catch (e) {
     if (e instanceof TraktApiError && e.status === 404) {
       writeCachedTraktPlaybackItems([]);
-      return [];
+      return { items: [], fresh: true };
     }
-    if (fresh) throw e;
+    if (force) throw e;
     const cached = readCachedTraktPlaybackItems();
-    if (cached.length > 0) return cached;
+    if (cached.length > 0) return { items: cached, fresh: false };
     throw e;
   }
-  if (!Array.isArray(raw)) return [];
+  const current = getSession();
+  if (!current) throw new Error("TRAKT session ended");
+  // A token refresh replaces the session object for the same account. Compare
+  // the account identity, not object identity, or a successful refresh is
+  // discarded as a session change.
+  if (owner.username) {
+    if ((current.username ?? "").toLowerCase() !== owner.username.toLowerCase())
+      throw new Error("TRAKT account changed");
+  } else if (current !== owner) {
+    throw new Error("TRAKT session changed");
+  }
+  if (!Array.isArray(raw)) return { items: [], fresh: true };
 
   const items = itemsFromRaw(raw, true);
   writeCachedTraktPlaybackItems(items);
-  return items;
+  return { items, fresh: true };
 }
