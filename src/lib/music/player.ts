@@ -35,6 +35,7 @@ import {
   pinSourceFor,
   unpinSourceFor,
 } from "./pinned-sources";
+import { selectSourceCandidate } from "./source-selection";
 import {
   getMusicTransport,
   musicAdvance,
@@ -916,6 +917,7 @@ async function nextPlayableSource(
   return (usable.find((candidate) => candidate.connectorId === want) ?? usable[0])?.track ?? null;
 }
 
+
 export async function playMusic(
   track: MusicTrack,
   queue = [track],
@@ -1022,17 +1024,12 @@ export async function playMusic(
       }
       const preferred = readMusicPreference("harbor.music.preferred-source.v1");
       const ranked = rankByExplicitness(playable, explicitnessOf(track));
-      const pinned = peekPinnedSource(track);
-      const match =
-        (pinned &&
-          (ranked.find(
-            (candidate) =>
-              candidate.connectorId === pinned.connectorId && candidate.track.id === pinned.id,
-          ) ??
-            ranked.find((candidate) => candidate.connectorId === pinned.connectorId))) ??
-        ranked.find((candidate) => candidate.connectorId === preferred) ??
-        ranked.find((candidate) => candidate.connectorId === workingSource) ??
-        ranked[0];
+      const match = selectSourceCandidate(
+        ranked,
+        preferred,
+        peekPinnedSource(track),
+        workingSource,
+      );
       if (!match) throw new Error("music.source.none");
       const original = track;
       alternatives = ranked
