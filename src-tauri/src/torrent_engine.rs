@@ -1065,11 +1065,43 @@ pub fn stop_lan_server() {
     st.lan_port = None;
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct PeerDiag {
+    live: usize,
+    queued: usize,
+    connecting: usize,
+    seeders: usize,
+    downloaded: u64,
+    down_mbps: f64,
+}
+
+fn peer_diag(handle: &Arc<ManagedTorrent>) -> PeerDiag {
+    let stats = handle.stats();
+    match stats.live.as_ref() {
+        Some(live) => PeerDiag {
+            live: live.snapshot.peer_stats.live,
+            queued: live.snapshot.peer_stats.queued,
+            connecting: live.snapshot.peer_stats.connecting,
+            seeders: live.snapshot.peer_stats.seeders,
+            downloaded: live.snapshot.downloaded_and_checked_bytes,
+            down_mbps: live.download_speed.mbps,
+        },
+        None => PeerDiag {
+            downloaded: stats.progress_bytes,
+            ..Default::default()
+        },
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct PrimeLeg {
     pub bytes: u64,
     pub first_byte: Duration,
     pub elapsed: Duration,
+    /// Peer state when the first byte arrived: separates "slow swarm" from
+    /// "one blocked piece while the rest of the torrent was already flowing".
+    pub first_byte_peers: usize,
+    pub first_byte_downloaded: u64,
 }
 
 #[derive(Debug)]
@@ -1077,6 +1109,8 @@ pub(crate) struct PrimeReport {
     pub head: Result<PrimeLeg, String>,
     pub tail: Result<PrimeLeg, String>,
     pub total: Duration,
+    pub before: PeerDiag,
+    pub after: PeerDiag,
 }
 
 // Reads one contiguous range of the selected file through the streaming priority
@@ -1093,11 +1127,7 @@ async fn prime_range(
         .map_err(|error| format!("{error:#}"))?;
     let len = stream.len();
     if len == 0 {
-        return Ok(PrimeLeg {
-            bytes: 0,
-            first_byte: Duration::ZERO,
-            elapsed: Duration::ZERO,
-        });
+        return Ok(PrimeLeg::default());
     }
     let (offset, want) = if from_end {
         let want = bytes.min(len);
@@ -1115,6 +1145,8 @@ async fn prime_range(
     let mut buf = vec![0u8; PRIME_READ_BUF];
     let mut read = 0_u64;
     let mut first_byte = None;
+    let mut first_byte_peers = 0;
+    let mut first_byte_downloaded = 0;
     while read < want {
         let step = (want - read).min(PRIME_READ_BUF as u64) as usize;
         let n = stream
@@ -1125,12 +1157,19 @@ async fn prime_range(
             break;
         }
         read += n as u64;
-        first_byte.get_or_insert_with(|| started.elapsed());
+        if first_byte.is_none() {
+            first_byte = Some(started.elapsed());
+            let diag = peer_diag(handle);
+            first_byte_peers = diag.live;
+            first_byte_downloaded = diag.downloaded;
+        }
     }
     Ok(PrimeLeg {
         bytes: read,
         first_byte: first_byte.unwrap_or_else(|| started.elapsed()),
         elapsed: started.elapsed(),
+        first_byte_peers,
+        first_byte_downloaded,
     })
 }
 
@@ -1142,6 +1181,7 @@ pub(crate) async fn prime_stream_head_tail(
     handle: &Arc<ManagedTorrent>,
     file_idx: usize,
 ) -> PrimeReport {
+    let before = peer_diag(handle);
     let started = Instant::now();
     let head = prime_range(handle, file_idx, false, PRIME_HEAD_BYTES);
     let tail = prime_range(handle, file_idx, true, PRIME_TAIL_BYTES);
@@ -1150,16 +1190,20 @@ pub(crate) async fn prime_stream_head_tail(
         head,
         tail,
         total: started.elapsed(),
+        before,
+        after: peer_diag(handle),
     }
 }
 
 fn describe_prime_leg(leg: &Result<PrimeLeg, String>) -> String {
     match leg {
         Ok(leg) => format!(
-            "{}B/ttfb{}ms/{}ms",
+            "{}B/ttfb{}ms/{}ms@peers{}/{downloaded}B",
             leg.bytes,
             leg.first_byte.as_millis(),
-            leg.elapsed.as_millis()
+            leg.elapsed.as_millis(),
+            leg.first_byte_peers,
+            downloaded = leg.first_byte_downloaded,
         ),
         Err(error) => error.clone(),
     }
@@ -1169,15 +1213,45 @@ fn spawn_stream_prime(handle: Arc<ManagedTorrent>, file_idx: usize) {
     tokio::spawn(async move {
         let info_hash = format!("{:?}", handle.info_hash());
         match timeout(PRIME_TIMEOUT, prime_stream_head_tail(&handle, file_idx)).await {
-            Ok(report) => eprintln!(
-                "[torrent-engine] prime hash={info_hash} file={file_idx} head={} tail={} total_ms={}",
-                describe_prime_leg(&report.head),
-                describe_prime_leg(&report.tail),
-                report.total.as_millis()
-            ),
-            Err(_) => eprintln!(
-                "[torrent-engine] prime hash={info_hash} file={file_idx} timed out"
-            ),
+            Ok(report) => {
+                let downloaded = report
+                    .after
+                    .downloaded
+                    .saturating_sub(report.before.downloaded);
+                let seconds = report.total.as_secs_f64();
+                let avg_mbps = if seconds > 0.0 {
+                    downloaded as f64 / seconds / (1024.0 * 1024.0)
+                } else {
+                    0.0
+                };
+                let piece_kb = handle
+                    .with_metadata(|metadata| metadata.info.piece_length / 1024)
+                    .unwrap_or_default();
+                eprintln!(
+                    "[torrent-engine] prime hash={info_hash} file={file_idx} piece_kb={piece_kb} head={} tail={} total_ms={} peers={}->{} queued={} connecting={} seeders={} downloaded_kb={} avg_MBps={avg_mbps:.2} down_MBps={:.2}",
+                    describe_prime_leg(&report.head),
+                    describe_prime_leg(&report.tail),
+                    report.total.as_millis(),
+                    report.before.live,
+                    report.after.live,
+                    report.before.queued,
+                    report.before.connecting,
+                    report.before.seeders,
+                    downloaded / 1024,
+                    report.after.down_mbps
+                )
+            }
+            Err(_) => {
+                let diag = peer_diag(&handle);
+                eprintln!(
+                    "[torrent-engine] prime hash={info_hash} file={file_idx} timed out after {}ms peers={} queued={} connecting={} downloaded_kb={}",
+                    PRIME_TIMEOUT.as_millis(),
+                    diag.live,
+                    diag.queued,
+                    diag.connecting,
+                    diag.downloaded / 1024
+                )
+            }
         }
     });
 }

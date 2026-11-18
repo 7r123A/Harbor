@@ -22,13 +22,36 @@ const BCS_S06E05_FILE_IDX: usize = 4;
 const PROBE_HEAD_BYTES: u64 = 1024 * 1024;
 const PROBE_TAIL_BYTES: u64 = 1024 * 1024;
 
+fn probe_target() -> (String, Option<usize>) {
+    let target = std::env::var("HARBOR_LIVE_MAGNET")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let file_idx = std::env::var("HARBOR_LIVE_FILE_IDX")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok());
+    match target {
+        Some(value) if value.starts_with("magnet:") => (value, file_idx),
+        Some(value) => (
+            format!("magnet:?xt=urn:btih:{value}"),
+            file_idx.or(Some(BCS_S06E05_FILE_IDX)),
+        ),
+        None => (
+            format!("magnet:?xt=urn:btih:{BCS_S06E05_HASH}"),
+            file_idx.or(Some(BCS_S06E05_FILE_IDX)),
+        ),
+    }
+}
+
 fn probe_leg(leg: &Result<PrimeLeg, String>, label: &str) {
     match leg {
         Ok(leg) => eprintln!(
-            "[live-probe] {label}: bytes={} ttfb_ms={} elapsed_ms={}",
+            "[live-probe] {label}: bytes={} ttfb_ms={} elapsed_ms={} peers_at_ttfb={} downloaded_at_ttfb={}",
             leg.bytes,
             leg.first_byte.as_millis(),
-            leg.elapsed.as_millis()
+            leg.elapsed.as_millis(),
+            leg.first_byte_peers,
+            leg.first_byte_downloaded
         ),
         Err(error) => eprintln!("[live-probe] {label}: error={error}"),
     }
@@ -50,13 +73,13 @@ async fn live_swarm_playback_probe() {
     ));
     std::fs::create_dir_all(&dir).expect("probe dir");
 
-    let tracker_urls: Vec<String> = trackers::ALL.iter().map(|t| t.to_string()).collect();
+    let tracker_urls: Vec<String> = trackers::FALLBACK.iter().map(|t| t.to_string()).collect();
     let session = Session::new_with_opts(
         dir.clone(),
         SessionOptions {
             fastresume: false,
             disable_dht: false,
-            trackers: trackers::as_url_set(),
+            trackers: trackers::fallback_url_set(),
             listen_port_range: Some(26941..26991),
             enable_upnp_port_forwarding: false,
             peer_opts: Some(PeerConnectionOptions {
@@ -70,15 +93,13 @@ async fn live_swarm_playback_probe() {
     .await
     .expect("session");
 
-    let magnet = trackers::embed_into_magnet(
-        &format!("magnet:?xt=urn:btih:{BCS_S06E05_HASH}"),
-        &tracker_urls,
-    );
+    let (target, target_idx) = probe_target();
+    let magnet = trackers::embed_into_magnet(&target, &tracker_urls);
     let options = AddTorrentOptions {
         overwrite: true,
         paused: true,
         skip_initial_check: true,
-        only_files: Some(vec![BCS_S06E05_FILE_IDX]),
+        only_files: target_idx.map(|idx| vec![idx]),
         trackers: Some(tracker_urls.clone()),
         peer_opts: Some(PeerConnectionOptions {
             connect_timeout: Some(Duration::from_secs(3)),
@@ -118,16 +139,25 @@ async fn live_swarm_playback_probe() {
                 .collect::<Vec<_>>()
         })
         .expect("metadata");
-    let file_idx = files
-        .iter()
-        .position(|(name, _)| name.to_ascii_lowercase().contains("s06e05"))
-        .unwrap_or(BCS_S06E05_FILE_IDX);
+    let file_idx = target_idx
+        .filter(|idx| *idx < files.len())
+        .unwrap_or_else(|| {
+            files
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, (_, len))| *len)
+                .map(|(idx, _)| idx)
+                .unwrap_or(BCS_S06E05_FILE_IDX)
+        });
     let (name, len) = files
         .get(file_idx)
         .cloned()
         .expect("episode file present");
+    let piece_kb = handle
+        .with_metadata(|metadata| metadata.info.piece_length / 1024)
+        .unwrap_or_default();
     eprintln!(
-        "[live-probe] metadata_ms={metadata_ms} peers={} files={} file_idx={file_idx} file={name} len={len}",
+        "[live-probe] metadata_ms={metadata_ms} piece_kb={piece_kb} peers={} files={} file_idx={file_idx} file={name} len={len}",
         handle
             .stats()
             .live
