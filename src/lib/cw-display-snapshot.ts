@@ -99,6 +99,7 @@ export function cwDisplayInputFingerprint(item: LibraryItem): string {
     item.manualWatched ?? false,
     item.isAnime ?? false,
     item.upNext ?? false,
+    item.caughtUp ?? false,
     item.waitingForAir ?? false,
     item.nextAirDate ?? null,
     item.removed ?? false,
@@ -140,6 +141,8 @@ function validDisplay(display: DisplayState | undefined): display is DisplayStat
     typeof display.videoId === "string" &&
     typeof display.upNext === "boolean" &&
     typeof display.waitingForAir === "boolean" &&
+    (!display.waitingForAir ||
+      (typeof display.nextAirDate === "string" && display.nextAirDate.length > 0)) &&
     (display.nextAirDate === null || typeof display.nextAirDate === "string") &&
     (display.providerMapping === undefined ||
       (Number.isInteger(display.providerMapping.imdbSeason) &&
@@ -206,6 +209,8 @@ export function saveCwDisplaySnapshot(
     const { season, episode, video_id } = output.state;
     if (!Number.isInteger(season) || !Number.isInteger(episode) || season! < 0 || episode! < 0)
       continue;
+    // A timer without a verified air date is not a display decision.
+    if (output.waitingForAir === true && !output.nextAirDate) continue;
     decisions.push({
       id: item._id,
       fingerprint,
@@ -241,10 +246,8 @@ export function saveCwDisplaySnapshot(
         const retained = new Set(decisions.map((decision) => decision.id));
         for (const decision of previous.decisions.slice(0, MAX_ITEMS)) {
           if (decisions.length >= MAX_ITEMS) break;
-          if (!decision || typeof decision.id !== "string" || retained.has(decision.id))
-            continue;
-          if (present.has(decision.id) && !options.unresolvedIds?.has(decision.id))
-            continue;
+          if (!decision || typeof decision.id !== "string" || retained.has(decision.id)) continue;
+          if (present.has(decision.id) && !options.unresolvedIds?.has(decision.id)) continue;
           if (
             decision.kind !== "remove" &&
             (decision.kind !== "advance" || !validDisplay(decision.display))
@@ -252,12 +255,7 @@ export function saveCwDisplaySnapshot(
             continue;
           const verifiedAt = decision.verifiedAt ?? previous.savedAt;
           const ttl = decision.kind === "remove" ? REMOVE_TTL_MS : ADVANCE_TTL_MS;
-          if (
-            !Number.isFinite(verifiedAt) ||
-            verifiedAt > now ||
-            now - verifiedAt > ttl
-          )
-            continue;
+          if (!Number.isFinite(verifiedAt) || verifiedAt > now || now - verifiedAt > ttl) continue;
           decisions.push({ ...decision, verifiedAt });
           retained.add(decision.id);
         }
@@ -350,11 +348,7 @@ export function restoreCwDisplaySnapshot(
       if (!input?.state || cwDisplayInputFingerprint(input) !== decision.fingerprint) continue;
       if (decision.kind === "remove") {
         const verifiedAt = decision.verifiedAt ?? saved.savedAt;
-        if (
-          Number.isFinite(verifiedAt) &&
-          verifiedAt <= now &&
-          now - verifiedAt <= REMOVE_TTL_MS
-        ) {
+        if (Number.isFinite(verifiedAt) && verifiedAt <= now && now - verifiedAt <= REMOVE_TTL_MS) {
           result.removed.add(decision.id);
         }
       } else if (validDisplay(decision.display)) {

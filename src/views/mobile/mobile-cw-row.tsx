@@ -193,7 +193,7 @@ export function useMobileCw(limit = 14): LibraryItem[] {
       if (disabledSources.has(i.external)) return false;
       if (hideSharedCw) return false;
       if (i.external === "simkl" || i.external === "trakt" || i.external === "publicmetadb") {
-        if (i.upNext || i.waitingForAir) return true;
+        if (i.upNext || i.waitingForAir || i.caughtUp) return true;
         const offset = i.state?.timeOffset ?? 0;
         const dur = i.state?.duration ?? 0;
         if (offset <= 0 || (i.state?.flaggedWatched ?? 0) > 0) return false;

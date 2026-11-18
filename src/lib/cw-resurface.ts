@@ -139,6 +139,7 @@ export type ResurfaceTarget = {
   episode: number;
   waitingForAir?: boolean;
   airDate?: string;
+  caughtUp?: boolean;
 };
 
 type CacheVal = { next: ResurfaceTarget | null; t: number };
@@ -199,8 +200,17 @@ export async function resurfaceCandidates(
       poster: i.poster,
       background: i.background,
     };
+    const canKeepCaughtUp =
+      endMode === "timer" && !opts.hideCaughtUp && i.external !== "simkl" && i.external !== "trakt";
+    const caughtUpTarget = (): ResurfaceTarget => ({
+      season: cur.season,
+      episode: cur.episode,
+      caughtUp: true,
+    });
     if (cached && now - cached.t < RESURFACE_TTL) {
       nx = cached.next;
+      // Invalidate a timer decision cached before the strict air-date rule.
+      if (nx?.waitingForAir && !nx.airDate) nx = canKeepCaughtUp ? caughtUpTarget() : null;
     } else {
       try {
         const adj = await fetchAdjacentEpisodes(meta, cur, { tmdbKey: opts.tmdbKey });
@@ -216,23 +226,22 @@ export async function resurfaceCandidates(
           } else if (!isAnime && !adj.next.airDate && adj.next.season > cur.season) {
             // A future season's placeholder episode is not a countdown target.
             nx = null;
-          } else if (endMode === "timer") {
+          } else if (endMode === "timer" && adj.next.airDate) {
             nx = {
               season: adj.next.season,
               episode: adj.next.episode,
               waitingForAir: true,
               airDate: adj.next.airDate,
             };
+          } else if (canKeepCaughtUp) {
+            // A known next episode without an air date is not a countdown. Keep
+            // the show as a neutral caught-up card instead.
+            nx = caughtUpTarget();
           } else {
             nx = null;
           }
-        } else if (
-          endMode === "timer" &&
-          !opts.hideCaughtUp &&
-          i.external !== "simkl" &&
-          i.external !== "trakt"
-        ) {
-          nx = { season: cur.season, episode: cur.episode, waitingForAir: true };
+        } else if (canKeepCaughtUp) {
+          nx = caughtUpTarget();
         } else {
           nx = null;
         }
@@ -247,17 +256,18 @@ export async function resurfaceCandidates(
         continue;
       }
     }
-    if (nx && !nx.waitingForAir && watchedFor && watchedFor(i, cur)(nx.season, nx.episode)) {
+    if (
+      nx &&
+      !nx.waitingForAir &&
+      !nx.caughtUp &&
+      watchedFor &&
+      watchedFor(i, cur)(nx.season, nx.episode)
+    ) {
       nx = await fetchEpisodeList(meta, { tmdbKey: opts.tmdbKey })
         .then((list) => {
           const target = nextUnwatchedAfter(list, cur, watchedFor(i, cur));
           if (!target) {
-            return i.external !== "simkl" &&
-              i.external !== "trakt" &&
-              endMode === "timer" &&
-              !opts.hideCaughtUp
-              ? { season: cur.season, episode: cur.episode, waitingForAir: true }
-              : null;
+            return canKeepCaughtUp ? caughtUpTarget() : null;
           }
           const entry = list.find(
             (e) => e.season === target.season && e.episode === target.episode,
@@ -271,15 +281,15 @@ export async function resurfaceCandidates(
               airDate: entry.airDate,
             };
           }
-          if (endMode === "timer") {
+          if (endMode === "timer" && entry?.airDate) {
             return {
               season: target.season,
               episode: target.episode,
               waitingForAir: true,
-              airDate: entry?.airDate,
+              airDate: entry.airDate,
             };
           }
-          return null;
+          return canKeepCaughtUp ? caughtUpTarget() : null;
         })
         .catch(() => null);
       // Cache episode availability only. Watched history can change independently

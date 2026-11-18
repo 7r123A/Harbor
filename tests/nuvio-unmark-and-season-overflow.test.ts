@@ -221,8 +221,8 @@ test("useCwAdvance evaluates Nuvio Next-Up cards when animeCwEnd is timer", () =
   );
   assert.match(
     useCwAdvanceSrc,
-    /if \(i\.external === "nuvio" && i\.upNext === true\) \{\s*if \(\s*animeCwEnd === "timer" &&\s*\(!curEpInList \|\| !nextEpAired\(list, curEpInList, isAnime, effCur\.season\)\)\s*\) \{/,
-    "useCwAdvance must attach waitingForAir when target episode is unaired",
+    /if \(i\.external === "nuvio" && i\.upNext === true\) \{\s*if \(\s*animeCwEnd === "timer" &&\s*\(!curEpInList \|\| !nextEpAired\(list, curEpInList, isAnime, effCur\.season\)\) &&\s*curEpInList\?\.airDate\s*\) \{/,
+    "useCwAdvance must attach waitingForAir only with a verified air date",
   );
 });
 

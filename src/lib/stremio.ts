@@ -50,6 +50,8 @@ export type LibraryItem = {
   cwMembers?: LibraryItem[];
   isAnime?: boolean;
   upNext?: boolean;
+  /** A verified caught-up card: show it neutrally without a countdown. */
+  caughtUp?: boolean;
   /** Provisional, verified provider episode coordinates for CW card presentation only.
    * Never use this for playback progress, ownership, or provider dismissal. */
   cwVerifiedProviderMapping?: { imdbSeason: number; imdbEpisode: number };
@@ -173,14 +175,13 @@ export function cwSortKey(i: LibraryItem): number {
  * active CW card while the next episode is unresolved.
  */
 export function isCwDisplayReady(i: LibraryItem): boolean {
-  if (i.type !== "series" || !i.removed || !i.temp || i.upNext || i.waitingForAir) {
+  if (i.type !== "series" || !i.removed || !i.temp || i.upNext || i.waitingForAir || i.caughtUp) {
     return true;
   }
   const state = i.state;
   if (!state) return true;
   const duration = state.duration ?? 0;
-  const completedByRatio =
-    duration > 0 && (state.timeOffset ?? 0) / duration >= CW_FINISHED_RATIO;
+  const completedByRatio = duration > 0 && (state.timeOffset ?? 0) / duration >= CW_FINISHED_RATIO;
   return (state.flaggedWatched ?? 0) <= 0 && !completedByRatio;
 }
 
@@ -188,6 +189,7 @@ export function isCwMember(i: LibraryItem): boolean {
   if (i.removed && !i.temp) return false;
   if (i.upNext) return true;
   if (i.waitingForAir) return true;
+  if (i.caughtUp) return true;
   // A removed item survives only as a temp progress record. Without playback
   // progress or a resume entry there is nothing to continue, and the placeholder
   // `season: 0 / episode: 0` state written by watched sync must not become a card.

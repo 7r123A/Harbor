@@ -526,6 +526,40 @@ test("manual unwatched overrides remote completion and synthetic finished anchor
   }
 });
 
+test("manual unwatched survives a season-overflow caught-up decision", async () => {
+  const h = harness();
+  h.manual.set("tt100:1:11", false);
+  h.setRemote(progress([1], "tt100"));
+  h.setEpisodes([
+    ...Array.from({ length: 10 }, (_, index) => ({
+      season: 1,
+      episode: index + 1,
+      airDate: "2020-01-01",
+    })),
+    { season: 2, episode: 1, airDate: "2099-01-01" },
+  ]);
+  h.render(
+    [anchor(11)],
+    "",
+    true,
+    [],
+    "all",
+    0,
+    new Set(),
+    new Map(),
+    new Map(),
+    new Map(),
+    0,
+    false,
+    "timer",
+  );
+  const out = await h.flush();
+  assert.equal(out.length, 1);
+  assert.equal(out[0].state.episode, 11);
+  assert.equal(out[0].caughtUp, undefined);
+  assert.equal(out[0].waitingForAir, undefined);
+});
+
 test("private profiles, disabled CW sources, disconnected sessions and disabled advancement do not read remote history", async () => {
   for (const mode of ["private", "source", "session", "disabled"]) {
     const h = harness();
@@ -632,6 +666,41 @@ test("a future season placeholder with no air date is not kept in timer mode", a
     "timer",
   );
   assert.equal((await h.flush()).length, 0);
+});
+
+test("a future-dated next-season episode waits with its air date instead of becoming playable up next", async () => {
+  const h = harness();
+  h.setRemote(progress([1], "tt100"));
+  h.setEpisodes([
+    ...Array.from({ length: 10 }, (_, index) => ({
+      season: 1,
+      episode: index + 1,
+      airDate: "2020-01-01",
+    })),
+    { season: 2, episode: 1, airDate: "2099-01-01" },
+  ]);
+  h.render(
+    [anchor(11)],
+    "",
+    true,
+    [],
+    "all",
+    0,
+    new Set(),
+    new Map(),
+    new Map(),
+    new Map(),
+    0,
+    false,
+    "timer",
+  );
+  const [card] = await h.flush();
+  assert.ok(card);
+  assert.equal(card.state.season, 2);
+  assert.equal(card.state.episode, 1);
+  assert.equal(card.upNext, true);
+  assert.equal(card.waitingForAir, true);
+  assert.equal(card.nextAirDate, "2099-01-01");
 });
 
 // A just-started sequel season: the provider list only holds the S2E1
@@ -847,8 +916,8 @@ test("an undetected catalog anime row still resolves the sequel cour", async () 
 
 // No anime entry is resolvable for this row, and the provider list does not
 // know season 2 at all. The old scan-from-index-0 advanced such rows to an
-// unrelated season-1 episode; it must wait for air instead.
-test("an unplaceable anime row with no anime entry waits for air instead of walking the provider list", async () => {
+// unrelated season-1 episode; it must show a neutral caught-up card instead.
+test("an unplaceable anime row with no anime entry stays caught up instead of walking the provider list", async () => {
   const g = globalThis as any;
   const hadWindow = "window" in g;
   if (!hadWindow) g.window = { setTimeout: () => 0, clearTimeout: () => {} };
@@ -880,7 +949,8 @@ test("an unplaceable anime row with no anime entry waits for air instead of walk
     const out = await h.flush();
     assert.equal(out.length, 1);
     assert.equal(out[0].upNext, undefined);
-    assert.equal(out[0].waitingForAir, true);
+    assert.equal(out[0].caughtUp, true);
+    assert.equal(out[0].waitingForAir, undefined);
     assert.equal(out[0].nextAirDate, undefined);
     assert.equal(out[0].state.episode, 2);
   } finally {

@@ -113,7 +113,11 @@ import { recentlyPlayed, subscribePlayback, type WatchedSet } from "@/lib/playba
 import { collapseWatchedKeys, isTitleWatched } from "@/lib/watched-title";
 import { useWatchedFlagIds } from "@/lib/watched-flag";
 import { useMovieWatchedIds } from "@/lib/movie-watched";
-import { detectAnimeForCw, useDetectedAnimeVersion, warmCwAnimeRoomAliases } from "@/lib/anime-detect";
+import {
+  detectAnimeForCw,
+  useDetectedAnimeVersion,
+  warmCwAnimeRoomAliases,
+} from "@/lib/anime-detect";
 import { buildSimklHomeRows } from "@/lib/simkl/home-rails";
 import {
   loadSimklWatchedMap,
@@ -779,7 +783,7 @@ export function Home({
       if (disabledSources.has(i.external)) return false;
       if (hideSharedCw) return false;
       if (i.external === "simkl" || i.external === "trakt" || i.external === "publicmetadb") {
-        if (i.upNext || i.waitingForAir) return true;
+        if (i.upNext || i.waitingForAir || i.caughtUp) return true;
         const offset = i.state?.timeOffset ?? 0;
         const dur = i.state?.duration ?? 0;
         if (offset <= 0 || (i.state?.flaggedWatched ?? 0) > 0) return false;
@@ -881,7 +885,7 @@ export function Home({
         if (!i.external || i.type !== "series") return false;
         if (disabledSources.has(i.external)) return false;
         if (i.external === "simkl" || i.external === "trakt" || i.external === "publicmetadb") {
-          if (i.upNext || i.waitingForAir) return true;
+          if (i.upNext || i.waitingForAir || i.caughtUp) return true;
           const offset = i.state?.timeOffset ?? 0;
           const dur = i.state?.duration ?? 0;
           if (offset <= 0 || (i.state?.flaggedWatched ?? 0) > 0) return false;

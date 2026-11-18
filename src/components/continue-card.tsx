@@ -163,6 +163,7 @@ export const ContinueCard = memo(function ContinueCard({
   const progress = dur > 0 ? Math.min(1, off / dur) : 0;
   const remaining = dur > 0 && !isExternal ? formatRemaining(t, dur - off) : "";
   const upNext = item.upNext === true;
+  const caughtUp = item.caughtUp === true;
   const waitingForAir = (item as Record<string, unknown>).waitingForAir === true;
   const nextAirDate = waitingForAir
     ? ((item as Record<string, unknown>).nextAirDate as string | undefined)
@@ -609,9 +610,7 @@ export const ContinueCard = memo(function ContinueCard({
   // video is loading; the live video mapping takes precedence when available.
   const animeSeasonMapped =
     providerMappedEpisode(effectiveKitsuVideo, ep, seasonForeignCard) ??
-    (upNext
-      ? providerMappedEpisode(item.cwVerifiedProviderMapping, ep, seasonForeignCard)
-      : null);
+    (upNext ? providerMappedEpisode(item.cwVerifiedProviderMapping, ep, seasonForeignCard) : null);
   const displaySeason = animeSeasonMapped?.season ?? partSeasonCard ?? ep?.season;
   const displayEpisode = animeSeasonMapped?.episode ?? ep?.episode;
   useEffect(() => {
@@ -1041,7 +1040,7 @@ export const ContinueCard = memo(function ContinueCard({
             </div>
           )}
           <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-canvas/80 to-transparent" />
-          {(sub || remaining || isExternal || upNext || episodeTitle) && (
+          {(sub || remaining || isExternal || upNext || caughtUp || episodeTitle) && (
             <div className="absolute bottom-2 start-2 flex max-w-[calc(100%-16px)] items-center gap-1.5 rounded-md bg-canvas/95 px-2 py-1 text-[11px]">
               {isExternal ? (
                 <img
@@ -1058,6 +1057,11 @@ export const ContinueCard = memo(function ContinueCard({
                 <>
                   {sub && <span className="shrink-0 text-ink-subtle">·</span>}
                   <span className="shrink-0 font-medium text-amber-500">{countdown}</span>
+                </>
+              ) : caughtUp ? (
+                <>
+                  {sub && <span className="shrink-0 text-ink-subtle">·</span>}
+                  <span className="shrink-0 font-medium text-ink-muted">{t("Caught up")}</span>
                 </>
               ) : upNext ? (
                 <>

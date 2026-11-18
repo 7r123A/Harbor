@@ -34,6 +34,8 @@ export type CwCard = {
   cwMembers?: LibraryItem[];
   altIds?: string[];
   isAnime?: boolean;
+  upNext?: boolean;
+  caughtUp?: boolean;
 };
 
 export function localToLibraryItem(e: ReturnType<typeof listLocalCw>[number]): LibraryItem {
@@ -103,6 +105,8 @@ function toCard(i: LibraryItem): CwCard {
     cwMembers: i.cwMembers,
     altIds: i.altIds,
     isAnime: i.isAnime,
+    upNext: i.upNext,
+    caughtUp: i.caughtUp,
   };
 }
 
@@ -209,7 +213,7 @@ export function useContinueWatching(excludeId?: string, limit = 12): CwCard[] {
       if (disabledSources.has(i.external)) return false;
       if (hideSharedCw) return false;
       if (i.external === "simkl" || i.external === "trakt" || i.external === "publicmetadb") {
-        if (i.upNext || i.waitingForAir) return true;
+        if (i.upNext || i.waitingForAir || i.caughtUp) return true;
         const offset = i.state?.timeOffset ?? 0;
         const dur = i.state?.duration ?? 0;
         if (offset <= 0 || (i.state?.flaggedWatched ?? 0) > 0) return false;

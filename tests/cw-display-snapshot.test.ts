@@ -96,10 +96,12 @@ test("verified Black Clover E4 replays provider S2 without rewriting playback co
     cwVerifiedProviderMapping: { imdbSeason: 2, imdbEpisode: 4 },
   };
   saveCwDisplaySnapshot(owner, [source], new Map([[source._id, upNext]]), new Set(), {
-    store: s, now: start,
+    store: s,
+    now: start,
   });
   const restored = restoreCwDisplaySnapshot(owner, [source], {
-    store: s, now: start + 1000,
+    store: s,
+    now: start + 1000,
   }).advanced.get(source._id)!;
   assert.equal(restored.state?.season, 1);
   assert.equal(restored.state?.episode, 4);
@@ -208,9 +210,15 @@ test("verified removals have a shorter expiry and cannot hide changed checkpoint
 
 test("partial startup hydration retains an absent Simkl anime's verified next episode", () => {
   const s = store();
-  const blackClover = { ...item("mal:61967", 3), upNext: true, state: {
-    ...item("mal:61967", 3).state!, flaggedWatched: 1, timeOffset: 0,
-  }} as LibraryItem;
+  const blackClover = {
+    ...item("mal:61967", 3),
+    upNext: true,
+    state: {
+      ...item("mal:61967", 3).state!,
+      flaggedWatched: 1,
+      timeOffset: 0,
+    },
+  } as LibraryItem;
   const e4 = {
     ...advanced(blackClover),
     state: {
@@ -221,24 +229,29 @@ test("partial startup hydration retains an absent Simkl anime's verified next ep
   } as LibraryItem;
   const other = item("tt-other");
   saveCwDisplaySnapshot(owner, [blackClover], new Map([[blackClover._id, e4]]), new Set(), {
-    store: s, now: start,
+    store: s,
+    now: start,
   });
   // Home can commit an unrelated partial row before the Simkl source arrives.
   saveCwDisplaySnapshot(owner, [other], new Map(), new Set(), {
-    store: s, now: start + 1000,
+    store: s,
+    now: start + 1000,
   });
   const restored = restoreCwDisplaySnapshot(owner, [blackClover, other], {
-    store: s, now: start + 2000,
+    store: s,
+    now: start + 2000,
   });
   assert.equal(restored.advanced.get(blackClover._id)?.state?.episode, 4);
 
   // Repeated partial passes must not extend the original 30-minute proof.
   saveCwDisplaySnapshot(owner, [other], new Map(), new Set(), {
-    store: s, now: start + 29 * 60_000,
+    store: s,
+    now: start + 29 * 60_000,
   });
   assert.equal(
     restoreCwDisplaySnapshot(owner, [blackClover], {
-      store: s, now: start + 31 * 60_000,
+      store: s,
+      now: start + 31 * 60_000,
     }).advanced.has(blackClover._id),
     false,
   );
@@ -247,15 +260,25 @@ test("partial startup hydration retains an absent Simkl anime's verified next ep
 test("an unresolved metadata request retains the same-checkpoint verified display", () => {
   const s = store();
   const blackClover = item("mal:61967", 3);
-  saveCwDisplaySnapshot(owner, [blackClover], new Map([[blackClover._id, advanced(blackClover)]]), new Set(), {
-    store: s, now: start,
-  });
+  saveCwDisplaySnapshot(
+    owner,
+    [blackClover],
+    new Map([[blackClover._id, advanced(blackClover)]]),
+    new Set(),
+    {
+      store: s,
+      now: start,
+    },
+  );
   saveCwDisplaySnapshot(owner, [blackClover], new Map(), new Set(), {
-    store: s, now: start + 1000, unresolvedIds: new Set([blackClover._id]),
+    store: s,
+    now: start + 1000,
+    unresolvedIds: new Set([blackClover._id]),
   });
   assert.equal(
-    restoreCwDisplaySnapshot(owner, [blackClover], { store: s, now: start + 2000 })
-      .advanced.get(blackClover._id)?.state?.episode,
+    restoreCwDisplaySnapshot(owner, [blackClover], { store: s, now: start + 2000 }).advanced.get(
+      blackClover._id,
+    )?.state?.episode,
     2,
   );
   const changed = { ...blackClover, state: { ...blackClover.state!, episode: 4 } } as LibraryItem;
@@ -283,14 +306,17 @@ test("a partial pass cannot renew the expiry of a verified removal", () => {
   const s = store();
   const removed = item("tt-removed");
   saveCwDisplaySnapshot(owner, [removed], new Map(), new Set([removed._id]), {
-    store: s, now: start,
+    store: s,
+    now: start,
   });
   saveCwDisplaySnapshot(owner, [item("tt-other")], new Map(), new Set(), {
-    store: s, now: start + 90_000,
+    store: s,
+    now: start + 90_000,
   });
   assert.equal(
     restoreCwDisplaySnapshot(owner, [removed], {
-      store: s, now: start + 121_000,
+      store: s,
+      now: start + 121_000,
     }).removed.has(removed._id),
     false,
   );
@@ -410,6 +436,24 @@ test("a resurface snapshot cannot outlive a changed source, CW cohort, account o
   );
   assert.equal(restore([visible], [visible, source], owner, start + 3 * 60_000).length, 0);
   assert.equal(restore([visible], [visible]).length, 0);
+});
+
+test("advanced waiting displays without a next air date are rejected", () => {
+  const s = store();
+  const input = item();
+  const invalid = {
+    ...advanced(input),
+    waitingForAir: true,
+    nextAirDate: undefined,
+  } as LibraryItem;
+  saveCwDisplaySnapshot(owner, [input], new Map([[input._id, invalid]]), new Set(), {
+    store: s,
+    now: start,
+  });
+  assert.equal(
+    restoreCwDisplaySnapshot(owner, [input], { store: s, now: start + 1000 }).advanced.size,
+    0,
+  );
 });
 
 test("resurfaced timer cards and unaired results are never restored", () => {

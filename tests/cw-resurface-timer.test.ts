@@ -145,7 +145,7 @@ test("resurfaceCandidates drops unaired episode when animeCwEnd is hide", async 
   );
 });
 
-test("resurfaceCandidates retains caught-up series with waitingForAir when no subsequent episode exists and animeCwEnd is timer", async () => {
+test("resurfaceCandidates keeps a caught-up series as a neutral card when timer mode is on", async () => {
   const h = harness({ nextEp: null }); // Show is caught up (e.g. Tulsa King latest released ep 2 watched)
   const resurface = h.load("src/lib/cw-resurface.ts");
 
@@ -170,10 +170,11 @@ test("resurfaceCandidates retains caught-up series with waitingForAir when no su
   });
 
   const candidate = timerResult.get("tt_tulsa_king");
-  assert.ok(candidate, "Caught up series should be retained with timer");
+  assert.ok(candidate, "Caught-up series should be retained with timer");
   assert.equal(candidate.season, 2);
   assert.equal(candidate.episode, 2);
-  assert.equal(candidate.waitingForAir, true);
+  assert.equal(candidate.caughtUp, true);
+  assert.equal(candidate.waitingForAir, undefined);
 });
 
 test("resurfaceCandidates drops caught-up series when hideCaughtUp is true", async () => {
@@ -236,7 +237,7 @@ test("resurfaceCandidates drops a future season placeholder with no air date in 
   assert.equal(result.get("tt_from"), undefined);
 });
 
-test("resurfaceCandidates still waits on a same-season episode with no air date", async () => {
+test("resurfaceCandidates keeps a same-season episode with no air date as caught up, not a countdown", async () => {
   const h = harness({ nextEp: { season: 1, episode: 5 } });
   const resurface = h.load("src/lib/cw-resurface.ts");
 
@@ -262,7 +263,8 @@ test("resurfaceCandidates still waits on a same-season episode with no air date"
 
   const candidate = result.get("tt_same_season");
   assert.ok(candidate);
-  assert.equal(candidate.waitingForAir, true);
+  assert.equal(candidate.caughtUp, true);
+  assert.equal(candidate.waitingForAir, undefined);
 });
 
 test("resurfaceCandidates isolates cache between timer and hide modes", async () => {
