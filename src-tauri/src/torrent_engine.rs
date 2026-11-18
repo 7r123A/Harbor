@@ -374,7 +374,7 @@ async fn new_session(
 ) -> Result<Arc<Session>, String> {
     let guard = cancellation.clone().drop_guard();
     let mut options =
-        crate::p2p_android::session_options(dir, full, dht, persist_dht, trackers::as_url_set());
+        crate::p2p_android::session_options(dir, full, dht, persist_dht, trackers::fallback_url_set());
     options.cancellation_token = Some(cancellation);
     let session = Session::new_with_opts(dir.to_path_buf(), options)
         .await
@@ -406,7 +406,9 @@ async fn new_session(
                 config_filename: Some(dir.join("dht.json")),
                 dump_interval: None,
             }),
-            trackers: trackers::as_url_set(),
+            // No session-wide tracker set: every torrent carries its stream's own
+            // trackers (or the curated fallback), so junk peers from unrelated
+            // trackers do not flood the connection queue.
             // Restored (paused) torrents have no per-add peer options, so the
             // session defaults must already use the streaming cadence: short
             // connect attempts and a read/write timeout that fails a stuck peer.
@@ -755,7 +757,7 @@ pub fn torrent_engine_status() -> EngineStatusDto {
 }
 
 fn merge_trackers(trackers: Vec<String>) -> Vec<String> {
-    trackers::merge_into(trackers)
+    trackers::with_fallback(trackers)
 }
 
 async fn wait_for_torrent_initialization(
@@ -863,14 +865,16 @@ pub async fn torrent_engine_add(
         let (seed, seed_took) = seed_side_dht(&magnet).await;
         let seeded_peers = seed.len();
         // librqbit ignores AddTorrentOptions.trackers for magnets, so splice the
-        // per-stream trackers directly into the magnet URI to guarantee they announce.
-        let magnet = trackers::embed_into_magnet(&magnet, &trackers);
+        // per-stream trackers directly into the magnet URI to guarantee they
+        // announce. The curated fallback is only used when the source has none.
+        let resolved_trackers = trackers::with_fallback(trackers.clone());
+        let magnet = trackers::embed_into_magnet(&magnet, &resolved_trackers);
         let opts = AddTorrentOptions {
             overwrite: true,
             paused: true,
             skip_initial_check: true,
             only_files: file_idx.map(|i| vec![i]),
-            trackers: Some(merge_trackers(trackers)),
+            trackers: Some(resolved_trackers),
             initial_peers: (!seed.is_empty()).then_some(seed),
             peer_opts: Some(PeerConnectionOptions {
                 connect_timeout: Some(Duration::from_secs(4)),
@@ -930,16 +934,18 @@ pub(crate) async fn ensure_added(
         let handle = match session.get(id) {
             Some(h) => h,
             None => {
-                // build_magnet() yields a bare magnet; splice per-stream trackers into
-                // it so librqbit announces them (it drops AddTorrentOptions.trackers for
-                // magnets - the only peer path when UDP/DHT are blocked).
-                let magnet = trackers::embed_into_magnet(&build_magnet(hash), &trackers);
+                // build_magnet() yields a bare magnet; splice the resolved
+                // trackers into it so librqbit announces them (it drops
+                // AddTorrentOptions.trackers for magnets - the only peer path
+                // when UDP/DHT are blocked).
+                let resolved_trackers = trackers::with_fallback(trackers);
+                let magnet = trackers::embed_into_magnet(&build_magnet(hash), &resolved_trackers);
                 let (seed, _) = seed_side_dht(&magnet).await;
                 let opts = AddTorrentOptions {
                     overwrite: true,
                     paused: true,
                     only_files: file_idx.map(|i| vec![i]),
-                    trackers: Some(merge_trackers(trackers)),
+                    trackers: Some(resolved_trackers),
                     initial_peers: (!seed.is_empty()).then_some(seed),
                     peer_opts: Some(PeerConnectionOptions {
                         connect_timeout: Some(Duration::from_secs(4)),
