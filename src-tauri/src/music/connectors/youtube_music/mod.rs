@@ -234,6 +234,9 @@ impl MusicConnector for YouTubeMusicConnector {
         app: &tauri::AppHandle,
         track: &MusicTrack,
     ) -> Result<MusicStream, String> {
+        // A cold start can begin playback before the Music home has restored the session; the
+        // stream must not silently fall back to anonymous extraction in that window.
+        auth::ensure(app, false).await;
         let result = catalog::stream(app, track).await;
         self.record(&result);
         result
@@ -245,6 +248,7 @@ impl MusicConnector for YouTubeMusicConnector {
         track: &MusicTrack,
         max_height: Option<u32>,
     ) -> Result<MusicVideoStream, String> {
+        auth::ensure(app, false).await;
         catalog::video_stream(app, track, max_height).await
     }
 

@@ -5,6 +5,10 @@
 //! to everything else. ffmpeg opens every stream with `Range: bytes=0-`, so it is refused on
 //! its very first read and mpv reports MPV_ERROR_LOADING_FAILED. yt-dlp carries the PO token
 //! and signature work that keeps a URL whole, and it is updated as YouTube tightens.
+//!
+//! The borrowed session is an upgrade, never a dependency: extraction runs anonymously when no
+//! session exists, and a failed signed-in attempt retries anonymously so revoked cookies cannot
+//! block a public track.
 
 use super::super::super::{MusicStream, MusicVideoStream};
 use std::path::PathBuf;
@@ -36,7 +40,14 @@ fn cookie_file() -> Option<CookieFile> {
         "harbor-ytmusic-{}-{stamp}.cookies",
         std::process::id()
     ));
-    std::fs::write(&path, super::auth::netscape(&session.cookies)).ok()?;
+    if let Err(error) = std::fs::write(&path, super::auth::netscape(&session.cookies)) {
+        // Never fail playback for a filesystem hiccup, but do not hide the downgrade either.
+        note_downgrade(&format!(
+            "session cookie file could not be written ({:?})",
+            error.kind()
+        ));
+        return None;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -56,8 +67,14 @@ fn cookie_args(file: &Option<CookieFile>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-pub async fn stream(app: &tauri::AppHandle, video_id: &str) -> Result<MusicStream, String> {
-    let cookies = cookie_file();
+/// The session is an upgrade, not a requirement: extraction still works anonymously when the
+/// borrowed cookies cannot be used. Say so instead of pretending the account was ignored.
+fn note_downgrade(reason: &str) {
+    crate::music::trace::log(format!("music session downgraded to anonymous: {reason}"));
+    eprintln!("[harbor::music] session downgraded to anonymous: {reason}");
+}
+
+fn stream_args(video_id: &str, cookies: &Option<CookieFile>) -> Vec<String> {
     let mut args = vec![
         "--js-runtimes".to_string(),
         "node".to_string(),
@@ -69,15 +86,70 @@ pub async fn stream(app: &tauri::AppHandle, video_id: &str) -> Result<MusicStrea
         "--print".to_string(),
         format!("%(url)s{SEPARATOR}%(ext)s{SEPARATOR}%(abr)s{SEPARATOR}%(http_headers)j"),
     ];
-    args.extend(cookie_args(&cookies));
+    args.extend(cookie_args(cookies));
     args.push(format!("https://www.youtube.com/watch?v={video_id}"));
-    let result = crate::ytdlp_update::run_validated(app, args, TIMEOUT, "music stream", |output| async move {
-        let stream = parse(&String::from_utf8_lossy(&output.stdout))?;
-        super::super::super::stream_probe::validate_stream(stream).await
-    })
-    .await;
-    drop(cookies);
-    result
+    args
+}
+
+async fn extract_audio(
+    app: &tauri::AppHandle,
+    video_id: &str,
+    cookies: &Option<CookieFile>,
+) -> Result<MusicStream, String> {
+    crate::ytdlp_update::run_validated(
+        app,
+        stream_args(video_id, cookies),
+        TIMEOUT,
+        "music stream",
+        |output| async move {
+            let stream = parse(&String::from_utf8_lossy(&output.stdout))?;
+            super::super::super::stream_probe::validate_stream(stream).await
+        },
+    )
+    .await
+}
+
+pub async fn stream(app: &tauri::AppHandle, video_id: &str) -> Result<MusicStream, String> {
+    let cookies = cookie_file();
+    let authenticated = cookies.is_some();
+    match extract_audio(app, video_id, &cookies).await {
+        Ok(stream) => Ok(stream),
+        // A stale or revoked session must not cost the listener a public track.
+        Err(error) if authenticated => {
+            drop(cookies);
+            note_downgrade(&format!("signed-in audio extraction failed: {error}"));
+            extract_audio(app, video_id, &None).await
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn video_args(video_id: &str, cap: u32, cookies: &Option<CookieFile>) -> Vec<String> {
+    let mut args = vec![
+        "--js-runtimes".to_string(),
+        "node".to_string(),
+        "--extractor-args".to_string(),
+        "youtube:player_client=tv_embedded".to_string(),
+        "--no-playlist".to_string(),
+        "-f".to_string(),
+        video_format(cap),
+        "--dump-single-json".to_string(),
+    ];
+    args.extend(cookie_args(cookies));
+    args.push(format!("https://www.youtube.com/watch?v={video_id}"));
+    args
+}
+
+async fn extract_video(
+    app: &tauri::AppHandle,
+    video_id: &str,
+    cap: u32,
+    cookies: &Option<CookieFile>,
+) -> Result<MusicVideoStream, String> {
+    let output =
+        crate::ytdlp_update::run(app, video_args(video_id, cap, cookies), TIMEOUT, "music video")
+            .await?;
+    parse_video(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// The music video behind a track, for the YouTube Music style video pane.
@@ -87,23 +159,17 @@ pub async fn video_stream(
     max_height: Option<u32>,
 ) -> Result<MusicVideoStream, String> {
     let cap = max_height.unwrap_or(1080).clamp(144, 2160);
-    let format = video_format(cap);
     let cookies = cookie_file();
-    let mut args = vec![
-        "--js-runtimes".to_string(),
-        "node".to_string(),
-        "--extractor-args".to_string(),
-        "youtube:player_client=tv_embedded".to_string(),
-        "--no-playlist".to_string(),
-        "-f".to_string(),
-        format,
-        "--dump-single-json".to_string(),
-    ];
-    args.extend(cookie_args(&cookies));
-    args.push(format!("https://www.youtube.com/watch?v={video_id}"));
-    let output = crate::ytdlp_update::run(app, args, TIMEOUT, "music video").await;
-    drop(cookies);
-    parse_video(&String::from_utf8_lossy(&output?.stdout))
+    let authenticated = cookies.is_some();
+    match extract_video(app, video_id, cap, &cookies).await {
+        Ok(stream) => Ok(stream),
+        Err(error) if authenticated => {
+            drop(cookies);
+            note_downgrade(&format!("signed-in video extraction failed: {error}"));
+            extract_video(app, video_id, cap, &None).await
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Format selection for a video height cap.
@@ -241,6 +307,39 @@ fn mime_of(extension: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn anonymous_extraction_never_passes_a_cookie_file() {
+        let args = stream_args("dQw4w9WgXcQ", &None);
+        assert!(!args.iter().any(|arg| arg == "--cookies"));
+    }
+
+    #[test]
+    fn a_session_extraction_passes_a_short_lived_cookie_file() {
+        let path = std::env::temp_dir().join(format!(
+            "harbor-ytmusic-test-{}-{}.cookies",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::write(&path, "# Netscape HTTP Cookie File\n").expect("test cookie file");
+        let cookies = Some(CookieFile(path.clone()));
+        let audio = stream_args("dQw4w9WgXcQ", &cookies);
+        let at = audio
+            .iter()
+            .position(|arg| arg == "--cookies")
+            .expect("cookie argument");
+        assert_eq!(audio[at + 1].as_str(), path.to_string_lossy().as_ref());
+        assert!(audio
+            .iter()
+            .any(|arg| arg == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"));
+        let video = video_args("dQw4w9WgXcQ", 1080, &cookies);
+        assert!(video.iter().any(|arg| arg == "--cookies"));
+        drop(cookies);
+        assert!(!path.exists(), "the borrowed cookie file is removed on drop");
+    }
 
     #[test]
     fn a_high_cap_does_not_prefer_h264() {
