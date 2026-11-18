@@ -1,14 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Heart,
-  Loader2,
-  MessageSquare,
-  Search,
-  Star,
-  UserPlus,
-  Users as UsersIcon,
-  X,
-} from "lucide-react";
+import { Heart, Loader2, MessageSquare, Search, Star, UserCheck, UserPlus, X } from "lucide-react";
 import { ModalShell, useEscape, useModalExit } from "@/components/modal-shell";
 import { useT } from "@/lib/i18n";
 import {
@@ -239,7 +230,7 @@ export function ReviewerQuickMenu({
   handle: string;
   /** What the review row already knows, shown until the profile arrives. */
   fallback?: { alias?: string; avatarUrl?: string };
-  /** The title whose review list opened this menu, so "other reviews" means other. */
+  /** The title whose review list opened this menu, excluded from the other ratings. */
   excludeContentType?: string;
   excludeContentId?: string;
   onClose: () => void;
@@ -491,15 +482,6 @@ export function ReviewerQuickMenu({
                     </button>
                   </UserHoverCard>
                   {profile?.verified && <VerifiedBadge size="sm" />}
-                  {visibleFriendship === "friends" && (
-                    <span
-                      title={t("Your friend")}
-                      aria-label={t("Your friend")}
-                      className="shrink-0 text-ink-subtle"
-                    >
-                      <UsersIcon size={13} strokeWidth={2.2} />
-                    </span>
-                  )}
                 </div>
                 <div className="flex items-center gap-1.5 text-[13px] text-ink-subtle">
                   <span
@@ -535,10 +517,12 @@ export function ReviewerQuickMenu({
                       }
                       aria-label={friendLabel}
                       title={friendLabel}
-                      className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${visibleFriendship === "friends" || !friendshipKnown ? "cursor-default bg-elevated/30 text-ink-subtle opacity-55" : friendSettled ? "cursor-default bg-elevated/60 text-ink-subtle" : "bg-elevated/60 text-ink-muted hover:text-ink"}`}
+                      className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${visibleFriendship === "friends" ? "cursor-default bg-elevated/60 text-accent" : !friendshipKnown ? "cursor-default bg-elevated/30 text-ink-subtle opacity-55" : friendSettled ? "cursor-default bg-elevated/60 text-ink-subtle" : "bg-elevated/60 text-ink-muted hover:text-ink"}`}
                     >
                       {friend === "sending" ? (
                         <Loader2 size={14} className="animate-spin" />
+                      ) : visibleFriendship === "friends" ? (
+                        <UserCheck size={14} strokeWidth={2.2} />
                       ) : (
                         <UserPlus size={14} strokeWidth={2.2} />
                       )}
@@ -578,7 +562,7 @@ export function ReviewerQuickMenu({
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder={t("Search their reviews")}
+                placeholder={t("Search their ratings")}
                 className="h-8 w-full rounded-full bg-elevated/60 ps-8 pe-3 text-[12.5px] text-ink outline-none placeholder:text-ink-subtle focus:ring-1 focus:ring-inset focus:ring-accent/40"
               />
             </div>
@@ -591,7 +575,7 @@ export function ReviewerQuickMenu({
 
           <div className="mt-2 flex-1 overflow-y-auto px-4 pb-4">
             <div className="mb-2 flex items-center justify-between text-[11.5px] uppercase tracking-wider text-ink-subtle">
-              <span>{t("Other reviews")}</span>
+              <span>{t("Other ratings")}</span>
               {state === "ready" && <span className="tabular-nums">{total}</span>}
             </div>
 
@@ -611,7 +595,7 @@ export function ReviewerQuickMenu({
             )}
             {state === "ready" && !items.length && (
               <p className="py-8 text-center text-[12.5px] text-ink-muted">
-                {debounced ? t("No reviews match that search.") : t("No other reviews yet.")}
+                {debounced ? t("No ratings match your search") : t("No other ratings yet.")}
               </p>
             )}
             <div className="flex flex-col gap-2.5">

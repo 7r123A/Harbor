@@ -462,7 +462,6 @@ export function parseStoredSettings(raw: string | null): {
       hoverPreviewEnabled:
         parsed._hoverPreviewOnByDefault !== true || parsed.hoverPreviewEnabled !== false,
       _hoverPreviewOnByDefault: true,
-      cardHoverStyle: parsed.cardHoverStyle === "custom" ? "custom" : "default",
       searchTmdbTopMatch: parsed.searchTmdbTopMatch !== false,
       metadataAddonOrder: Array.isArray(parsed.metadataAddonOrder)
         ? [

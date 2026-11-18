@@ -26,11 +26,13 @@ export function CustomHoverOverlay({
   meta,
   onPlay,
   preview,
+  showFriendReviews = false,
 }: {
   config: CustomHoverConfig;
   meta: Meta;
   onPlay: () => void;
   preview?: boolean;
+  showFriendReviews?: boolean;
 }) {
   const t = useT();
   const btn = preview ? "pointer-events-none" : "pointer-events-auto";
@@ -72,7 +74,7 @@ export function CustomHoverOverlay({
     </span>
   );
 
-  const friendReviews = !preview && (
+  const friendReviews = !preview && showFriendReviews && (
     <FriendReviewBadges
       metaId={meta.id}
       kind={meta.type}

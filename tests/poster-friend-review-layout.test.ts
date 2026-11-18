@@ -1,31 +1,68 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { parseStoredSettings } from "@/lib/settings/load";
 
-const posterCard = readFileSync(
-  new URL("../src/components/pick-card.tsx", import.meta.url),
-  "utf8",
-);
-const tvCard = readFileSync(new URL("../src/components/tv-card.tsx", import.meta.url), "utf8");
+function source(path: string): string {
+  return readFileSync(new URL(`../src/${path}`, import.meta.url), "utf8");
+}
 
-test("poster cards reserve and bottom-align title space before a close friend row", () => {
-  assert.match(posterCard, /flex min-h-9 flex-col justify-end/);
+test("friend avatars are confined to the hover preview or a peeked poster overlay", () => {
+  const poster = source("components/pick-card.tsx");
+  const tv = source("components/tv-card.tsx");
+  assert.match(poster, /flex min-h-9 flex-col justify-end/);
+  assert.doesNotMatch(poster, /data-friend-review-row/);
+  assert.doesNotMatch(tv, /data-friend-review-row|<FriendReviewBadges/);
   assert.match(
-    posterCard,
-    /className="-mt-2 flex h-\[22px\] items-center overflow-hidden px-px"\s+data-friend-review-row/,
+    poster,
+    /hasPeeked && inCardHover !== "none"[\s\S]*?group-hover:opacity-100[\s\S]*?<FriendReviewBadges/,
   );
-  assert.ok(
-    posterCard.indexOf("!settings.hidePosterTitles") < posterCard.indexOf("data-friend-review-row"),
+  assert.match(source("components/pick-card/custom-hover.tsx"), /!preview && showFriendReviews &&/);
+  assert.match(source("components/hover-preview/block.tsx"), /<FriendReviewBadges/);
+  assert.match(source("components/hover-preview/marquee.tsx"), /<FriendReviewBadges/);
+  assert.match(
+    source("themes/midnight/components/MidnightHoverPreview.tsx"),
+    /<FriendReviewBadges/,
   );
 });
 
-test("TV card friend row is below, not overlaid on, the artwork", () => {
-  const buttonEnd = tvCard.indexOf("</button>", tvCard.indexOf("export const TvCard"));
-  const rowStart = tvCard.indexOf("data-friend-review-row", buttonEnd);
-  assert.ok(buttonEnd >= 0, "TV artwork card button exists");
-  assert.ok(rowStart > buttonEnd, "friend row is a sibling after the TV artwork button");
-  assert.match(
-    tvCard,
-    /className="-mt-2 flex h-\[22px\] items-center overflow-hidden px-px"\s+data-friend-review-row/,
+test("all hover styles remain selectable and survive settings reloads", () => {
+  const gallery = source("views/settings/hover-style-preview.tsx");
+  for (const style of [
+    "default",
+    "marquee",
+    "elegant",
+    "frosted",
+    "cinema",
+    "spotlight",
+    "custom",
+  ]) {
+    assert.ok(gallery.includes(`"${style}"`), `${style} can be selected`);
+    const { settings } = parseStoredSettings(
+      JSON.stringify({
+        cardHoverStyle: style,
+        hoverPreviewEnabled: false,
+        _hoverPreviewOnByDefault: true,
+      }),
+    );
+    assert.equal(settings.cardHoverStyle, style);
+    assert.equal(settings.hoverPreviewEnabled, false);
+  }
+});
+
+test("Peek defaults to on and existing disabled settings are migrated once", () => {
+  assert.equal(parseStoredSettings(null).settings.hoverPreviewEnabled, true);
+  const { settings } = parseStoredSettings(
+    JSON.stringify({
+      hoverPreviewEnabled: false,
+      cardHoverStyle: "marquee",
+    }),
   );
+  assert.equal(settings.hoverPreviewEnabled, true);
+  assert.equal(settings._hoverPreviewOnByDefault, true);
+  assert.equal(settings.cardHoverStyle, "marquee");
+  const afterOptOut = parseStoredSettings(
+    JSON.stringify({ ...settings, hoverPreviewEnabled: false }),
+  );
+  assert.equal(afterOptOut.settings.hoverPreviewEnabled, false);
 });

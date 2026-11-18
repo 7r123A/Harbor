@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, Heart, Loader2, MessageSquare, Star } from "lucide-react";
+import { ChevronDown, Heart, Loader2, MessageSquare, Star, UserCheck } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { MutualMatchLabel } from "./mutual-match-badge";
 import { ReviewSpoiler } from "./review-spoiler";
@@ -21,10 +21,12 @@ const LONG_REVIEW = 320;
 export function ReviewCard({
   review,
   target,
+  isFriend = false,
   onOpenAuthor,
 }: {
   review: TitleRating;
   target: TitleRef;
+  isFriend?: boolean;
   onOpenAuthor: () => void;
 }) {
   const t = useT();
@@ -80,6 +82,16 @@ export function ReviewCard({
                 </button>
               </UserHoverCard>
               {review.verified && <VerifiedBadge size="sm" />}
+              {isFriend && (
+                <span
+                  role="img"
+                  aria-label={t("Friend")}
+                  title={t("Friend")}
+                  className="shrink-0 text-accent"
+                >
+                  <UserCheck size={13} aria-hidden="true" />
+                </span>
+              )}
               <span className="shrink-0 text-[11.5px] text-ink-subtle">@{review.handle}</span>
               <MutualMatchLabel match={review.match} />
               <span aria-hidden className="shrink-0 text-[11px] text-ink-subtle">

@@ -1,5 +1,8 @@
 // Newly introduced UI copy remains usable until each locale provides an override.
 const uiFallback: Record<string, string> = {
+  "Search their ratings": "Search their ratings",
+  "Other ratings": "Other ratings",
+  "No other ratings yet.": "No other ratings yet.",
   "Review comments are unavailable.": "Review comments are unavailable.",
   "Harbor cursor": "Harbor cursor",
   "Harbor cursor size": "Harbor cursor size",

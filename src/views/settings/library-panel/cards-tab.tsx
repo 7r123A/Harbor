@@ -314,7 +314,7 @@ export function CardsTab() {
                   )
                 }
               />
-              {settings.cardHoverStyle === "default" && (
+              {(settings.cardHoverStyle === "default" || settings.cardHoverStyle === "marquee") && (
                 <SettingRow
                   wide
                   label={t("Open preview")}

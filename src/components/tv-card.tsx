@@ -33,7 +33,6 @@ import { useCardSharedState, type CardSharedState } from "@/components/use-card-
 import { CinemaBadge, RerunBadge, StatusBadge, stackTop } from "@/components/card-status-badges";
 import { useCardScoreState } from "@/components/use-card-score-state";
 import { isCardAnimeId } from "@/lib/card-anime";
-import { FriendReviewBadges } from "@/components/ratings/friend-review-badges";
 
 // Preserve the local TV-card support for Simkl anime IDs. Poster-card anime
 // detection is intentionally left unchanged.
@@ -185,17 +184,6 @@ export const TvCard = memo(function TvCard({
           />
         </span>
       </button>
-      <div
-        className="-mt-2 flex h-[22px] items-center overflow-hidden px-px"
-        data-friend-review-row
-      >
-        <FriendReviewBadges
-          metaId={meta.id}
-          kind={meta.type}
-          className="relative flex items-center gap-0.5"
-          avatarSize={20}
-        />
-      </div>
     </div>
   );
 });

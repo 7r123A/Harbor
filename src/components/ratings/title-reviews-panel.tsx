@@ -6,7 +6,12 @@ import { authToken } from "@/lib/theme-auth";
 import type { RatingTarget } from "@/lib/ratings/types";
 import { loadTitleReviewsWithMatches, type TitleRatingsSnapshot } from "@/lib/social/title-reviews";
 import { ReviewerQuickMenu } from "./reviewer-quick-menu";
-import { sortTitleRatings, type RatingSort, type TitleRef } from "@/lib/social/review-rank";
+import {
+  foldHandle,
+  sortTitleRatings,
+  type RatingSort,
+  type TitleRef,
+} from "@/lib/social/review-rank";
 import { ReviewCard } from "./review-card";
 import { ReviewSortControls } from "./review-sort-controls";
 import { WithReviewButton } from "./with-review-button";
@@ -94,6 +99,10 @@ export function TitleReviewsPanel({
 
   const friends = useTitleRatings(ref, "friends");
   const everyone = useTitleRatings(ref, "everyone");
+  const knownFriends = useMemo(
+    () => new Set((friends.snapshot?.ratings ?? []).map((rating) => foldHandle(rating.handle))),
+    [friends.snapshot],
+  );
   const active = tab === "friends" ? friends : everyone;
   const snapshot = active.snapshot;
 
@@ -279,6 +288,7 @@ export function TitleReviewsPanel({
                 key={`${review.handle}-${review.at}`}
                 review={review}
                 target={ref}
+                isFriend={tab === "friends" || knownFriends.has(foldHandle(review.handle))}
                 onOpenAuthor={() => {
                   setQuickSeed({ alias: review.alias, avatarUrl: review.avatarUrl });
                   setQuickHandle(review.handle);

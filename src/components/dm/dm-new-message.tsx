@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Loader2, Search, UserCheck, Users } from "lucide-react";
+import { ArrowLeft, Loader2, Search, UserCheck } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { fetchFriends, type Friend } from "@/lib/social/friends";
 import { searchDmUsers, type DmDirectoryUser, type DmPresence } from "@/lib/social/dm";
@@ -227,7 +227,7 @@ export function DmNewMessage({
           <>
             {!query.trim() && (
               <div className="flex items-center gap-1.5 px-3 pb-1.5 pt-1 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-ink-subtle">
-                <Users size={12} aria-hidden />
+                <UserCheck size={12} aria-hidden />
                 {t("Friends")}
               </div>
             )}

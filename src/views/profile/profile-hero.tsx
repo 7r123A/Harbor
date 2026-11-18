@@ -9,6 +9,7 @@ import {
   Settings2,
   Share2,
   UserMinus,
+  UserCheck,
   UserPlus,
 } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
@@ -509,7 +510,7 @@ function FriendButton({
         actionId="friend:remove"
         className={`${FRIEND_BTN} bg-surface text-ink ring-1 ring-edge hover:bg-danger/12 hover:text-danger`}
       >
-        <Check size={18} strokeWidth={2.6} /> {t("Friends")}
+        <UserCheck size={18} strokeWidth={2.2} /> {t("Friends")}
       </ConfirmableAction>
     );
   }
