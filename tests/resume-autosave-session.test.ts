@@ -326,7 +326,11 @@ test("Refract logs a viewing once across source switches and retries", () => {
 test("Refract starts a new viewing on episode changes and a fresh player mount", () => {
   const h = resumeAutosaveHarness();
   h.enableRefract(180);
-  const play = (harness: ReturnType<typeof resumeAutosaveHarness>, season: number, episode: number) => {
+  const play = (
+    harness: ReturnType<typeof resumeAutosaveHarness>,
+    season: number,
+    episode: number,
+  ) => {
     const p = playbackParams(season, episode);
     harness.render(p);
     harness.render({
@@ -341,7 +345,10 @@ test("Refract starts a new viewing on episode changes and a fresh player mount",
   play(h, 1, 2);
   assert.deepEqual(
     h.refractWatches.map(([event]) => [event.season, event.episode]),
-    [[1, 1], [1, 2]],
+    [
+      [1, 1],
+      [1, 2],
+    ],
   );
   h.unmount();
   const reopened = resumeAutosaveHarness();

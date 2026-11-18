@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+﻿import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
@@ -39,6 +39,7 @@ function harness() {
       constructor(status) {
         super(`HTTP ${status}`);
         this.status = status;
+        this.retryAfterMs = 0;
       }
     },
   };
@@ -278,20 +279,29 @@ test("a bulk history action exceeding remaining capacity is rejected without par
     }));
     h.db.set(storeKey, JSON.stringify({ pending, recent: {}, failed: [], synced: 0 }));
     h.sync.enqueueRefractWatch(episodeEvent(), {
-      episodes: [{ season: 2, episode: 4 }, { season: 2, episode: 5 }],
+      episodes: [
+        { season: 2, episode: 4 },
+        { season: 2, episode: 5 },
+      ],
     });
     await tick();
 
     // One independent queued movie succeeded, but the rejected batch remains visible.
     const stored = JSON.parse(h.db.get(storeKey));
     assert.equal(stored.pending.length, 2498);
-    assert.equal(stored.pending.some((job) => job.type === "episode"), false);
+    assert.equal(
+      stored.pending.some((job) => job.type === "episode"),
+      false,
+    );
     assert.equal(h.calls.length, 1);
     assert.equal(h.calls[0].kind, "movie");
     assert.equal(h.sync.refractStatus().failed, 1);
     assert.equal(h.sync.refractStatus().failureDetails[0].sourceId, episodeEvent().id);
     assert.match(h.sync.refractStatus().failureDetails[0].reason, /queue full/);
-    assert.equal(h.sync.refractStatus().message, "Refract queue full; unable to save another watch");
+    assert.equal(
+      h.sync.refractStatus().message,
+      "Refract queue full; unable to save another watch",
+    );
   } finally {
     h.cleanup();
   }
@@ -417,7 +427,10 @@ test("queue-full warning returns after a failed attempt is successfully retried"
     h.db.set(storeKey, JSON.stringify({ pending, recent: {}, failed: [], synced: 0 }));
     h.setOffline(true);
     h.sync.enqueueRefractWatch(episodeEvent(), {
-      episodes: [{ season: 2, episode: 4 }, { season: 2, episode: 5 }],
+      episodes: [
+        { season: 2, episode: 4 },
+        { season: 2, episode: 5 },
+      ],
     });
     await tick();
     assert.equal(h.sync.refractStatus().failed, 1);
@@ -428,7 +441,10 @@ test("queue-full warning returns after a failed attempt is successfully retried"
     await tick();
     assert.equal(h.sync.refractStatus().synced, 16);
     assert.equal(h.sync.refractStatus().failed, 1);
-    assert.equal(h.sync.refractStatus().message, "Refract queue full; unable to save another watch");
+    assert.equal(
+      h.sync.refractStatus().message,
+      "Refract queue full; unable to save another watch",
+    );
   } finally {
     h.cleanup();
   }
@@ -462,7 +478,6 @@ test("replacement watch queued during superseded lookup flushes without waiting 
   }
 });
 
-
 test("HTTP 409 remains retryable while 404 and 422 are terminal", async () => {
   for (const status of [409, 404, 422]) {
     const h = harness();
@@ -477,6 +492,18 @@ test("HTTP 409 remains retryable while 404 and 422 are terminal", async () => {
       await tick();
       assert.equal(h.sync.refractStatus().pending, status === 409 ? 1 : 0);
       assert.equal(h.sync.refractStatus().failed, status === 409 ? 0 : 1);
+      if (status === 409) {
+        const storeKey = "harbor.refract.sync.v1";
+        const stored = JSON.parse(h.db.get(storeKey));
+        stored.pending[0].nextAt = 0;
+        h.db.set(storeKey, JSON.stringify(stored));
+      }
+      if (status === 409) {
+        const storeKey = "harbor.refract.sync.v1";
+        const stored = JSON.parse(h.db.get(storeKey));
+        stored.pending[0].nextAt = 0;
+        h.db.set(storeKey, JSON.stringify(stored));
+      }
       h.sync.retryRefractSync();
       await tick();
       assert.equal(h.calls.length, status === 409 ? 1 : 0);

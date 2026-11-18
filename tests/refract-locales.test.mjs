@@ -4,10 +4,23 @@ import test from "node:test";
 import ts from "typescript";
 
 const locales = [
-  "ar", "de", "es", "fr", "hi", "id", "it", "ja", "ko", "pl", "pt", "ru", "tr", "vi", "zh",
+  "ar",
+  "de",
+  "es",
+  "fr",
+  "hi",
+  "id",
+  "it",
+  "ja",
+  "ko",
+  "pl",
+  "pt",
+  "ru",
+  "tr",
+  "vi",
+  "zh",
 ];
-const localePath = (locale) =>
-  new URL(`../src/lib/i18n/locales/${locale}.ts`, import.meta.url);
+const localePath = (locale) => new URL(`../src/lib/i18n/locales/${locale}.ts`, import.meta.url);
 
 function catalog(locale) {
   const file = ts.createSourceFile(

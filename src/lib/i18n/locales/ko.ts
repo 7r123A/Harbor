@@ -381,7 +381,8 @@ const ko: Record<string, string> = {
   "Refract personal API key": "Refract 개인 API 키",
   "Verifying...": "확인 중…",
   "Connect Refract": "Refract 연결",
-  "Refract key saved in Harbor's secret store": "Refract 키가 Harbor의 보안 저장소에 저장되어 있습니다",
+  "Refract key saved in Harbor's secret store":
+    "Refract 키가 Harbor의 보안 저장소에 저장되어 있습니다",
   "Sync watched history and watchlist": "시청 기록 및 시청 목록 동기화",
   "Send watched history and watchlist changes from Harbor to Refract. Only the primary Harbor profile is synced.":
     "Harbor의 시청 기록과 시청 목록 변경 사항을 Refract로 전송합니다. Harbor의 기본 프로필만 동기화됩니다.",
@@ -405,18 +406,22 @@ const ko: Record<string, string> = {
   "{sent} sent · {pending} pending · {failed} unmatched":
     "전송 완료 {sent}개 · 대기 중 {pending}개 · 일치 항목 없음 {failed}개",
   "Unmatched items": "일치하는 항목을 찾지 못한 콘텐츠",
-  "Refract queue full; unable to save another watch": "Refract 대기열이 가득 차 추가 시청 기록을 저장할 수 없습니다",
+  "Refract queue full; unable to save another watch":
+    "Refract 대기열이 가득 차 추가 시청 기록을 저장할 수 없습니다",
   "No verified IMDb/TMDB/TVDB identity": "확인된 IMDb/TMDB/TVDB ID가 없습니다",
   "Movie not found in Refract": "Refract에서 영화를 찾을 수 없습니다",
-  "Episode not found; verify season numbering": "에피소드를 찾을 수 없습니다. 시즌 번호를 확인하세요",
+  "Episode not found; verify season numbering":
+    "에피소드를 찾을 수 없습니다. 시즌 번호를 확인하세요",
   "Last watched item sent successfully": "최근 시청 기록을 전송했습니다",
   "Unknown error": "알 수 없는 오류",
   "Some items could not be matched or sent": "일부 항목을 일치시키거나 전송하지 못했습니다",
-  "Refract denied access; check key and permissions": "Refract가 접근을 거부했습니다. 키와 권한을 확인하세요",
+  "Refract denied access; check key and permissions":
+    "Refract가 접근을 거부했습니다. 키와 권한을 확인하세요",
   "Network error; retry scheduled": "네트워크 오류. 재시도가 예약되었습니다",
   "No verified IMDb/TMDB/TVDB identity is available for this title.":
     "이 작품에 확인된 IMDb/TMDB/TVDB ID가 없습니다.",
-  "Refract could not uniquely identify this title.": "Refract가 이 작품을 고유하게 식별하지 못했습니다.",
+  "Refract could not uniquely identify this title.":
+    "Refract가 이 작품을 고유하게 식별하지 못했습니다.",
   "Refract preserved an existing library entry or viewing history.":
     "Refract가 기존 라이브러리 항목 또는 시청 기록을 보존했습니다.",
   "Added to Refract Plan to Watch.": "Refract 시청 예정 목록에 추가했습니다.",

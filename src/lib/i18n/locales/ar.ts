@@ -426,8 +426,7 @@ const ar: Record<string, string> = {
   "Refract personal API key": "مفتاح API شخصي لـ Refract",
   "Verifying...": "جارٍ التحقق…",
   "Connect Refract": "ربط Refract",
-  "Refract key saved in Harbor's secret store":
-    "تم حفظ مفتاح Refract في مخزن الأسرار في Harbor",
+  "Refract key saved in Harbor's secret store": "تم حفظ مفتاح Refract في مخزن الأسرار في Harbor",
   "Sync watched history and watchlist": "مزامنة سجل المشاهدة وقائمة المشاهدة",
   "Send watched history and watchlist changes from Harbor to Refract. Only the primary Harbor profile is synced.":
     "أرسل سجل المشاهدة والتغييرات في قائمة المشاهدة من Harbor إلى Refract. تتم مزامنة الملف الشخصي الأساسي في Harbor فقط.",

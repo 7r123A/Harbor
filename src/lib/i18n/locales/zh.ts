@@ -411,12 +411,14 @@ const zh: Record<string, string> = {
   "No verified IMDb/TMDB/TVDB identity is available for this title.":
     "此作品没有经过验证的 IMDb/TMDB/TVDB 标识。",
   "Refract could not uniquely identify this title.": "Refract 无法唯一识别此作品。",
-  "Refract preserved an existing library entry or viewing history.": "Refract 保留了现有的媒体库条目或观看历史。",
+  "Refract preserved an existing library entry or viewing history.":
+    "Refract 保留了现有的媒体库条目或观看历史。",
   "Added to Refract Plan to Watch.": "已添加到 Refract 的计划观看列表。",
   "Removed from Refract Plan to Watch.": "已从 Refract 的计划观看列表移除。",
   "Refract watchlist requires library:write. Reconnect with a key that has this scope.":
     "Refract 观看列表需要 library:write 权限。请使用具有此权限的密钥重新连接。",
-  "Refract could not confirm the watchlist change. Try again.": "Refract 无法确认观看列表的更改，请重试。",
+  "Refract could not confirm the watchlist change. Try again.":
+    "Refract 无法确认观看列表的更改，请重试。",
   "Refract HTTP {status}": "Refract HTTP {status}",
 };
 

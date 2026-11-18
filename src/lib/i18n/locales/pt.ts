@@ -431,8 +431,7 @@ const pt: Record<string, string> = {
   "Connect Refract": "Conectar Refract",
   "Refract key saved in Harbor's secret store":
     "Chave do Refract salva no armazenamento seguro do Harbor",
-  "Sync watched history and watchlist":
-    "Sincronizar histórico e lista de títulos para assistir",
+  "Sync watched history and watchlist": "Sincronizar histórico e lista de títulos para assistir",
   "Send watched history and watchlist changes from Harbor to Refract. Only the primary Harbor profile is synced.":
     "Envie o histórico de exibição e as alterações na lista de títulos para assistir do Harbor ao Refract. Apenas o perfil principal do Harbor é sincronizado.",
   "Retry pending watches": "Tentar enviar novamente os registros pendentes",
