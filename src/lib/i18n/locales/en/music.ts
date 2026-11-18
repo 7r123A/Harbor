@@ -476,6 +476,7 @@ const music: Record<string, string> = {
   "music.row.artistsSubtitle": "From your library and your history",
   "music.row.charts": "Charts",
   "music.row.chartsSubtitle": "What listeners are actually playing right now",
+  "music.row.ytPlaylists": "Your YouTube Music playlists",
   "music.habit.season.spooky": "Spooky season",
   "music.habit.season.spooky.subtitle": "Halloween is close enough to justify it",
   "music.habit.season.festive": "Festive",
@@ -579,6 +580,10 @@ const music: Record<string, string> = {
     "Sign in inside the YouTube Music window, then choose Use this session.",
   "music.youtubeAccount.sessionNote":
     "Harbor borrows the session from that window and keeps it in memory; no password is stored.",
+  "music.ytLibrary.title": "YouTube Music library",
+  "music.ytLibrary.notSignedIn":
+    "Sign in to YouTube Music to see your playlists, liked songs and artists here.",
+  "music.ytLibrary.empty": "Your YouTube Music library is empty.",
   "music.footer.setup": "Setup",
   "music.footer.harbor": "Harbor",
   "music.footer.connections": "Connections",

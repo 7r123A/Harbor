@@ -52,6 +52,16 @@ impl MusicConnector for YouTubeMusicConnector {
         "YouTube Music"
     }
 
+    async fn library_rows(&self, app: &tauri::AppHandle) -> Result<Vec<MusicCatalogRow>, String> {
+        auth::ensure(app, false).await;
+        if auth::current().is_none() {
+            return Err("Sign in to YouTube Music to open its library".to_string());
+        }
+        let result = catalog::library_rows(&self.client, app).await;
+        self.record(&result);
+        result
+    }
+
     async fn search(
         &self,
         app: &tauri::AppHandle,
@@ -122,13 +132,24 @@ impl MusicConnector for YouTubeMusicConnector {
     async fn browse_home(&self, app: &tauri::AppHandle) -> Result<Vec<MusicCatalogRow>, String> {
         // A signed-in tab turns these same shelves into the listener's own home. Look for the
         // session once; without one the call stays anonymous exactly as before.
-        auth::ensure(app).await;
-        let (home, charts) = tokio::join!(
+        auth::ensure(app, false).await;
+        let signed_in = auth::current().is_some();
+        let (home, charts, liked, playlists) = tokio::join!(
             catalog::home_rows(&self.client, app),
-            catalog::chart_rows(&self.client, app)
+            catalog::chart_rows(&self.client, app),
+            catalog::liked_row(&self.client, app, signed_in),
+            catalog::library_playlists(&self.client, app, signed_in)
         );
         self.record(&home);
-        let mut rows = home?;
+        let mut rows = Vec::new();
+        // The account's own shelves lead the provider's home, matching the Spotify layout.
+        if let Some(liked) = liked.ok().flatten() {
+            rows.push(liked);
+        }
+        if let Some(playlists) = playlists.ok().flatten() {
+            rows.push(playlists);
+        }
+        rows.extend(home?);
         if let Ok(charts) = charts {
             rows.extend(charts);
         }
@@ -173,6 +194,17 @@ impl MusicConnector for YouTubeMusicConnector {
         playlist: &MusicPlaylistRef,
     ) -> Result<Vec<MusicTrack>, String> {
         let result = catalog::playlist_tracks(&self.client, app, playlist).await;
+        self.record(&result);
+        result
+    }
+
+    async fn playlist_page(
+        &self,
+        app: &tauri::AppHandle,
+        playlist: &MusicPlaylistRef,
+        cursor: Option<&str>,
+    ) -> Result<MusicCatalogPage, String> {
+        let result = catalog::playlist_page(&self.client, app, playlist, cursor).await;
         self.record(&result);
         result
     }

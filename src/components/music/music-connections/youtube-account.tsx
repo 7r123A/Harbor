@@ -49,6 +49,7 @@ export function YouTubeMusicAccount({
     setBusy("signout");
     setFailure(null);
     void disconnectSource("youtube")
+      .then(() => window.dispatchEvent(new Event("harbor:music-library-changed")))
       .catch((reason) => setFailure(errorText(reason)))
       .finally(() => {
         setBusy(null);

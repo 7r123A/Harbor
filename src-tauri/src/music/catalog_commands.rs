@@ -17,7 +17,13 @@ pub async fn music_home_rows(
     state: tauri::State<'_, MusicState>,
     refresh: bool,
 ) -> Result<Vec<MusicCatalogRow>, String> {
-    if !refresh {
+    // A tab signed into since the last load changes what the YouTube shelf contributes; rebuild
+    // instead of serving rows that were cached from the anonymous view.
+    let restored = super::connectors::youtube_music::auth::ensure(&app, false).await;
+    if restored {
+        rows::invalidate(&state.db, Some("youtube"))?;
+    }
+    if !refresh && !restored {
         let cached = rows::cached(&state.db, None)?;
         if !cached.is_empty() {
             return Ok(cached);
@@ -29,6 +35,17 @@ pub async fn music_home_rows(
         rows::store(&state.db, &ordered)?;
     }
     Ok(ordered)
+}
+
+#[tauri::command]
+pub async fn music_library_rows(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, MusicState>,
+    connector: String,
+) -> Result<Vec<MusicCatalogRow>, String> {
+    pick(state.inner(), &connector)?
+        .library_rows(&app)
+        .await
 }
 
 #[tauri::command]
@@ -131,6 +148,30 @@ pub async fn music_catalog_playlist_tracks(
     let connector = pick(state.inner(), &playlist.connector_id)?;
     let tracks = connector.playlist_tracks(&app, &playlist).await?;
     remember(state.inner(), tracks)
+}
+
+/// One page of a catalog playlist; `cursor` is the provider's continuation from the last page.
+#[tauri::command]
+pub async fn music_catalog_playlist_page(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, MusicState>,
+    playlist: MusicPlaylistRef,
+    cursor: Option<String>,
+) -> Result<MusicCatalogPage, String> {
+    let connector = pick(state.inner(), &playlist.connector_id)?;
+    let page = connector
+        .playlist_page(&app, &playlist, cursor.as_deref())
+        .await?;
+    let tracks = page
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            MusicCatalogItem::Track(track) => Some(track.clone()),
+            _ => None,
+        })
+        .collect();
+    remember(state.inner(), tracks)?;
+    Ok(page)
 }
 
 #[tauri::command]
@@ -345,7 +386,10 @@ pub async fn music_connections(
 ) -> Result<Vec<MusicConnection>, String> {
     // Picks up a YouTube Music tab the listener signed into since the last check, so the row
     // reports the account without a second sign-in.
-    super::connectors::youtube_music::auth::ensure(&app).await;
+    if super::connectors::youtube_music::auth::ensure(&app, true).await {
+        // The Home cache still holds the anonymous shelves; the next Home load must rebuild them.
+        rows::invalidate(&state.db, Some("youtube"))?;
+    }
     // Avoid exposing librespot's immutable account ID in the Connections list.
     state.spotify.refresh_profile_display_name().await;
     Ok(state.registry.connections())
@@ -358,7 +402,10 @@ pub async fn music_connect(
     id: String,
     fields: HashMap<String, String>,
 ) -> Result<MusicConnection, String> {
-    pick(state.inner(), &id)?.connect(&app, &fields).await
+    let connection = pick(state.inner(), &id)?.connect(&app, &fields).await?;
+    // Signing in changes what this source contributes to Home, and the cached rows predate it.
+    rows::invalidate(&state.db, Some(&id))?;
+    Ok(connection)
 }
 
 #[tauri::command]
@@ -367,7 +414,10 @@ pub async fn music_disconnect(
     state: tauri::State<'_, MusicState>,
     id: String,
 ) -> Result<(), String> {
-    pick(state.inner(), &id)?.disconnect(&app).await
+    pick(state.inner(), &id)?.disconnect(&app).await?;
+    // The signed-in shelves no longer apply once the session is gone.
+    rows::invalidate(&state.db, Some(&id))?;
+    Ok(())
 }
 
 #[tauri::command]

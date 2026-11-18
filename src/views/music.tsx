@@ -70,7 +70,12 @@ import {
 } from "@/components/music/music-tabs";
 import { ScrollRootContext } from "@/components/row";
 import { useT } from "@/lib/i18n";
-import { artistCatalog, localCollection, searchTyped } from "@/lib/music/catalog";
+import {
+  artistCatalog,
+  catalogPlaylistPage,
+  localCollection,
+  searchTyped,
+} from "@/lib/music/catalog";
 import { loadMusicGenre } from "@/lib/music/genre-page";
 import { loadMusicLabel } from "@/lib/music/label-page";
 import {
@@ -633,11 +638,11 @@ function MusicViewContent({ active }: { active: boolean }) {
     [loadPendingDetail],
   );
 
-  const loadMoreArtistTracks = useCallback(async () => {
+  const loadMoreTracks = useCallback(async () => {
     const current = detailRef.current;
     if (
       !current ||
-      current.item.kind !== "artist" ||
+      (current.item.kind !== "artist" && current.item.kind !== "playlist") ||
       (current.nextOffset == null && !current.trackCursor) ||
       current.loadingMore
     )
@@ -645,10 +650,13 @@ function MusicViewContent({ active }: { active: boolean }) {
     const generation = resolveGeneration.current;
     setDetail((value) => (value ? { ...value, loadingMore: true, moreError: "" } : value));
     try {
-      const local = current.item.connectorId === "local";
-      const page = local
-        ? await localCollection("tracks", "", current.nextOffset ?? 0, current.item.id)
-        : await artistCatalog(current.item, "tracks", current.trackCursor);
+      const local = current.item.kind === "artist" && current.item.connectorId === "local";
+      const page =
+        current.item.kind === "playlist"
+          ? await catalogPlaylistPage(current.item, current.trackCursor)
+          : local
+            ? await localCollection("tracks", "", current.nextOffset ?? 0, current.item.id)
+            : await artistCatalog(current.item, "tracks", current.trackCursor);
       if (generation !== resolveGeneration.current) return;
       const tracks = page.items.filter(
         (entry): entry is Extract<MusicCatalogItem, { kind: "track" }> => entry.kind === "track",
@@ -1360,7 +1368,7 @@ function MusicViewContent({ active }: { active: boolean }) {
                   setVideoQuery(`${track.artist} ${track.title}`);
                   openDiscovery("videos");
                 }}
-                onLoadMore={loadMoreArtistTracks}
+                onLoadMore={loadMoreTracks}
                 onLoadMoreReleases={loadMoreArtistReleases}
                 detail={detail}
                 onBack={closeDetail}

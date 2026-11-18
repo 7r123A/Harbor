@@ -12,6 +12,7 @@ use super::innertube::{
 use crate::ytmusic::AccountCookie;
 use reqwest::header::{AUTHORIZATION, COOKIE, ORIGIN, USER_AGENT};
 use sha1::{Digest, Sha1};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use tauri::Manager;
 
@@ -49,18 +50,36 @@ pub fn clear() {
 }
 
 /// Reuse the tab the listener already signed into, without asking a second time. Silent: a
-/// closed window or a signed-out session just leaves the connector anonymous.
+/// closed window or a signed-out session just leaves the connector anonymous. Returns whether a
+/// session was adopted just now, so callers holding rows built from the anonymous view can drop
+/// them. `force` lets an explicit Connections check look again immediately.
 // shortcut: the session lives in memory and can only be re-read while a YouTube Music window
 // is open, so a restart needs the opt-in marker plus that window; persist a token store if
 // listeners report repeated reconnects.
-pub async fn ensure(app: &tauri::AppHandle) {
+pub async fn ensure(app: &tauri::AppHandle, force: bool) -> bool {
     if current().is_some() || !opted_in(app) {
-        return;
+        return false;
     }
-    if let Ok(session) = session_from(app).await {
-        set(session);
+    // Home mounts would otherwise re-probe a signed-out tab on every navigation.
+    let now = now_seconds();
+    if !force && now.saturating_sub(LAST_FAILED_AT.load(Ordering::Relaxed)) < RETRY_COOLDOWN {
+        return false;
+    }
+    match session_from(app).await {
+        Ok(session) => {
+            set(session);
+            true
+        }
+        Err(_) => {
+            LAST_FAILED_AT.store(now, Ordering::Relaxed);
+            false
+        }
     }
 }
+
+/// Seconds to wait before an automatic check retries a tab that was not signed in.
+const RETRY_COOLDOWN: u64 = 60;
+static LAST_FAILED_AT: AtomicU64 = AtomicU64::new(0);
 
 /// The listener connected an account at least once. Without this marker a signed-in YouTube
 /// Music tab is just a tab, and Harbor keeps browsing anonymously.

@@ -1,6 +1,7 @@
 import { HOISTED_SOURCE } from "./music-spotify-band";
 import { MusicCatalogRow } from "@/components/music/music-catalog-row";
 import { MusicConnectCard } from "@/components/music/music-connect-card";
+import { ytmLikedPlaylist } from "@/lib/music/ytm-library";
 import type { MusicCatalogRow as MusicCatalogRowData, MusicConnection } from "@/lib/music/types";
 import { resolvedTitle, type MusicBand, type MusicBandContext } from "./music-band-types";
 
@@ -29,6 +30,8 @@ function homeBand(
     ? resolvedTitle(row, t)
     : { title: base.title, subtitle: base.subtitle ?? "" };
   const status = row ? ("ready" as const) : ctx.data.homeStatus;
+  const openFullList = ytmLikedPlaylist(row, resolved.title);
+  const openYtLibrary = row?.id === "ytm:home:playlists";
 
   return {
     key,
@@ -41,6 +44,13 @@ function homeBand(
         error={ctx.data.homeError}
         onRetry={ctx.data.reload}
         onOpen={(item) => ctx.openItem(item, base.items)}
+        onViewAll={
+          openFullList
+            ? () => ctx.openItem(openFullList, base.items)
+            : openYtLibrary
+              ? () => ctx.openLibrary({ view: "youtube" })
+              : undefined
+        }
         playable
       />
     ),

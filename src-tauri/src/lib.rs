@@ -2122,6 +2122,8 @@ pub fn run() {
             #[cfg(feature = "music")]
             music::music_browse_connector,
             #[cfg(feature = "music")]
+            music::music_library_rows,
+            #[cfg(feature = "music")]
             music::music_album_tracks,
             #[cfg(feature = "music")]
             music::music_artist_top,
@@ -2131,6 +2133,8 @@ pub fn run() {
             music::music_artist_rows,
             #[cfg(feature = "music")]
             music::music_catalog_playlist_tracks,
+            #[cfg(feature = "music")]
+            music::music_catalog_playlist_page,
             #[cfg(feature = "music")]
             music::music_import_linked_playlist,
             #[cfg(feature = "music")]
