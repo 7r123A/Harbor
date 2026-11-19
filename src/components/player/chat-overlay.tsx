@@ -7,6 +7,7 @@ import type { ChatMessage } from "@/lib/together/provider";
 import type { Participant } from "@/lib/together/protocol";
 import { useSelfIdentity } from "@/lib/together/use-self-identity";
 import { useT } from "@/lib/i18n";
+import { useSettings } from "@/lib/settings";
 
 const COMPOSE_TIMEOUT_MS = 4500;
 
@@ -38,7 +39,9 @@ export function ChatOverlay({
   const selfIdentity = useSelfIdentity();
   const [composing, setComposing] = useState(false);
   const [draft, setDraft] = useState("");
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const { settings } = useSettings();
+  const keepHistoryOpen = settings.togetherChatHistoryOpen;
+  const [historyOpen, setHistoryOpen] = useState(keepHistoryOpen);
   const [tickNow, setTickNow] = useState(() => Date.now());
   const inputRef = useRef<HTMLInputElement>(null);
   const composeTimer = useRef<number | null>(null);
@@ -72,6 +75,10 @@ export function ChatOverlay({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [composing, historyOpen]);
+
+  useEffect(() => {
+    setHistoryOpen(keepHistoryOpen);
+  }, [keepHistoryOpen]);
 
   useEffect(() => {
     if (!historyOpen || !listRef.current) return;

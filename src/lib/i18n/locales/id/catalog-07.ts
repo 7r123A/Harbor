@@ -266,6 +266,8 @@ const catalog: Record<string, string> = {
   "Guest Stars": "Bintang Tamu",
   "Guest Stars · {n}": "Bintang Tamu · {n}",
   "Guests pick their own source": "Tamu memilih sumber sendiri",
+  "Keep chat history open": "Biarkan riwayat obrolan tetap terbuka",
+  "Shows earlier messages over the video": "Menampilkan pesan sebelumnya di atas video",
   Guide: "Panduan",
   "Guide address": "Alamat panduan",
   "Guide data only": "Hanya data panduan",

@@ -682,6 +682,8 @@ const catalog05: Record<string, string> = {
   "Grown-ups only": "Tylko dla dorosłych",
   Guest: "Gość",
   "Guests pick their own source": "Goście wybierają własne źródło",
+  "Keep chat history open": "Pozostaw historię czatu otwartą",
+  "Shows earlier messages over the video": "Pokazuje wcześniejsze wiadomości nad filmem",
   Guide: "Przewodnik",
   "Guide address": "Adres przewodnika",
   "Guide data only": "Tylko dane przewodnika",
