@@ -528,6 +528,7 @@ export const DEFAULT: Settings = {
   animeOnlyInAnimeRoom: true,
   animeCwEnd: "hide",
   cwAdvanceNext: true,
+  animeIdentityEnabled: false,
   cwHideCaughtUp: true,
   cwPlayUnreleased: true,
   useNativeTitleBar: false,

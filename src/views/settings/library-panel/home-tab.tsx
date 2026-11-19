@@ -27,6 +27,7 @@ import { CwSnapshotShowcase } from "../cw-snapshot-showcase";
 import { PreviewImage } from "../preview-image";
 import { HeroShadowPreview } from "./hero-shadow-preview";
 import { CwEndPreview } from "./cw-end-preview";
+import { AnimeIdentityStatus } from "./anime-identity-status";
 
 export function HomeTab() {
   const { settings, update } = useSettings();
@@ -412,6 +413,24 @@ export function HomeTab() {
           onChange={(v) => update({ cwPreferEpisodeStill: v })}
         />
         <ClearSnapshotsButton />
+      </Section>
+
+      <Section
+        title={t("Anime identity (experimental)")}
+        subtitle={t(
+          "Download a local anime mapping database so Continue Watching can group parts of the same show and write progress to the correct tracker entry. Off by default.",
+        )}
+      >
+        <ToggleRow
+          label={t("Use the local anime identity database")}
+          newId="home:anime-identity"
+          sub={t(
+            "Downloads about six megabytes once a week and keeps a small local database. Without it, the app behaves exactly as before.",
+          )}
+          value={settings.animeIdentityEnabled}
+          onChange={(v) => update({ animeIdentityEnabled: v })}
+        />
+        <AnimeIdentityStatus enabled={settings.animeIdentityEnabled} />
       </Section>
     </>
   );

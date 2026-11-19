@@ -526,3 +526,23 @@ pub fn identity_window_owners(
         Ok(rows)
     })
 }
+#[tauri::command]
+pub fn identity_clear_data(
+    app: AppHandle,
+    state: State<'_, IdentityState>,
+) -> Result<db::IdentityStatus, String> {
+    {
+        let mut guard = state
+            .conn
+            .lock()
+            .map_err(|_| "identity: db lock poisoned".to_string())?;
+        *guard = None;
+    }
+    for path in [db::db_path(&app)?, db::tmp_path(&app)?, db::prev_path(&app)?] {
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .map_err(|error| format!("identity: delete {}: {error}", path.display()))?;
+        }
+    }
+    db::status(&app, None)
+}

@@ -1380,6 +1380,7 @@ pub fn run() {
             identity::commands::identity_entry_bundle,
             identity::commands::identity_card_hints,
             identity::commands::identity_window_owners,
+            identity::commands::identity_clear_data,
             #[cfg(feature = "games")]
             games::games_pokemon,
             #[cfg(feature = "games")]

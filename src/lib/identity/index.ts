@@ -101,6 +101,13 @@ export async function identityStatus(): Promise<IdentityStatus | null> {
 }
 
 /** Download and import the latest pack, or return the current status. */
+export async function clearIdentityData(): Promise<IdentityStatus | null> {
+  if (!identityEnabled()) return null;
+  const status = await invokeIdentity<IdentityStatus>("identity_clear_data");
+  clearIdentityCache();
+  return status;
+}
+
 export async function ensureIdentityPack(force = false): Promise<IdentityStatus | null> {
   if (!identityEnabled()) return null;
   const status = await invokeIdentity<IdentityStatus>("identity_ensure_pack", { force });
@@ -116,6 +123,7 @@ export function installIdentityDebug(): void {
       flags: typeof identityFlags;
       status: typeof identityStatus;
       ensurePack: typeof ensureIdentityPack;
+      clearData: typeof clearIdentityData;
       identifyBatch: typeof identifyBatch;
       bundle: typeof identityBundle;
       clearCache: typeof clearIdentityCache;
@@ -128,12 +136,13 @@ export function installIdentityDebug(): void {
     ensurePack: ensureIdentityPack,
     identifyBatch,
     bundle: identityBundle,
+    clearData: clearIdentityData,
     clearCache: clearIdentityCache,
     setInvoker: setIdentityInvoker,
   };
 }
 
-export { identityFlags, setIdentityFlags, resetIdentityFlags } from "./flags";
+export { identityEnabled, identityFlags, setIdentityFlags, resetIdentityFlags } from "./flags";
 export { setIdentityInvoker } from "./client";
 export type {
   IdentityAlias,

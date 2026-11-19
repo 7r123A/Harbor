@@ -152,6 +152,7 @@ import { CharacterFavoritesProvider } from "@/lib/character-favorites";
 import { MangaFavoritesProvider } from "@/lib/manga-favorites";
 import { LocalWatchlistProvider } from "@/lib/local-watchlist";
 import { useSettings } from "@/lib/settings";
+import { ensureIdentityPack, installIdentityDebug, setIdentityFlags } from "@/lib/identity";
 import {
   flushPendingTorrentRemovals,
   reconcilePendingTorrentRemovals,
@@ -577,6 +578,7 @@ export function App({ onReady }: { onReady?: () => void }) {
                                                       </AfterFirstPaint>
                                                       <AfterFirstPaint>
                                                         <MediaServerSyncRunner />
+                                                        <IdentityStartupRunner />
                                                         <NuvioMutationRetryRunner />
                                                         <AutoDownloadRunner />
                                                         <RemindersRunner />
@@ -673,6 +675,29 @@ function RatingsSyncRunner() {
 
 function ActivitySyncRunner() {
   useActivitySync();
+  return null;
+}
+
+const IDENTITY_SYNC_FIRST_MS = 4000;
+const IDENTITY_SYNC_EVERY_MS = 6 * 60 * 60 * 1000;
+
+function IdentityStartupRunner() {
+  const { settings } = useSettings();
+  const enabled = settings.animeIdentityEnabled;
+  useEffect(() => {
+    setIdentityFlags({ pack: enabled, cards: enabled });
+    if (import.meta.env.DEV) installIdentityDebug();
+    if (!enabled) return;
+    const run = () => {
+      void ensureIdentityPack(false).catch(() => {});
+    };
+    const first = window.setTimeout(run, IDENTITY_SYNC_FIRST_MS);
+    const every = window.setInterval(run, IDENTITY_SYNC_EVERY_MS);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(every);
+    };
+  }, [enabled]);
   return null;
 }
 
