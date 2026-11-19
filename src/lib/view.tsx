@@ -20,6 +20,7 @@ import {
 } from "react";
 import { registerProfileDestination, subscribeOpenProfile } from "@/lib/social/open-profile";
 import { subscribeOpenGroup } from "@/lib/social/open-group";
+import { requestOpenUserDiscovery } from "@/lib/social/user-discovery-open";
 import { currentAuthor } from "@/lib/theme-auth";
 import { isNuvioProviderActive, loadNuvioState } from "@/lib/nuvio/nuvio-client";
 import { useBigPicture } from "@/lib/big-picture";
@@ -242,7 +243,6 @@ export type Frame =
   | { kind: "profile"; handle: string; isMyProfile?: boolean }
   | { kind: "feed" }
   | { kind: "groups" }
-  | { kind: "user-discovery" }
   | { kind: "group"; id: string }
   | { kind: "list"; handle: string; listId: string }
   | { kind: "collection"; id: number }
@@ -521,8 +521,6 @@ function frameKey(f: Frame): string {
       return "feed";
     case "groups":
       return "groups";
-    case "user-discovery":
-      return "user-discovery";
     case "group":
       return `group:${f.id}`;
     case "list":
@@ -1192,13 +1190,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
     });
   }, [setNavStack]);
 
-  const openUserDiscovery = useCallback(() => {
-    setNavStack((cur) =>
-      cur[cur.length - 1].kind === "user-discovery"
-        ? cur
-        : pushFrame(cur, { kind: "user-discovery" }),
-    );
-  }, [setNavStack]);
+  const openUserDiscovery = requestOpenUserDiscovery;
 
   const openGroup = useCallback(
     (id: string) => {

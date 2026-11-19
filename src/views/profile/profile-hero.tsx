@@ -16,6 +16,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { ConfirmableAction } from "@/components/context-menu/action-items";
 import { ShareModal } from "./share-modal";
 import { ProfileJoinedAt } from "./profile-joined-at";
+import { profileBackgroundUrl } from "@/lib/social/profile-card-appearance";
 import { countryFlagSrc } from "@/components/flag";
 import { acceptFriend, removeFriend, sendFriendRequest } from "@/lib/social/friends";
 import { type DmError } from "@/lib/social/dm";
@@ -89,6 +90,7 @@ export function ProfileHero({
   onPatch?: (next: ProfileSummary) => void;
 }) {
   const t = useT();
+  const backgroundUrl = profileBackgroundUrl(p);
   const { openFeed } = useView();
   const { open: openContext } = useContextMenu();
   const [relationship, setRelationship] = useState(p.friendStatus);
@@ -131,9 +133,9 @@ export function ProfileHero({
     <header className="relative w-full overflow-hidden">
       <div className="relative h-48 w-full sm:h-60">
         {!hideBanner &&
-          (p.bannerUrl ? (
+          (backgroundUrl ? (
             <img
-              src={p.bannerUrl}
+              src={backgroundUrl}
               alt=""
               className="h-full w-full object-cover"
               draggable={false}
@@ -156,7 +158,7 @@ export function ProfileHero({
             }}
           />
         )}
-        {p.isOwner && !p.bannerUrl && !hideBanner && onEdit && (
+        {p.isOwner && !backgroundUrl && !hideBanner && onEdit && (
           <button
             onClick={onEdit}
             className="absolute end-4 top-24 inline-flex items-center gap-1.5 rounded-full bg-elevated/70 px-3 py-1.5 text-[12px] font-medium text-ink ring-1 ring-edge-soft backdrop-blur transition-colors hover:bg-elevated"

@@ -71,6 +71,9 @@ function badgeName(notif: CenterNotif): string {
 
 const TITLE_BY_KIND: Record<string, string> = {
   "friend-request": "Friend request",
+  "friend-accepted": "Friend request accepted",
+  review_reaction: "Liked your review",
+  review_comment: "Commented on your review",
   comment: "New comment",
   "group-added": "Group invite",
   "group-post": "New group post",

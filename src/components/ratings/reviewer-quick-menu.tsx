@@ -25,6 +25,7 @@ import { ProfileJoinedAt } from "@/views/profile/profile-joined-at";
 import {
   cardBackground,
   profileCardStyle,
+  profileBackgroundUrl,
   type ProfileCardLook,
 } from "@/lib/social/profile-card-appearance";
 import { socialGet } from "@/lib/social/client";
@@ -445,7 +446,7 @@ export function ReviewerQuickMenu({
           >
             {profile?.profileCard?.bgUrl || profile?.bannerUrl ? (
               <img
-                src={profile?.profileCard?.bgUrl || profile?.bannerUrl}
+                src={profileBackgroundUrl(profile ?? undefined)}
                 alt=""
                 className="h-full w-full object-cover"
                 draggable={false}

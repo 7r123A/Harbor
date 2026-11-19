@@ -167,6 +167,7 @@ import { getUnreadCount, subscribeUnread } from "@/lib/social/unread-bridge";
 import { fetchMe } from "@/lib/account/identity";
 import { ThemeChromeBridge } from "@/components/theme-chrome-bridge";
 import { DmLauncher } from "@/components/dm/dm-launcher";
+import { UserDiscoveryHost } from "@/components/user-discovery-host";
 import { ShareToDmHost } from "@/components/share-to-dm";
 import { PartyInviteCenter } from "@/components/party-invite-center";
 import type { MetaType } from "@/lib/cinemeta";
@@ -299,9 +300,6 @@ const PersonView = lazy(() => importPerson().then((m) => ({ default: m.PersonVie
 const PeopleView = lazy(() => importPeople().then((m) => ({ default: m.PeopleView })));
 const ProfileView = lazy(() =>
   import("@/views/profile/profile").then((m) => ({ default: m.ProfileView })),
-);
-const UserDiscoveryView = lazy(() =>
-  import("@/views/user-discovery").then((m) => ({ default: m.UserDiscoveryView })),
 );
 const SharedListView = lazy(() =>
   import("@/views/shared-list").then((m) => ({ default: m.SharedListView })),
@@ -1541,7 +1539,6 @@ function Shell({ onReady }: { onReady?: () => void }) {
   const profileTop = topKind === "profile";
   const feedTop = topKind === "feed";
   const groupsTop = topKind === "groups";
-  const userDiscoveryTop = topKind === "user-discovery";
   const groupTop = topKind === "group";
   const listTop = topKind === "list";
   const collectionTop = topKind === "collection";
@@ -1717,7 +1714,6 @@ function Shell({ onReady }: { onReady?: () => void }) {
   const profileAlive = useKeepAlive(profileTop, profileHandle !== null);
   const feedAlive = useKeepAlive(feedTop, feedOpen, stackKinds.includes("feed"));
   const groupsAlive = useKeepAlive(groupsTop, groupsOpen, stackKinds.includes("groups"));
-  const userDiscoveryAlive = useKeepAlive(userDiscoveryTop, stackKinds.includes("user-discovery"));
   const groupAlive = useKeepAlive(groupTop, groupId !== null);
   const listAlive = useKeepAlive(listTop, listHandle !== null);
   const addonCollectionAlive = useKeepAlive(
@@ -1885,6 +1881,7 @@ function Shell({ onReady }: { onReady?: () => void }) {
             </Suspense>
           )}
           <DmLauncher playing={playerActive} />
+          <UserDiscoveryHost />
           <ShareToDmHost />
           <PartyInviteCenter />
           {!playerActive && <WindowResizeEdges />}
@@ -2184,13 +2181,6 @@ function Shell({ onReady }: { onReady?: () => void }) {
               <div {...layerProps(groupsTop)}>
                 <Suspense fallback={null}>
                   <GroupsView />
-                </Suspense>
-              </div>
-            )}
-            {userDiscoveryAlive && (
-              <div {...layerProps(userDiscoveryTop)}>
-                <Suspense fallback={null}>
-                  <UserDiscoveryView />
                 </Suspense>
               </div>
             )}

@@ -20,7 +20,7 @@ import {
   removeCardBackground,
   saveCardAppearance,
   uploadCardBackground,
-  type CardThemeId,
+  type CardAppearancePatch,
 } from "@/lib/social/profile-card-appearance";
 import { saveDmPolicy, useDmPrefs, type DmPolicy } from "@/lib/social/dm-preferences";
 import {
@@ -49,6 +49,7 @@ import { LocationSelect } from "./location-select";
 import { CustomizationPanel } from "./customization/customization-panel";
 import { ProfileThemePicker } from "./profile-theme-picker";
 import { ProfileCardPanel } from "./profile-card-panel";
+import { ProfileCardColors } from "./profile-card-colors";
 import { AboutEditor } from "./customization/about-editor";
 import { useCustomUrlAvailability, type UrlStatus } from "./use-customurl-availability";
 import type {
@@ -390,10 +391,7 @@ export function ProfileSettings({
     }
   };
 
-  const applyCard = async (
-    patch: { cardTheme?: CardThemeId | null; cardAccent?: string | null },
-    kind: "theme" | "accent",
-  ) => {
+  const applyCard = async (patch: CardAppearancePatch, kind: "theme" | "accent") => {
     setCardBusy(kind);
     setCardError(null);
     try {
@@ -699,7 +697,7 @@ export function ProfileSettings({
                           </div>
                           <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-subtle">
                             {t(
-                              "Choose the theme visitors see on your cards in discovery, reviews, DMs and hover previews. Your profile page keeps its own theme.",
+                              "Choose your card colors and the shared background used on your profile and cards.",
                             )}
                           </div>
                         </div>
@@ -709,6 +707,11 @@ export function ProfileSettings({
                       </div>
 
                       <ProfileCardPanel profile={summary} className="mx-auto mt-3 max-w-[320px]" />
+                      <ProfileCardColors
+                        appearance={summary.profileCard}
+                        busy={!!cardBusy}
+                        onApply={(patch) => applyCard(patch, "theme")}
+                      />
 
                       <div className="mt-3 grid grid-cols-4 gap-2">
                         <button
@@ -780,11 +783,11 @@ export function ProfileSettings({
                           className="flex h-9 items-center gap-1.5 rounded-md border border-edge-soft bg-surface/40 px-2.5 text-[12px] font-medium text-ink-muted transition-colors enabled:hover:text-ink disabled:opacity-60"
                         >
                           <ImageIcon size={14} />
-                          {summary.profileCard?.bgUrl
+                          {summary.profileCard?.bgUrl || summary.bannerUrl
                             ? t("Replace background")
                             : t("Upload background")}
                         </button>
-                        {summary.profileCard?.bgUrl && (
+                        {(summary.profileCard?.bgUrl || summary.bannerUrl) && (
                           <button
                             type="button"
                             disabled={!!cardBusy}

@@ -7,7 +7,11 @@ import {
   resolvePresence,
   type PresenceStatus,
 } from "@/lib/social/presence";
-import { cardBackground, profileCardStyle } from "@/lib/social/profile-card-appearance";
+import {
+  cardBackground,
+  profileCardStyle,
+  profileBackgroundUrl,
+} from "@/lib/social/profile-card-appearance";
 import { Avatar, VerifiedCheck } from "./profile-bits";
 import { countryName } from "./flags";
 import { ProfileJoinedAt } from "./profile-joined-at";
@@ -44,7 +48,7 @@ export function ProfileCardPanel({
       ?.replace(/<[^>]*>/g, " ")
       .replace(/\s+/g, " ")
       .trim();
-  const banner = profile.profileCard?.bgUrl || profile.bannerUrl;
+  const banner = profileBackgroundUrl(profile);
   const content = (
     <>
       <div

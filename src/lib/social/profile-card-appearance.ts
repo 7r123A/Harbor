@@ -5,14 +5,27 @@ import type { ProfileSummary } from "@/views/profile/profile-types";
 import type { CSSProperties } from "react";
 import type { ProfileCardAppearance } from "./profile-card-appearance-types";
 import { publishProfileCardSummary } from "./profile-card-summary";
+import { removeBanner } from "./banner";
 
-// Custom profile-card appearance. The card is a separate surface from the profile page:
-// these settings change what the card image and the card-shaped quick menu look like,
-// and nothing else.
+// Colors are scoped to cards. The uploaded background is shared with the profile banner.
 
 const API = `${HARBOR_API_BASE}/themes/api`;
 
-export type CardThemeId = "harbor" | "aurora" | "midnight" | "ember" | "forest" | "rose" | "mono";
+export type CardThemeId =
+  | "harbor"
+  | "aurora"
+  | "midnight"
+  | "ember"
+  | "forest"
+  | "rose"
+  | "mono"
+  | "custom";
+export type CardAppearancePatch = {
+  cardTheme?: CardThemeId | null;
+  cardAccent?: string | null;
+  cardFrom?: string;
+  cardTo?: string;
+};
 
 export type CardThemePreset = {
   id: CardThemeId;
@@ -60,6 +73,13 @@ export function cardThemeById(id: string | null | undefined): CardThemePreset | 
   return CARD_THEMES.find((t) => t.id === id) ?? null;
 }
 
+export function profileBackgroundUrl(
+  profile: { profileCard?: { bgUrl?: string | null }; bannerUrl?: string } | undefined,
+): string | undefined {
+  const url = profile?.profileCard?.bgUrl || profile?.bannerUrl;
+  return url?.startsWith("/") ? `${HARBOR_API_BASE}${url}` : url;
+}
+
 /** The CSS a card surface should paint, given what the API published. */
 export function cardBackground(
   look: { bgUrl?: string | null; gradient?: string | null } | undefined,
@@ -68,14 +88,20 @@ export function cardBackground(
   backgroundColor?: string;
 } {
   if (!look) return {};
-  if (look.bgUrl) return { backgroundImage: `url("${look.bgUrl}")` };
+  if (look.bgUrl)
+    return { backgroundImage: `url("${profileBackgroundUrl({ profileCard: look })}")` };
   if (look.gradient) return { backgroundImage: look.gradient };
   return {};
 }
 
 /** Scoped tokens keep a user's card preference off the surrounding page. */
 export function profileCardStyle(look?: ProfileCardAppearance): CSSProperties {
-  const preset = cardThemeById(look?.theme);
+  const preset =
+    look?.theme === "custom" &&
+    /^#[0-9a-f]{6}$/i.test(look.from ?? "") &&
+    /^#[0-9a-f]{6}$/i.test(look.to ?? "")
+      ? { from: look.from!, to: look.to!, accent: "#7b5cff" }
+      : cardThemeById(look?.theme);
   const accent = /^#[0-9a-f]{6}$/i.test(look?.accent ?? "") ? look!.accent : preset?.accent;
   if (!preset && !accent) return {};
   return {
@@ -102,13 +128,12 @@ export function profileCardStyle(look?: ProfileCardAppearance): CSSProperties {
   } as CSSProperties;
 }
 
-export function saveCardAppearance(input: {
-  cardTheme?: CardThemeId | null;
-  cardAccent?: string | null;
-}): Promise<ProfileSummary> {
+export function saveCardAppearance(input: CardAppearancePatch): Promise<ProfileSummary> {
   const body: Record<string, unknown> = {};
   if (input.cardTheme !== undefined) body.cardTheme = input.cardTheme;
   if (input.cardAccent !== undefined) body.cardAccent = input.cardAccent;
+  if (input.cardFrom !== undefined) body.cardFrom = input.cardFrom;
+  if (input.cardTo !== undefined) body.cardTo = input.cardTo;
   return socialPatch<ProfileSummary>("/social/me/profile", body).then((summary) => {
     publishProfileCardSummary(summary);
     return summary;
@@ -173,5 +198,12 @@ export async function removeCardBackground(): Promise<ProfileSummary> {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
-  return unwrap(r, isCurrent);
+  const summary = await unwrap(r, isCurrent);
+  if (summary.bannerUrl) {
+    const next = await removeBanner();
+    if (!isCurrent()) throw new Error("Account changed");
+    publishProfileCardSummary(next);
+    return next;
+  }
+  return summary;
 }

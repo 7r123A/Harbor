@@ -1,4 +1,4 @@
-import { ArrowLeft, Loader2, X } from "lucide-react";
+import { ArrowLeft, Loader2, Settings, X } from "lucide-react";
 import { UiIcon } from "@/components/ui-icon";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -15,6 +15,7 @@ import { useT } from "@/lib/i18n";
 import { FeedRow, NotificationDetail, RequestRow } from "./notification-rows";
 import { useOptionalGameAccess } from "@/views/games/game-access";
 import { sourceAlertGame } from "@/lib/games/source-alerts";
+import { NotificationPreferences } from "./notification-preferences";
 
 export function NotificationCenter({ trigger = true }: { trigger?: boolean } = {}) {
   const nc = useNotificationCenter();
@@ -22,18 +23,23 @@ export function NotificationCenter({ trigger = true }: { trigger?: boolean } = {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<CenterNotif | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const wasOpen = useRef(false);
   const viewedProfile = useRef(nc.profile);
 
   useEffect(() => {
     setOpen(false);
     setDetail(null);
-  }, [nc.profile]);
+    setSettingsOpen(false);
+  }, [nc.profile, nc.accountId]);
 
   useEffect(() => subscribeNotificationOpen(() => setOpen(true)), []);
 
   useEffect(() => {
-    if (!open) setDetail(null);
+    if (!open) {
+      setDetail(null);
+      setSettingsOpen(false);
+    }
   }, [open]);
 
   useEffect(() => {
@@ -49,12 +55,13 @@ export function NotificationCenter({ trigger = true }: { trigger?: boolean } = {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (detail) setDetail(null);
+      if (settingsOpen) setSettingsOpen(false);
+      else if (detail) setDetail(null);
       else setOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, detail]);
+  }, [open, detail, settingsOpen]);
 
   if (!nc.authed && !nc.hasLocal) return null;
 
@@ -138,10 +145,13 @@ export function NotificationCenter({ trigger = true }: { trigger?: boolean } = {
               className="harbor-together-surface animate-panel-in absolute end-4 top-[88px] flex max-h-[74vh] w-[min(400px,calc(100vw-2rem))] flex-col overflow-hidden rounded-md shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)]"
             >
               <div className="flex items-center justify-between px-4 py-3">
-                {detail ? (
+                {detail || settingsOpen ? (
                   <button
                     type="button"
-                    onClick={() => setDetail(null)}
+                    onClick={() => {
+                      setDetail(null);
+                      setSettingsOpen(false);
+                    }}
                     className="-ms-1.5 flex h-8 items-center gap-1.5 rounded-full px-2.5 text-[13px] font-medium text-ink-muted transition-colors hover:bg-elevated hover:text-ink"
                   >
                     <ArrowLeft size={16} strokeWidth={2.2} /> {t("Back")}
@@ -152,6 +162,20 @@ export function NotificationCenter({ trigger = true }: { trigger?: boolean } = {
                   </span>
                 )}
                 <div className="flex items-center gap-1">
+                  {!settingsOpen && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDetail(null);
+                        setSettingsOpen(true);
+                      }}
+                      title={t("Notification settings")}
+                      aria-label={t("Notification settings")}
+                      className="grid h-7 w-7 place-items-center rounded-full text-ink-subtle transition-colors hover:bg-elevated hover:text-ink"
+                    >
+                      <Settings size={15} />
+                    </button>
+                  )}
                   {nc.loading && !detail && (
                     <Loader2 size={14} className="animate-spin text-ink-subtle" />
                   )}
@@ -166,7 +190,14 @@ export function NotificationCenter({ trigger = true }: { trigger?: boolean } = {
                 </div>
               </div>
 
-              {detail ? (
+              {settingsOpen ? (
+                <>
+                  <h2 className="px-4 pb-2 text-sm font-semibold text-ink">
+                    {t("Notification settings")}
+                  </h2>
+                  <NotificationPreferences onUpdated={() => void nc.refresh()} />
+                </>
+              ) : detail ? (
                 <NotificationDetail
                   notif={detail}
                   onBack={() => setDetail(null)}
