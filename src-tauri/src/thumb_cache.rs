@@ -307,21 +307,17 @@ pub fn write_thumb(
     image: &CachedImage,
     lifetime: u64,
     expected_generation: u64,
-) {
-    let Ok(_lock) = IO.lock() else {
-        return;
-    };
+) -> Option<PathBuf> {
+    let _lock = IO.lock().ok()?;
     if generation() != expected_generation
         || image.bytes.is_empty()
         || image.bytes.len() > MAX_IMAGE_BYTES
     {
-        return;
+        return None;
     }
     cleanup_legacy(app);
-    let Some(dir) = dir(app) else {
-        return;
-    };
-    write_image(&dir, url, width, image, lifetime);
+    let dir = dir(app)?;
+    write_image(&dir, url, width, image, lifetime)
 }
 
 pub fn remove_thumb(app: &tauri::AppHandle, url: &str, width: u32, expected_generation: u64) {
@@ -338,10 +334,14 @@ pub fn remove_thumb(app: &tauri::AppHandle, url: &str, width: u32, expected_gene
     }
 }
 
-fn write_image(dir: &Path, url: &str, width: u32, image: &CachedImage, lifetime: u64) {
-    let Some(mut db) = database(&dir) else {
-        return;
-    };
+fn write_image(
+    dir: &Path,
+    url: &str,
+    width: u32,
+    image: &CachedImage,
+    lifetime: u64,
+) -> Option<PathBuf> {
+    let mut db = database(dir)?;
     let key = file_stem(url, width);
     let previous = db
         .query_row("SELECT file FROM images WHERE key=?1", [&key], |r| {
@@ -365,12 +365,12 @@ fn write_image(dir: &Path, url: &str, width: u32, image: &CachedImage, lifetime:
         if error.kind() != std::io::ErrorKind::StorageFull
             && !matches!(error.raw_os_error(), Some(28 | 112))
         {
-            return;
+            return None;
         }
-        prune(&dir, &db, Some(image.bytes.len() as u64));
+        prune(dir, &db, Some(image.bytes.len() as u64));
         if write().is_err() {
             let _ = std::fs::remove_file(&temporary);
-            return;
+            return None;
         }
     }
     let committed = db
@@ -396,7 +396,7 @@ fn write_image(dir: &Path, url: &str, width: u32, image: &CachedImage, lifetime:
         .is_ok();
     if !committed {
         let _ = std::fs::remove_file(path);
-        return;
+        return None;
     }
     if let Some(previous) = previous.and_then(|file| image_path(dir, &file)) {
         let _ = std::fs::remove_file(previous);
@@ -404,8 +404,9 @@ fn write_image(dir: &Path, url: &str, width: u32, image: &CachedImage, lifetime:
     // The cap check aggregates the whole index; run it periodically instead of
     // on every image write.
     if WRITES.fetch_add(1, Ordering::Relaxed) % 64 == 0 {
-        prune(&dir, &db, None);
+        prune(dir, &db, None);
     }
+    Some(path)
 }
 
 fn prune(dir: &Path, db: &Connection, free_bytes: Option<u64>) {
@@ -585,7 +586,7 @@ mod tests {
                 max_age: 60,
                 lifetime: 60,
             };
-            write_image(&dir, url, width, &image, 60);
+            assert!(write_image(&dir, url, width, &image, 60).is_some());
             let cached = read_image(&dir, url, width).unwrap();
             assert_eq!(cached.bytes, bytes);
             assert_eq!(cached.content_type, kind);
@@ -595,7 +596,7 @@ mod tests {
             assert_eq!(cached.revalidated_lifetime(Some("no-store")), None);
             assert!(cached.fresh);
             assert!(read_image(&dir, url, width + 1).is_none());
-            write_image(&dir, url, width, &image, 0);
+            assert!(write_image(&dir, url, width, &image, 0).is_some());
             let stale = read_image(&dir, url, width).unwrap();
             assert!(!stale.fresh);
             assert_eq!(stale.revalidated_lifetime(None), Some(0));
