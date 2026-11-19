@@ -58,3 +58,23 @@ test("catalog cards use the native progress owner and airdate for the same provi
   const unrelated = { ...catalog, imdbId: "tt2" };
   assert.deepEqual(nativeSeasonRows([catalog, unrelated], [native], 2), [native, unrelated]);
 });
+
+
+test("native provider owner is retained when a TVDB season displays mixed catalog entries", () => {
+  const { nativeSeasonOwnerId } = load();
+  const native = { page: "tt-example", season: 5, episodes: [{ sourceMetaId: "kitsu:44294" }, { sourceMetaId: "kitsu:44294" }] };
+  assert.equal(nativeSeasonOwnerId(native, "tt-example", 5), "kitsu:44294");
+  assert.equal(nativeSeasonOwnerId(native, "tt-example", 4), null, "stale previous season must not leak");
+  assert.equal(nativeSeasonOwnerId(native, "tt-other", 5), null, "another details page must not leak");
+});
+
+test("native owner selection works for a non-JoJo sequel and rejects ambiguous owners", () => {
+  const { nativeSeasonOwnerId } = load();
+  assert.equal(nativeSeasonOwnerId({ page: "tt-black-clover", season: 2, episodes: [
+    { sourceMetaId: "kitsu:50024" }, { sourceMetaId: "kitsu:50024" },
+  ] }, "tt-black-clover", 2), "kitsu:50024");
+  assert.equal(nativeSeasonOwnerId({ page: "tt-black-clover", season: 2, episodes: [
+    { sourceMetaId: "kitsu:13209" }, { sourceMetaId: "kitsu:50024" },
+  ] }, "tt-black-clover", 2), null);
+  assert.equal(nativeSeasonOwnerId({ page: "tt-black-clover", season: 2, episodes: [] }, "tt-black-clover", 2), null);
+});

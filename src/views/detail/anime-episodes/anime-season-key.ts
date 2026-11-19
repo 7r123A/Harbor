@@ -154,3 +154,24 @@ export function nativeSeasonRows(
     return native && (!ep.imdbId || !native.imdbId || ep.imdbId === native.imdbId) ? native : ep;
   });
 }
+
+
+/**
+ * Native rows are resolved for one specific provider season; do not use rows
+ * from the previously selected season while the next one is loading.
+ * This owner can be unambiguous even when the displayed TVDB rows mix entries.
+ */
+export function nativeSeasonOwnerId(
+  native: {
+    page: string;
+    season: number;
+    episodes: readonly Pick<KitsuEpisode, "sourceMetaId">[];
+  } | null,
+  page: string,
+  season: number | null,
+): string | null {
+  if (!native || native.page !== page || native.season !== season || !native.episodes.length)
+    return null;
+  const ids = new Set(native.episodes.map((ep) => ep.sourceMetaId).filter((id): id is string => !!id));
+  return ids.size === 1 ? [...ids][0] : null;
+}
