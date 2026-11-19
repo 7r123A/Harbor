@@ -81,6 +81,18 @@ function load({
       imdbToKitsu: async () => imdbKitsu,
       tmdbTvToKitsu: async () => tmdbKitsu,
     },
+    "@/lib/anilist/entry": {
+      anilistAnimeEntry: async (id: number, scheme: "mal" | "anilist") => {
+        const title = {
+          english:
+            "Magic Repo Man: Dumped by My Party, I'll Cash In With a Cute Support Fairy to Become the Strongest!",
+          romaji: "Kashita Maryoku wa [Revo Barai] de Kyousei Choushuu",
+        };
+        if ((scheme === "mal" && id === 62922) || (scheme === "anilist" && id === 202250))
+          return { id: 202250, idMal: 62922, type: "ANIME", title };
+        return null;
+      },
+    },
     "@/lib/providers/kitsu": {
       parseKitsuId: (id: string) => {
         const m = /^kitsu:(\d+)/.exec(id);
@@ -247,5 +259,29 @@ test("the Continue Watching card resolves titles for detected Cinemeta rows too"
   assert.match(
     src,
     /if \(!isAnimeCwItem\(item\) && getAnimeCwId\(item\._id\) == null && !sourceIdentity\) return;/,
+  );
+});
+
+test("a new anime with no AniZip or Kitsu entry uses the AniList English title", async () => {
+  const api = load();
+  assert.equal(
+    await api.resolvePreferredAnimeTitle("mal:62922", "english"),
+    "Magic Repo Man: Dumped by My Party, I'll Cash In With a Cute Support Fairy to Become the Strongest!",
+  );
+  assert.equal(
+    await api.resolvePreferredAnimeTitle("anilist:202250", "romaji"),
+    "Kashita Maryoku wa [Revo Barai] de Kyousei Choushuu",
+  );
+});
+
+test("a checkpoint mapped to Kitsu still recovers the AniList English title by native id", async () => {
+  const api = load({ checkpointKitsu: 50993 });
+  assert.equal(
+    await api.resolvePreferredAnimeTitle("mal:62922", "english", {
+      videoId: "mal:62922:1:6",
+      season: 1,
+      episode: 6,
+    }),
+    "Magic Repo Man: Dumped by My Party, I'll Cash In With a Cute Support Fairy to Become the Strongest!",
   );
 });
