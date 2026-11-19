@@ -4520,9 +4520,9 @@ html[data-scrolling] .harbor-shimmer::after {
   opacity: 1;
   transition: none;
 }
-.harbor-row-track[data-far] {
-  overflow-x: hidden;
-}
+/* Row tracks keep overflow-x: auto for their whole life. Toggling it while rows scroll in and
+   out of view made WebKit add a scrollbar mid-scroll, which crashes the macOS WebContent process
+   (null deref in ScrollAnimationMomentum::updateScrollExtents). */
 /* Discover mounts ~49 rows and shows one. Skipping the rest spares Blink their style, layout
    and paint until they are scrolled near; the auto keyword remembers each real height after
    its first pass, so the scrollbar settles instead of guessing forever. */
