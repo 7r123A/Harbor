@@ -160,7 +160,11 @@ pub fn cached_path(app: &tauri::AppHandle, url: &str, width: u32) -> Option<Stri
     let _lock = IO.lock().ok()?;
     cleanup_legacy(app);
     let dir = dir(app)?;
-    let db = database(&dir)?;
+    cached_file(&dir, url, width).map(|path| path.to_string_lossy().into_owned())
+}
+
+fn cached_file(dir: &Path, url: &str, width: u32) -> Option<PathBuf> {
+    let db = database(dir)?;
     let key = file_stem(url, width);
     let (file, expires, bytes) = db
         .query_row(
@@ -179,7 +183,7 @@ pub fn cached_path(app: &tauri::AppHandle, url: &str, width: u32) -> Option<Stri
     if expires <= now() {
         return None;
     }
-    let path = image_path(&dir, &file)?;
+    let path = image_path(dir, &file)?;
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     if extension == "img" || !path.is_file() {
         return None;
@@ -187,7 +191,14 @@ pub fn cached_path(app: &tauri::AppHandle, url: &str, width: u32) -> Option<Stri
     if std::fs::metadata(&path).ok()?.len() != bytes {
         return None;
     }
-    Some(path.to_string_lossy().into_owned())
+    // Warm posters are served from here, never through `read_image`, so record the
+    // access or pruning treats the most viewed artwork as unused. Hourly is precise
+    // enough for the 30-day and LRU eviction and keeps scrolling free of writes.
+    let _ = db.execute(
+        "UPDATE images SET accessed=?1 WHERE key=?2 AND accessed<?3",
+        params![now(), key, now().saturating_sub(3600)],
+    );
+    Some(path)
 }
 
 fn checksum(bytes: &[u8]) -> String {
@@ -608,6 +619,50 @@ mod tests {
             .unwrap();
         std::fs::write(image_path(&dir, &file).unwrap(), b"corrupt!").unwrap();
         assert!(read_image(&dir, "https://example.com/a.png", 400).is_none());
+        drop(db);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn serving_a_cached_path_records_the_access() {
+        let dir = std::env::temp_dir().join(format!(
+            "harbor-image-cache-access-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let url = "https://example.com/poster.jpg";
+        let image = CachedImage {
+            bytes: b"\xff\xd8\xff\xe0jpeg".to_vec(),
+            content_type: "image/jpeg".to_string(),
+            etag: None,
+            modified: None,
+            fresh: true,
+            max_age: 60,
+            lifetime: 60,
+        };
+        write_image(&dir, url, 300, &image, 60);
+        let key = file_stem(url, 300);
+        let accessed = |db: &Connection| {
+            db.query_row("SELECT accessed FROM images WHERE key=?1", [&key], |row| {
+                row.get::<_, u64>(0)
+            })
+            .unwrap()
+        };
+        let db = database(&dir).unwrap();
+        let old = now().saturating_sub(MAX_AGE + 1);
+        db.execute("UPDATE images SET accessed=?1 WHERE key=?2", params![old, &key])
+            .unwrap();
+        assert!(cached_file(&dir, url, 300).is_some_and(|path| path.is_file()));
+        assert!(accessed(&db) >= now().saturating_sub(5));
+
+        let recent = now().saturating_sub(60);
+        db.execute("UPDATE images SET accessed=?1 WHERE key=?2", params![recent, &key])
+            .unwrap();
+        assert!(cached_file(&dir, url, 300).is_some());
+        assert_eq!(accessed(&db), recent, "recent accesses are not rewritten");
         drop(db);
         std::fs::remove_dir_all(dir).unwrap();
     }
