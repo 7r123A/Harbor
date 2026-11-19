@@ -36,6 +36,7 @@ export type IdentityCardHint = {
   title: string | null;
   mediaType: string | null;
   cardKey: string | null;
+  windows?: IdentityWindow[];
   tvdb: number | null;
   tmdb: number | null;
   season: number | null;
@@ -60,3 +61,13 @@ export type IdentityFlags = {
 };
 
 export const IDENTITY_FLAG_DEFAULTS: IdentityFlags = { pack: false, shadow: false, cards: false };
+
+export type IdentityWindowOwner = {
+  entry: number;
+  title: string | null;
+  mediaType: string | null;
+  tvdb: number | null;
+  tmdb: number | null;
+  season: number | null;
+  offset: number | null;
+};

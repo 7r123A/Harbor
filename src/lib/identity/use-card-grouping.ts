@@ -8,22 +8,32 @@ import {
   subscribeIdentityCards,
   warmIdentityCards,
 } from "./card-grouping";
+import {
+  identityMisKeyVersion,
+  isIdentityMisKeyRetired,
+  subscribeIdentityMisKey,
+  warmIdentityMisKey,
+} from "./mis-key";
 
 type CardRow = {
   _id: string;
-  state?: { lastWatched?: string };
+  state?: { season?: number; lastWatched?: string };
   _mtime?: string | number;
   cwMembers?: unknown;
 };
 
 /**
- * Display-side card grouping. Flag off → returns the input untouched. With the
- * flag on, rows are warmed asynchronously and the list re-renders once their
- * provider-show card keys are known.
+ * Display-side card grouping + mis-key filtering. Flag off → input untouched.
+ * With the flag on, rows are warmed asynchronously; one re-render follows when
+ * card keys or retirement decisions are known.
  */
 export function useIdentityCardGrouping<T extends CardRow>(items: T[]): T[] {
-  const [version, setVersion] = useState(() => identityCardsVersion());
-  useEffect(() => subscribeIdentityCards(() => setVersion(identityCardsVersion())), []);
+  const [cardsVersion, setCardsVersion] = useState(() => identityCardsVersion());
+  const [misKeyVersion, setMisKeyVersion] = useState(() => identityMisKeyVersion());
+
+  useEffect(() => subscribeIdentityCards(() => setCardsVersion(identityCardsVersion())), []);
+  useEffect(() => subscribeIdentityMisKey(() => setMisKeyVersion(identityMisKeyVersion())), []);
+
   useEffect(() => {
     if (!identityFlags().cards) return;
     const probes = (rowId: string) => {
@@ -33,7 +43,11 @@ export function useIdentityCardGrouping<T extends CardRow>(items: T[]): T[] {
       return ids;
     };
     void warmIdentityCards(items, probes).catch(() => {});
+    void warmIdentityMisKey(items, probes).catch(() => {});
   }, [items]);
-  void version;
-  return useMemo(() => groupCwCards(items), [items, version]);
+
+  return useMemo(
+    () => groupCwCards(items.filter((item) => !isIdentityMisKeyRetired(item._id))),
+    [items, cardsVersion, misKeyVersion],
+  );
 }

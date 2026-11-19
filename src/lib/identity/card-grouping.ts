@@ -1,4 +1,6 @@
+import { fetchCardHints } from "./hints";
 import { identityEnabled, identityFlags } from "./flags";
+import type { IdentityCardHint } from "./types";
 
 type CardRow = {
   _id: string;
@@ -38,11 +40,20 @@ export function clearIdentityCardCache(): void {
   notify();
 }
 
+export function identityCardsVersion(): number {
+  return version;
+}
+
 function activity(row: CardRow): number {
   const watched = Date.parse(row.state?.lastWatched ?? "");
   if (Number.isFinite(watched)) return watched;
   const mtime = typeof row._mtime === "number" ? row._mtime : Date.parse(String(row._mtime ?? ""));
   return Number.isFinite(mtime) ? mtime : 0;
+}
+
+function seriesCardKey(hint: IdentityCardHint | undefined): string | null {
+  if (!hint || hint.provisional || !hint.cardKey) return null;
+  return hint.mediaType === "TV" || hint.mediaType === "ONA" ? hint.cardKey : null;
 }
 
 /**
@@ -66,20 +77,15 @@ export async function warmIdentityCards(
   }
   if (probes.size === 0) return false;
 
-  const hints = await identityCardHints([...probes]);
+  const hints = await fetchCardHints([...probes]);
   if (!hints) return false;
   const byId = new Map(hints.map((hint) => [hint.id, hint]));
   let changed = false;
   for (const row of rows) {
     let key: string | null = null;
     for (const probe of probesByRow.get(row._id) ?? []) {
-      const hint = byId.get(probe);
-      if (!hint || hint.provisional || !hint.cardKey) continue;
-      // Only series-like entries share a card; movies/specials keep their own.
-      const seriesLike = hint.mediaType === "TV" || hint.mediaType === "ONA";
-      if (!seriesLike) continue;
-      key = hint.cardKey;
-      break;
+      key = seriesCardKey(byId.get(probe));
+      if (key) break;
     }
     const previous = cardCache.get(row._id);
     if (!previous || previous.key !== key) {
@@ -94,7 +100,7 @@ export async function warmIdentityCards(
 /**
  * Merge rows that resolve to the same provider-show card. The representative is
  * the member with the most recent real activity; the other members ride along
- * in `cwMembers` so dismissal/cleanup can cover them later.
+ * in `cwMembers` so dismissal/cleanup can cover them.
  */
 export function groupCwCards<T extends CardRow>(items: T[]): T[] {
   if (!identityFlags().cards) return items;
@@ -134,16 +140,4 @@ export function groupCwCards<T extends CardRow>(items: T[]): T[] {
     output.push({ ...representative, cwMembers: members } as T);
   }
   return merged ? output : items;
-}
-
-export function identityCardsVersion(): number {
-  return version;
-}
-
-// Kept here to avoid a cycle: index exports the command wrapper.
-import type { IdentityCardHint } from "./types";
-import { invokeIdentity } from "./client";
-
-async function identityCardHints(ids: string[]): Promise<IdentityCardHint[] | null> {
-  return invokeIdentity<IdentityCardHint[]>("identity_card_hints", { ids });
 }

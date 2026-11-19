@@ -1379,6 +1379,7 @@ pub fn run() {
             identity::commands::identity_lookup_batch,
             identity::commands::identity_entry_bundle,
             identity::commands::identity_card_hints,
+            identity::commands::identity_window_owners,
             #[cfg(feature = "games")]
             games::games_pokemon,
             #[cfg(feature = "games")]

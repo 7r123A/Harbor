@@ -325,6 +325,7 @@ pub struct CardHint {
     pub title: Option<String>,
     pub media_type: Option<String>,
     pub card_key: Option<String>,
+    pub windows: Vec<WindowRef>,
     pub tvdb: Option<i64>,
     pub tmdb: Option<i64>,
     pub season: Option<i64>,
@@ -367,6 +368,7 @@ pub fn identity_card_hints(
                     title: None,
                     media_type: None,
                     card_key: None,
+                    windows: Vec::new(),
                     tvdb: None,
                     tmdb: None,
                     season: None,
@@ -382,6 +384,7 @@ pub fn identity_card_hints(
                     title: None,
                     media_type: None,
                     card_key: None,
+                    windows: Vec::new(),
                     tvdb: None,
                     tmdb: None,
                     season: None,
@@ -406,6 +409,7 @@ pub fn identity_card_hints(
                     title: None,
                     media_type: None,
                     card_key: None,
+                    windows: Vec::new(),
                     tvdb: None,
                     tmdb: None,
                     season: None,
@@ -433,12 +437,34 @@ pub fn identity_card_hints(
                 (None, Some(tmdb)) => Some(format!("tmdb:tv:{tmdb}")),
                 _ => None,
             };
+            let mut windows_stmt = conn
+                .prepare(
+                    "SELECT anidb, tvdb, tmdbtv, tvdb_season, tvdb_offset, tmdb_season, tmdb_offset
+                     FROM windows WHERE entry = ?1",
+                )
+                .map_err(|error| format!("identity cards: windows: {error}"))?;
+            let windows = windows_stmt
+                .query_map(params![entry], |row| {
+                    Ok(WindowRef {
+                        anidb: row.get(0)?,
+                        tvdb: row.get(1)?,
+                        tmdbtv: row.get(2)?,
+                        tvdb_season: row.get(3)?,
+                        tvdb_offset: row.get(4)?,
+                        tmdb_season: row.get(5)?,
+                        tmdb_offset: row.get(6)?,
+                    })
+                })
+                .map_err(|error| format!("identity cards: windows query: {error}"))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("identity cards: windows rows: {error}"))?;
             out.push(CardHint {
                 id: raw,
                 entry: Some(entry),
                 title,
                 media_type,
                 card_key,
+                windows,
                 tvdb,
                 tmdb,
                 season,
@@ -447,5 +473,56 @@ pub fn identity_card_hints(
             });
         }
         Ok(out)
+    })
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowOwner {
+    pub entry: i64,
+    pub title: Option<String>,
+    pub media_type: Option<String>,
+    pub tvdb: Option<i64>,
+    pub tmdb: Option<i64>,
+    pub season: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+/// Which work entries own a provider show/season. Used to prove that a row's
+/// checkpoint belongs to another anime entry before retiring/re-keying it.
+#[tauri::command]
+pub fn identity_window_owners(
+    app: AppHandle,
+    state: State<'_, IdentityState>,
+    tvdb: Option<i64>,
+    tmdb: Option<i64>,
+    season: i64,
+) -> Result<Vec<WindowOwner>, String> {
+    db::with_conn(&app, &*state, |conn| {
+        let mut stmt = conn
+            .prepare(
+                "SELECT w.entry, e.title, e.type, w.tvdb, w.tmdbtv, w.tvdb_season, w.tvdb_offset
+                 FROM windows w
+                 LEFT JOIN entries e ON e.entry = w.entry
+                 WHERE ((?1 IS NOT NULL AND w.tvdb = ?1) OR (?2 IS NOT NULL AND w.tmdbtv = ?2))
+                   AND ((?3 IS NOT NULL AND w.tvdb_season = ?3) OR (w.tmdb_season = ?3))
+                 ORDER BY w.entry",
+            )
+            .map_err(|error| format!("identity owners: prepare: {error}"))?;
+        let rows = stmt
+            .query_map(params![tvdb, tmdb, season], |row| {
+                Ok(WindowOwner {
+                    entry: row.get(0)?,
+                    title: row.get(1)?,
+                    media_type: row.get(2)?,
+                    tvdb: row.get(3)?,
+                    tmdb: row.get(4)?,
+                    season: row.get(5)?,
+                    offset: row.get(6)?,
+                })
+            })
+            .map_err(|error| format!("identity owners: query: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("identity owners: rows: {error}"))?;
+        Ok(rows)
     })
 }
