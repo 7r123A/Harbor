@@ -2,7 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getPlaybackPosition, usePlaybackPosition } from "@/lib/player/playback-clock";
 import { SkipPill } from "@/components/player/skip-pill";
 import { BpSkipPill } from "@/views/big-picture/player/bp-skip-pill";
-import { activeSegment, resolveSkipPillProgress, resolveSkipPillWindowMs, resolveSkipPillWindowProgress, type SkipSegment } from "@/lib/skip-intro";
+import {
+  activeSegment,
+  resolveSkipPillProgress,
+  resolveSkipPillWindowMs,
+  resolveSkipPillWindowProgress,
+  type SkipSegment,
+} from "@/lib/skip-intro";
 import { useSettings } from "@/lib/settings";
 import type { SpoilerMask } from "@/lib/spoilers";
 import type { PlayEpisode } from "@/lib/view";

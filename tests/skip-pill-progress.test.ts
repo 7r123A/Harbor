@@ -33,7 +33,10 @@ test("resuming mid-intro starts a fresh line instead of a partial one", () => {
 
 test("the auto-hide window is a real-time duration capped by the segment", () => {
   assert.equal(resolveSkipPillWindowMs({ segment: SEGMENT, appearedAtSec: 12, hideSec: 0 }), 0);
-  assert.equal(resolveSkipPillWindowMs({ segment: SEGMENT, appearedAtSec: 12, hideSec: 10 }), 10000);
+  assert.equal(
+    resolveSkipPillWindowMs({ segment: SEGMENT, appearedAtSec: 12, hideSec: 10 }),
+    10000,
+  );
   // Only three seconds of the segment are left, so the pill cannot outlive it.
   assert.equal(resolveSkipPillWindowMs({ segment: SEGMENT, appearedAtSec: 89, hideSec: 10 }), 2250);
   assert.equal(resolveSkipPillWindowMs({ segment: SEGMENT, appearedAtSec: 95, hideSec: 10 }), 0);
