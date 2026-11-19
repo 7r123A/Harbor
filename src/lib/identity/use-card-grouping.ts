@@ -8,12 +8,6 @@ import {
   subscribeIdentityCards,
   warmIdentityCards,
 } from "./card-grouping";
-import {
-  identityMisKeyVersion,
-  isIdentityMisKeyRetired,
-  subscribeIdentityMisKey,
-  warmIdentityMisKey,
-} from "./mis-key";
 
 type CardRow = {
   _id: string;
@@ -23,17 +17,21 @@ type CardRow = {
 };
 
 /**
- * Display-side card grouping + mis-key filtering. Flag off → input untouched.
- * With the flag on, rows are warmed asynchronously; one re-render follows when
- * card keys or retirement decisions are known.
+ * Display-side card grouping. Flag off → input untouched. With the flag on,
+ * rows are warmed asynchronously; one re-render follows when card keys are
+ * known.
+ *
+ * Mis-key retirement is intentionally not applied here. Season ownership from
+ * Anime-Lists is not a safe proof by itself: catalog season numbers often differ
+ * from provider seasons (Black Clover, BLEACH, Gintama), and retiring a row
+ * would hide a valid card. Duplicate stale rows are already collapsed by card
+ * grouping; a real re-key belongs in the tracker/import layer instead.
  */
 export function useIdentityCardGrouping<T extends CardRow>(items: T[]): T[] {
   const [cardsVersion, setCardsVersion] = useState(() => identityCardsVersion());
-  const [misKeyVersion, setMisKeyVersion] = useState(() => identityMisKeyVersion());
   const [aliasVersion, setAliasVersion] = useState(() => animeCwIdsVersion());
 
   useEffect(() => subscribeIdentityCards(() => setCardsVersion(identityCardsVersion())), []);
-  useEffect(() => subscribeIdentityMisKey(() => setMisKeyVersion(identityMisKeyVersion())), []);
   useEffect(() => subscribeAnimeCwIds(() => setAliasVersion(animeCwIdsVersion())), []);
 
   useEffect(() => {
@@ -45,11 +43,7 @@ export function useIdentityCardGrouping<T extends CardRow>(items: T[]): T[] {
       return ids;
     };
     void warmIdentityCards(items, probes).catch(() => {});
-    void warmIdentityMisKey(items, probes).catch(() => {});
   }, [items, aliasVersion]);
 
-  return useMemo(
-    () => groupCwCards(items.filter((item) => !isIdentityMisKeyRetired(item._id))),
-    [items, cardsVersion, misKeyVersion, aliasVersion],
-  );
+  return useMemo(() => groupCwCards(items), [items, cardsVersion, aliasVersion]);
 }
