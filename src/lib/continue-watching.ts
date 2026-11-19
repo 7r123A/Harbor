@@ -11,6 +11,7 @@ import {
 import { animeCwIdsVersion, subscribeAnimeCwIds } from "@/lib/anime-cw-ids";
 import { dedupeAnimeCw, warmCwAnimeIdentities } from "@/lib/cw-anime-identity";
 import { sortCwFinal } from "@/lib/cw-order";
+import { reconcileCompletedMovies, movieCompletionAliasWarmRows } from "@/lib/cw-movie-completion";
 import { isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import { setExternalCwSources } from "@/lib/feed/external-cw";
 import { useExternalCw } from "@/lib/feed/external-cw";
@@ -203,6 +204,18 @@ export function useContinueWatching(excludeId?: string, limit = 12): CwCard[] {
 
   useEffect(() => subscribeLocalCw(() => setLocalVersion((v) => v + 1)), []);
 
+  useEffect(() => {
+    if (isNuvioProvider) return;
+    const libraryMovies = !hideSharedCw && cwSources.library
+      ? items.filter((i) => !ANIME_CLOUD_ID.test(i._id)) : [];
+    const localMovies = listLocalCwMerged(hideSharedCw)
+      .filter((entry) => localCwSourceEnabled(entry, cwSources))
+      .map(localToLibraryItem);
+    const candidates = movieCompletionAliasWarmRows([...libraryMovies, ...localMovies]);
+    if (candidates.length > 0)
+      void warmCwAnimeIdentities(candidates, { tmdbKey: settings.tmdbKey }).catch(() => {});
+  }, [items, localVersion, hideSharedCw, isNuvioProvider, cwSources, settings.tmdbKey, activeProfile?.id]);
+
   const cards = useMemo(() => {
     void localVersion;
     void animeIdsVersion;
@@ -239,7 +252,8 @@ export function useContinueWatching(excludeId?: string, limit = 12): CwCard[] {
     const local = listLocalCwMerged(hideSharedCw).filter((e) =>
       isNuvio ? false : localCwSourceEnabled(e, cwSources),
     );
-    const merged = [...base, ...local.map(localToLibraryItem)]
+    const pool = isNuvio ? base : [...base, ...local.map(localToLibraryItem)];
+    const merged = reconcileCompletedMovies(pool).rows
       .filter((i) => {
         if ((i.type as string) === "other" || i._id.startsWith("iptv:")) return false;
         if (!isCwMember(i)) return false;

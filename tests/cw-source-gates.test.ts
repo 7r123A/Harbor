@@ -71,6 +71,10 @@ function harness(bigPicture: boolean, sources: any, privateProfile = false) {
       useCwDismissVersion: () => 0,
     },
     "@/lib/anime-cw-ids": { animeCwIdsVersion: () => 0, subscribeAnimeCwIds: () => noop },
+    "@/lib/cw-movie-completion": {
+      reconcileCompletedMovies: (rows: any[]) => ({ rows, suppressed: [], completions: [] }),
+      movieCompletionAliasWarmRows: () => [],
+    },
     "@/lib/cw-anime-identity": {
       dedupeAnimeCw: (items: any[]) =>
         items.reduce((out: any[], next: any) => {

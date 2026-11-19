@@ -473,7 +473,8 @@ async function warmOne(item: CwIdentityItem, tmdbKey = ""): Promise<void> {
 
 const MOVIE_ID = /^(?:tt\d+|tmdb:movie:[1-9]\d*)$/;
 
-function movieIds(item: CwIdentityItem): string[] {
+/** Verified movie IDs and warmed cross-catalog aliases; never derives identity from title. */
+export function movieIdentityIds(item: CwIdentityItem): string[] {
   const id = item._id ?? item.id ?? "";
   if (item.type !== "movie" || item.isAnime || !MOVIE_ID.test(id)) return [];
   const cached = warmCache.get(`movie:${id}`);
@@ -486,6 +487,8 @@ function movieIds(item: CwIdentityItem): string[] {
     ),
   ];
 }
+
+const movieIds = movieIdentityIds;
 
 async function warmMovie(item: CwIdentityItem, tmdbKey: string): Promise<void> {
   const id = item._id ?? item.id ?? "";

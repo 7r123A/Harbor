@@ -86,6 +86,7 @@ import {
   warmCwAnimeIdentities,
 } from "@/lib/cw-anime-identity";
 import { sortCwFinal } from "@/lib/cw-order";
+import { reconcileCompletedMovies, movieCompletionAliasWarmRows } from "@/lib/cw-movie-completion";
 import { cwCacheOwnerKey } from "@/lib/cw-derived-caches";
 import {
   cwAnimeVersion,
@@ -772,6 +773,20 @@ export function Home({
         local: true,
       }));
   }, [localCwVer, hideSharedCw, activeProfile?.id, isNuvioProvider, settings.cwSources]);
+  // Warm only potential completed/incomplete movie pairs. Matching titles are
+  // discovery hints, NEVER proof; suppression needs verified IMDb/TMDB aliases.
+  useEffect(() => {
+    if (isNuvioProvider) return;
+    const pool = [
+      ...(!hideSharedCw && settings.cwSources.library
+        ? items.filter((i) => !ANIME_CLOUD_ID.test(i._id)) : []),
+      ...localCwItems.filter((i) => i.external !== "nuvio"),
+    ];
+    const candidates = movieCompletionAliasWarmRows(pool);
+    if (candidates.length > 0)
+      void warmCwAnimeIdentities(candidates, { tmdbKey: settings.tmdbKey }).catch(() => {});
+  }, [items, localCwItems, hideSharedCw, isNuvioProvider, settings.cwSources.library, settings.tmdbKey]);
+
   const continueWatching = useMemo(() => {
     const disabledSources = new Set<string>();
     if (!settings.cwSources.simkl) disabledSources.add("simkl");
@@ -801,9 +816,13 @@ export function Home({
             ...(settings.cwSources.library ? items.filter((i) => !ANIME_CLOUD_ID.test(i._id)) : []),
             ...externalAllowed.filter((i) => i.external !== "nuvio"),
           ];
-    const eligible = (
-      isNuvioProvider ? cwBase : [...cwBase, ...localCwItems.filter((i) => i.external !== "nuvio")]
-    )
+    // A finished movie must remain in the source pool long enough to veto an
+    // OLDER incomplete checkpoint (including one under a verified IMDb/TMDB
+    // alias). isCwMember discards finished movies, so reconcile BEFORE it.
+    const cwPool = isNuvioProvider
+      ? cwBase
+      : [...cwBase, ...localCwItems.filter((i) => i.external !== "nuvio")];
+    const eligible = reconcileCompletedMovies(cwPool).rows
       .filter(
         (i) =>
           (i.type as string) !== "other" &&
