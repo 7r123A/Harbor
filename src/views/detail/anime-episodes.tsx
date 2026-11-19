@@ -53,6 +53,8 @@ import { franchiseRoot, franchiseRootSync } from "@/lib/providers/anime-franchis
 import { splitFranchiseDisplaySeason } from "@/lib/streams/anime-identity-core";
 import { useAnimeWatchedRouting } from "./anime-episodes/use-anime-watched-routing";
 import { useAnimeFranchiseNav } from "./anime-episodes/use-anime-franchise-nav";
+import { canonicalSeasonOwnerId } from "./anime-episodes/anime-season-key";
+import { resolveTrackerAnimeEntry } from "@/lib/anime-tracker-entry";
 import { useTvdbProxyImages } from "./anime-episodes/use-tvdb-proxy-images";
 import { pickTvdbImage } from "@/lib/providers/tvdb-proxy";
 import {
@@ -343,6 +345,32 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
     () => mapSeasonToEntry(tvdbActiveSeason, franchise, currentId),
     [tvdbActiveSeason, franchise, currentId],
   );
+  const seasonHint = useMemo(() => {
+    const pool = tvdbPanel.panel?.visibleEpisodes ?? effectiveOrder?.visibleEpisodes ?? episodes;
+    for (const episode of pool) {
+      const season = episode.imdbSeason ?? episode.seasonNumber;
+      if (season != null && season > 0) return season;
+    }
+    return null;
+  }, [tvdbPanel.panel?.visibleEpisodes, effectiveOrder?.visibleEpisodes, episodes]);
+  // A catalog/franchise umbrella can render the same cour as the native entry
+  // with a different provider season and a different episode list. Once the
+  // displayed season has a canonical owner, use that entry's episodes so the
+  // metadata, ratings and watched projection all come from the same work.
+  useEffect(() => {
+    if (seasonHint == null || activeEntryId !== currentId) return;
+    let cancelled = false;
+    void resolveTrackerAnimeEntry(meta.id, { season: seasonHint, episode: 1 })
+      .then((resolved) => {
+        if (cancelled || !resolved) return;
+        const owner = canonicalSeasonOwnerId(currentId, seasonHint, resolved.id, franchiseEpisodes);
+        if (owner) setActiveEntryId(owner);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [meta.id, seasonHint, activeEntryId, currentId, franchiseEpisodes]);
   // The matched franchise entry's episodes carry their TMDB season number (AniZip), which selects
   // the right localized per-season overview so the hero changes per season instead of staying static.
   const seasonOverview = useMemo(() => {

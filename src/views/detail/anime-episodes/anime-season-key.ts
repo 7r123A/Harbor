@@ -4,6 +4,25 @@ import { parseKitsuId } from "@/lib/providers/kitsu";
 import { splitFranchiseDisplaySeason } from "@/lib/streams/anime-identity-core";
 import type { EpisodeDetailPlayback, PlayEpisode } from "@/lib/view";
 
+/**
+ * The native entry that canonically owns a displayed provider season.
+ *
+ * A catalog/umbrella page can show the same cour under a provider season while
+ * the native entry owns it under entry-relative numbering. Switching to the
+ * owner makes metadata, ratings and watched progress come from one work. Only
+ * switch when that owner already supplies episodes in the loaded pool.
+ */
+export function canonicalSeasonOwnerId(
+  currentId: string,
+  season: number | null,
+  resolvedOwnerId: string | null,
+  pool: Array<Pick<KitsuEpisode, "sourceMetaId">>,
+): string | null {
+  if (season == null || !Number.isInteger(season) || season < 1) return null;
+  if (!resolvedOwnerId || resolvedOwnerId === currentId) return null;
+  return pool.some((episode) => episode.sourceMetaId === resolvedOwnerId) ? resolvedOwnerId : null;
+}
+
 export function animeSeasonKey(ep: KitsuEpisode): number {
   if (ep.imdbSeason === 0) return 0;
   return ep.id < 0 ? (ep.imdbSeason ?? ep.seasonNumber ?? 1) : (ep.seasonNumber ?? 1);
