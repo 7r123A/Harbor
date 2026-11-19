@@ -5,7 +5,10 @@ import {
   MoonshineUnavailableError,
   matchPlaybackSpeech,
 } from "../src/lib/subtitles/autosync/playback-asr.ts";
-import { playbackSyncCorrection } from "../src/views/player/hooks/use-auto-sync.helpers.ts";
+import {
+  offsetTransform,
+  playbackSyncCorrection,
+} from "../src/views/player/hooks/use-auto-sync.helpers.ts";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const hook = read("src/views/player/hooks/use-auto-sync.ts");
@@ -131,12 +134,52 @@ test("Moonshine reports when it could not run at all, apart from a failed compar
 });
 
 test("an applied offer always reaches its delay, even after a session restore", () => {
-  // A tiny shift is skipped only while the delay on screen is still its baseline. A resumed
-  // session can restore an older delay, and skipping would leave that delay in place.
+  // A tiny shift is skipped only while the delay on screen is already its target. A resumed
+  // session or a nudge can leave another delay on screen, and skipping would keep it.
   assert.match(
     hook,
-    /Math\.abs\(t\.offsetSec\) < OFFSET_EPS &&\s*!a\.transform &&\s*Math\.abs\(liveSnapRef\.current\.subDelaySec - a\.subDelayBefore\) < OFFSET_EPS\s*\)\s*return true;[\s\S]{0,400}?b\.setSubDelay\(a\.subDelayBefore \+ t\.offsetSec\);/,
+    /const targetDelaySec = a\.subDelayBefore \+ t\.offsetSec;[\s\S]{0,300}?Math\.abs\(t\.offsetSec\) < OFFSET_EPS &&\s*!a\.transform &&\s*Math\.abs\(liveSnapRef\.current\.subDelaySec - targetDelaySec\) < OFFSET_EPS\s*\)\s*return true;[\s\S]{0,400}?b\.setSubDelay\(a\.subDelayBefore \+ t\.offsetSec\);/,
   );
+});
+
+test("a refined generated track keeps its rewrite in the saved correction", () => {
+  assert.deepEqual(offsetTransform({ kind: "affine", offsetSec: 1, ratio: 1.001 }, 0.5), {
+    kind: "affine",
+    offsetSec: 1.5,
+    ratio: 1.001,
+  });
+  assert.deepEqual(
+    offsetTransform(
+      {
+        kind: "piecewise",
+        segments: [
+          { fromSec: 0, toSec: 600, offsetSec: 2, ratio: 1 },
+          { fromSec: 600, toSec: Infinity, offsetSec: 3, ratio: 1.0005 },
+        ],
+      },
+      -0.4,
+    ),
+    {
+      kind: "piecewise",
+      segments: [
+        { fromSec: 0, toSec: 600, offsetSec: 1.6, ratio: 1 },
+        { fromSec: 600, toSec: Infinity, offsetSec: 2.6, ratio: 1.0005 },
+      ],
+    },
+  );
+  // The delay refinement is folded into the rewrite, replacing an earlier refinement, and the
+  // saved correction uses the rewrite with the original cues.
+  assert.match(
+    hook,
+    /a\.transform = offsetTransform\(a\.transform, t\.offsetSec - \(a\.refinementSec \?\? 0\)\);\s*a\.refinementSec = t\.offsetSec;/,
+  );
+  assert.match(hook, /a\.sourceCues = cues;\s*a\.refinementSec = 0;/);
+  assert.match(
+    hook,
+    /persistAppliedCorrection\(\s*rewritten\?\.sourceCues \?\? cues,\s*rewritten\?\.transform \?\? t,/,
+  );
+  // A nudge keeps the refinement out of the viewer's saved baseline.
+  assert.match(hook, /: value - \(applied\.refinementSec \?\? 0\);/);
 });
 
 test("Sync from playback measures from the viewer's current baseline", () => {
@@ -173,6 +216,13 @@ test("Sync from playback explains a track it cannot sync, on every request", () 
     listenHead,
     /if \(refusal\) \{[^}]*setMoonshineModelLanguage\(null\);[^}]*setStatus\("error"\);\s*return;/,
   );
+});
+
+test("a refused request never marks the track as handled", () => {
+  // Auto sync skips a track and audio marked as done, so only an accepted request may mark it.
+  const doneAt = listenHead.indexOf("doneKeyRef.current = autoSyncRunKey(");
+  assert.ok(doneAt > listenHead.indexOf("if (refusal) {"));
+  assert.equal(listenHead.split("doneKeyRef.current =").length - 1, 1);
 });
 
 test("Sync from playback ends the Live sync hold only when it runs", () => {

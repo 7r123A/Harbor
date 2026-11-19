@@ -104,6 +104,7 @@ import {
   isLoopback,
   liveSyncFailureReason,
   outcomeScore,
+  offsetTransform,
   playbackSyncCorrection,
   shouldFallbackToPlayback,
   shouldAttemptAudioPivot,
@@ -158,6 +159,10 @@ type AppliedState = {
   savedCorrectionId?: string | null;
   /** Only this exact generated track may inherit a rewritten correction. */
   generatedTrackPath?: string | null;
+  /** The original cues a rewritten correction was generated from. */
+  sourceCues?: SubCue[] | null;
+  /** A delay refinement added on top of a rewritten correction, already in `transform`. */
+  refinementSec?: number;
 };
 type AutoSyncFlags = { autoSyncDrift?: boolean };
 
@@ -511,7 +516,7 @@ export function useAutoSync(params: {
         }
         const baseline = isDelayOnlyTransform(applied.transform)
           ? value - applied.transform.offsetSec
-          : value;
+          : value - (applied.refinementSec ?? 0);
         applied.subDelayBefore = baseline;
         return baseline;
       }),
@@ -566,12 +571,13 @@ export function useAutoSync(params: {
       if (!isCurrent()) return false;
       const a = appliedRef.current;
       if (t.kind === "affine" && isDelayOnlyTransform(t)) {
-        // An imperceptible shift needs no change only while the delay on screen is still the
-        // baseline it composes onto. A delay restored from the last session may not be.
+        const targetDelaySec = a.subDelayBefore + t.offsetSec;
+        // An imperceptible shift needs no change only while the delay on screen is already its
+        // target. A delay restored from the last session, or a nudge, may not be.
         if (
           Math.abs(t.offsetSec) < OFFSET_EPS &&
           !a.transform &&
-          Math.abs(liveSnapRef.current.subDelaySec - a.subDelayBefore) < OFFSET_EPS
+          Math.abs(liveSnapRef.current.subDelaySec - targetDelaySec) < OFFSET_EPS
         )
           return true;
         if (!isCurrent()) return false;
@@ -581,7 +587,14 @@ export function useAutoSync(params: {
         b.setSubDelay(a.subDelayBefore + t.offsetSec);
         a.changed = true;
         if (!isCurrent()) return false;
-        a.transform = t;
+        if (a.transform && !isDelayOnlyTransform(a.transform)) {
+          // A refinement of this scope's generated track keeps its rewrite: the saved
+          // correction must restore the rewrite and the refinement together.
+          a.transform = offsetTransform(a.transform, t.offsetSec - (a.refinementSec ?? 0));
+          a.refinementSec = t.offsetSec;
+        } else {
+          a.transform = t;
+        }
         return true;
       }
       if (fmt === "ass" || fmt === "ssa") {
@@ -606,6 +619,8 @@ export function useAutoSync(params: {
       if (!isCurrent()) return false;
       a.changed = true;
       a.transform = t;
+      a.sourceCues = cues;
+      a.refinementSec = 0;
       return true;
     },
     [],
@@ -1652,7 +1667,18 @@ export function useAutoSync(params: {
               ? "Timing was adjusted to match the embedded subtitle, not verified against spoken dialogue."
               : null,
         );
-        if (!embeddedPlayback) persistAppliedCorrection(cues, t, o.decision.bindingRule);
+        if (!embeddedPlayback) {
+          // A refined generated track is saved as its rewrite plus the refinement, against the
+          // original cues it was generated from.
+          const a = appliedRef.current;
+          const rewritten =
+            a.transform && !isDelayOnlyTransform(a.transform) && a.sourceCues ? a : null;
+          persistAppliedCorrection(
+            rewritten?.sourceCues ?? cues,
+            rewritten?.transform ?? t,
+            o.decision.bindingRule,
+          );
+        }
         setStatus(
           referenceOnly
             ? "matched-embedded"
@@ -1732,7 +1758,6 @@ export function useAutoSync(params: {
           audioKey: audioSelectionKey(liveSnap),
         };
         statusScopeRef.current = scope;
-        doneKeyRef.current = autoSyncRunKey(scope.mediaKey, selectedTrack.id, scope.audioKey);
         appliedRef.current = {
           transform: null,
           originalTrackId: selectedTrack.id,
@@ -1759,6 +1784,9 @@ export function useAutoSync(params: {
         setStatus("error");
         return;
       }
+      // Only an accepted request marks this track and audio as handled; a refusal must not stop
+      // Auto sync from starting once the video becomes eligible.
+      doneKeyRef.current = autoSyncRunKey(scope.mediaKey, scope.trackId, scope.audioKey);
       // Manual timing only holds off *automatic* work. Syncing from playback is the viewer's
       // own request, so like a forced Auto sync run it takes timing back; otherwise it would
       // do nothing at all for the rest of the video once Live sync had been used.

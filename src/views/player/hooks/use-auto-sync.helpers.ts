@@ -7,7 +7,11 @@ import type {
   PipelineOutcome,
   SourceKind,
 } from "@/lib/subtitles/autosync/pipeline";
-import { outcomeRank, type SubtitleFormat } from "@/lib/subtitles/autosync/fp-gate";
+import {
+  outcomeRank,
+  type SubtitleFormat,
+  type SyncTransform,
+} from "@/lib/subtitles/autosync/fp-gate";
 import type { DriftPlayerState } from "@/lib/subtitles/autosync/drift-monitor";
 import { normalizeLang } from "@/lib/subtitles/language";
 
@@ -115,6 +119,13 @@ export function playbackSyncCorrection(input: {
   const current = Number.isFinite(input.currentDelaySec) ? input.currentDelaySec : baseline;
   if (Math.abs(input.measuredDelaySec - current) < input.toleranceSec) return { aligned: true };
   return { aligned: false, offsetSec: input.measuredDelaySec - baseline };
+}
+
+/** Adds a constant delay to every part of a transform, keeping its ratios and segments. */
+export function offsetTransform(t: SyncTransform, deltaSec: number): SyncTransform {
+  return t.kind === "affine"
+    ? { ...t, offsetSec: t.offsetSec + deltaSec }
+    : { ...t, segments: t.segments.map((s) => ({ ...s, offsetSec: s.offsetSec + deltaSec })) };
 }
 
 export function isLoopback(url: string): boolean {
