@@ -1,4 +1,6 @@
+import { clearIdentityCardCache } from "./card-grouping";
 import { invokeIdentity, setIdentityInvoker } from "./client";
+import { clearIdentityMisKeyCache } from "./mis-key";
 import { identityEnabled, identityFlags } from "./flags";
 import type { IdentityBundle, IdentityLookup, IdentityStatus } from "./types";
 
@@ -44,6 +46,9 @@ function cachedLookup(id: string): IdentityLookup | null {
 export function clearIdentityCache(): void {
   lookupCache.clear();
   bundleCache.clear();
+  // A pack swap changes card keys and retirement decisions too.
+  clearIdentityCardCache();
+  clearIdentityMisKeyCache();
 }
 
 /**
@@ -98,7 +103,9 @@ export async function identityStatus(): Promise<IdentityStatus | null> {
 /** Download and import the latest pack, or return the current status. */
 export async function ensureIdentityPack(force = false): Promise<IdentityStatus | null> {
   if (!identityEnabled()) return null;
-  return invokeIdentity<IdentityStatus>("identity_ensure_pack", { force });
+  const status = await invokeIdentity<IdentityStatus>("identity_ensure_pack", { force });
+  if (status?.ready) clearIdentityCache();
+  return status;
 }
 
 /** Developer surface for shadow-mode inspection on an installed origin. */

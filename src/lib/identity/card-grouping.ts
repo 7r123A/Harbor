@@ -104,40 +104,42 @@ export async function warmIdentityCards(
  */
 export function groupCwCards<T extends CardRow>(items: T[]): T[] {
   if (!identityFlags().cards) return items;
-  const order: Array<T | { group: T[] }> = [];
-  const groups = new Map<string, T[]>();
-  for (const item of items) {
+  const plain: Array<{ item: T; order: number }> = [];
+  const groups = new Map<string, Array<{ row: T; order: number }>>();
+  items.forEach((item, index) => {
     const key = identityCardKey(item._id);
     if (!key) {
-      order.push(item);
-      continue;
+      plain.push({ item, order: index });
+      return;
     }
     const existing = groups.get(key);
-    if (!existing) {
-      const members = [item];
-      groups.set(key, members);
-      order.push({ group: members });
-      continue;
-    }
-    existing.push(item);
-  }
+    if (existing) existing.push({ row: item, order: index });
+    else groups.set(key, [{ row: item, order: index }]);
+  });
   let merged = false;
-  const output: T[] = [];
-  for (const entry of order) {
-    if (!("group" in entry)) {
-      output.push(entry);
-      continue;
-    }
-    const members = entry.group;
+  const entries = [...plain];
+  for (const members of groups.values()) {
+    const only = members[0];
+    if (!only) continue;
     if (members.length < 2) {
-      output.push(members[0] as T);
+      entries.push({ item: only.row, order: only.order });
       continue;
     }
     merged = true;
+    // The grouped card keeps the representative's position so a card does not
+    // jump backwards just because an older member appeared first.
     const representative = members.reduce((best, member) =>
-      activity(member) > activity(best) ? member : best,
+      activity(member.row) > activity(best.row) ? member : best,
     );
-    output.push({ ...representative, cwMembers: members } as T);
+    entries.push({
+      item: {
+        ...representative.row,
+        cwMembers: members.map((member) => member.row),
+      } as T,
+      order: representative.order,
+    });
   }
-  return merged ? output : items;
+  if (!merged) return items;
+  entries.sort((a, b) => a.order - b.order);
+  return entries.map((entry) => entry.item);
 }

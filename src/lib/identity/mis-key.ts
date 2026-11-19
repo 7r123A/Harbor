@@ -96,11 +96,15 @@ export async function warmIdentityMisKey(
       );
       if (ownsSeason) break;
       const owners = await fetchWindowOwners(show, season as number);
-      const owner = owners.find(
+      const candidates = owners.filter(
         (candidate) =>
           candidate.entry !== hint.entry &&
           (candidate.mediaType === "TV" || candidate.mediaType === "ONA"),
       );
+      // Ambiguous ownership is not proof. Only a single other owner retires.
+      const distinct = new Map(candidates.map((candidate) => [candidate.entry, candidate]));
+      if (distinct.size > 1) continue;
+      const owner = candidates[0];
       if (owner) {
         next.set(row._id, { at: Date.now(), ownerEntry: owner.entry });
         break;

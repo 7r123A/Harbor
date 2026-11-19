@@ -120,3 +120,38 @@ test("an unresolved identity leaves the row untouched", async () => {
   assert.equal(changed, false);
   assert.equal(groupCwCards([rows[0]!]).length, 1);
 });
+
+test("a grouped card keeps the position of its representative", async () => {
+  reset();
+  setIdentityFlags({ pack: true, cards: true });
+  setIdentityInvoker(async (command, args) => {
+    assert.equal(command, "identity_card_hints");
+    const ids = (args as { ids: string[] }).ids;
+    return ids.map((id) => ({
+      id,
+      entry: id === "kitsu:2" ? 20 : 21,
+      title: id,
+      mediaType: "TV",
+      cardKey: id === "kitsu:2" ? "tvdb:2" : "tvdb:1",
+      tvdb: id === "kitsu:2" ? 2 : 1,
+      tmdb: null,
+      season: 1,
+      offset: 0,
+      provisional: false,
+    }));
+  });
+  const ordered = [
+    { _id: "kitsu:1", state: { lastWatched: "2020-01-01T00:00:00Z" } },
+    { _id: "kitsu:2", state: { lastWatched: "2026-11-18T22:00:00Z" } },
+    { _id: "kitsu:3", state: { lastWatched: "2026-11-18T23:00:00Z" } },
+  ];
+  await warmIdentityCards(ordered);
+
+  const grouped = groupCwCards(ordered);
+  assert.equal(grouped.length, 2);
+  assert.equal(grouped[0]?._id, "kitsu:2", "unrelated card stays first");
+  const merged = grouped[1];
+  assert.ok(merged);
+  assert.equal(merged._id, "kitsu:3", "merged card sits at the representative's position");
+  assert.equal((merged.cwMembers as unknown[]).length, 2);
+});

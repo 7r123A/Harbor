@@ -144,3 +144,47 @@ test("rows without windows or with a provisional identity stay untouched", async
   assert.equal(await warmIdentityMisKey([{ _id: "kitsu:99999", state: { season: 2 } }]), false);
   assert.equal(isIdentityMisKeyRetired("kitsu:99999"), false);
 });
+
+test("ambiguous window ownership does not retire a row", async () => {
+  reset();
+  setIdentityFlags({ pack: true, cards: true });
+  setIdentityInvoker(async (command, args) => {
+    if (command === "identity_card_hints") {
+      const ids = (args as { ids: string[] }).ids;
+      return ids.map((id) => ({
+        id,
+        entry: 1,
+        title: "JoJo 2012",
+        mediaType: "TV",
+        cardKey: "tvdb:262954",
+        windows: [
+          {
+            anidb: 9304,
+            tvdb: 262954,
+            tmdbtv: 45790,
+            tvdbSeason: 1,
+            tvdbOffset: null,
+            tmdbSeason: 1,
+            tmdbOffset: null,
+          },
+        ],
+        tvdb: 262954,
+        tmdb: 45790,
+        season: 1,
+        offset: 0,
+        provisional: false,
+      }));
+    }
+    if (command === "identity_window_owners") {
+      return [
+        { entry: 2, title: "A", mediaType: "ONA", tvdb: 262954, tmdb: 45790, season: 6, offset: 0 },
+        { entry: 3, title: "B", mediaType: "TV", tvdb: 262954, tmdb: 45790, season: 6, offset: 0 },
+      ];
+    }
+    return null;
+  });
+
+  const changed = await warmIdentityMisKey([{ _id: "mal:14719", state: { season: 6 } }]);
+  assert.equal(changed, false);
+  assert.equal(isIdentityMisKeyRetired("mal:14719"), false);
+});

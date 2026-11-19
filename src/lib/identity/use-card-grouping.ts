@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { getAnimeCwId } from "@/lib/anime-cw-ids";
+import { animeCwIdsVersion, getAnimeCwId, subscribeAnimeCwIds } from "@/lib/anime-cw-ids";
 import { identityFlags } from "./flags";
 import {
   groupCwCards,
@@ -30,9 +30,11 @@ type CardRow = {
 export function useIdentityCardGrouping<T extends CardRow>(items: T[]): T[] {
   const [cardsVersion, setCardsVersion] = useState(() => identityCardsVersion());
   const [misKeyVersion, setMisKeyVersion] = useState(() => identityMisKeyVersion());
+  const [aliasVersion, setAliasVersion] = useState(() => animeCwIdsVersion());
 
   useEffect(() => subscribeIdentityCards(() => setCardsVersion(identityCardsVersion())), []);
   useEffect(() => subscribeIdentityMisKey(() => setMisKeyVersion(identityMisKeyVersion())), []);
+  useEffect(() => subscribeAnimeCwIds(() => setAliasVersion(animeCwIdsVersion())), []);
 
   useEffect(() => {
     if (!identityFlags().cards) return;
@@ -44,10 +46,10 @@ export function useIdentityCardGrouping<T extends CardRow>(items: T[]): T[] {
     };
     void warmIdentityCards(items, probes).catch(() => {});
     void warmIdentityMisKey(items, probes).catch(() => {});
-  }, [items]);
+  }, [items, aliasVersion]);
 
   return useMemo(
     () => groupCwCards(items.filter((item) => !isIdentityMisKeyRetired(item._id))),
-    [items, cardsVersion, misKeyVersion],
+    [items, cardsVersion, misKeyVersion, aliasVersion],
   );
 }
