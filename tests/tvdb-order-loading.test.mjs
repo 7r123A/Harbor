@@ -194,6 +194,32 @@ test("cold order renders before translations and upgrades immutable season names
   }
 });
 
+test("cached order copies season, episode, and artwork data for each reader", async () => {
+  const f = fixture();
+  const getOrder = () => f.fetchTvdbOrderBySeriesId("", 1, "aired");
+  const first = await getOrder();
+  const seasonName = first.seasons[0].name;
+  const episodeName = first.bySeason.get(1)[0].name;
+  const requestCount = f.calls.length;
+  first.seasons[0].name = "Changed";
+  first.bySeason.get(1)[0].name = "Changed";
+  first.bySeason.get(1).pop();
+  first.absByEpId.set(1, 123);
+  first.imageByAbs.set(1, "changed.jpg");
+
+  const second = await getOrder();
+  assert.equal(second.seasons[0].name, seasonName);
+  assert.equal(second.bySeason.get(1).length, 1);
+  assert.equal(second.bySeason.get(1)[0].name, episodeName);
+  assert.equal(second.absByEpId.has(1), false);
+  assert.equal(second.imageByAbs.has(1), false);
+
+  second.bySeason.get(1)[0].name = "Changed again";
+  const third = await getOrder();
+  assert.equal(third.bySeason.get(1)[0].name, episodeName);
+  assert.equal(f.calls.length, requestCount);
+});
+
 test("episode ordering makes no unused season artwork requests", async () => {
   const f = fixture();
   const order = await f.fetchTvdbOrderBySeriesId("test-key", 1, "aired", "eng");

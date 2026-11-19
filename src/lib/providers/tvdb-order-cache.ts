@@ -85,7 +85,22 @@ function deserialize(s: Serialized): TvdbOrder {
   };
 }
 
+// The persisted season and episode rows normally have scalar fields. Preserve
+// isolation for older or unexpected nested fields too.
+function cloneRow<T extends Season | OrderedEpisode>(row: T): T {
+  return Object.values(row).some((value) => value !== null && typeof value === "object")
+    ? structuredClone(row)
+    : { ...row };
+}
+
 const policy = {
+  clone: (s: Serialized): Serialized => ({
+    ...s,
+    seasons: s.seasons.map(cloneRow),
+    bySeason: s.bySeason.map(([number, rows]) => [number, rows.map(cloneRow)]),
+    absByEpId: s.absByEpId.map(([id, absolute]) => [id, absolute]),
+    imageByAbs: s.imageByAbs.map(([absolute, image]) => [absolute, image]),
+  }),
   ttl: (s: Serialized) =>
     s.textComplete === false
       ? MEDIA_TTL.recent

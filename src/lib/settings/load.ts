@@ -7,7 +7,7 @@ import {
 } from "@/lib/theme";
 import { languageName } from "@/lib/subtitles/language";
 import { ORIGINAL_AUDIO_LANG } from "@/lib/player/audio-language";
-import { sanitizeSeekStep } from "@/lib/seek-step";
+import { sanitizeHalfSpeedRate, sanitizeSeekStep, sanitizeSpeedStep } from "@/lib/seek-step";
 import { migrateModelId, providerTabFor } from "@/lib/ai-models";
 import {
   sanitizeFullscreenClockFormat,
@@ -204,7 +204,6 @@ export function parseStoredSettings(raw: string | null): {
       _pickerLayoutStremio?: boolean;
       _pickerLayoutStremioV2?: boolean;
       _stremioDeeplinkOnByDefault?: boolean;
-      _skipButtonHideSecV2?: boolean;
       _anilistSyncOnV1?: boolean;
       /** Legacy shared toggle, now split per tracker. */
       syncIndicator?: boolean;
@@ -285,16 +284,6 @@ export function parseStoredSettings(raw: string | null): {
     }
     if (typeof parsed.contentAdvisoryShowIgnore !== "boolean") {
       parsed.contentAdvisoryShowIgnore = true;
-    }
-    if (!parsed._skipButtonHideSecV2) {
-      if (
-        parsed.skipButtonHideSec === 10 ||
-        parsed.skipButtonHideSec === 20 ||
-        parsed.skipButtonHideSec == null
-      ) {
-        parsed.skipButtonHideSec = 14;
-      }
-      parsed._skipButtonHideSecV2 = true;
     }
     if (!parsed._anilistSyncOnV1) {
       parsed.anilistAutoSync = true;
@@ -612,6 +601,17 @@ export function parseStoredSettings(raw: string | null): {
         parsed.seekForwardStepShortSec,
         DEFAULT.seekForwardStepShortSec,
       ),
+      seekBackStepLongSec: sanitizeSeekStep(
+        parsed.seekBackStepLongSec,
+        DEFAULT.seekBackStepLongSec,
+      ),
+      seekForwardStepLongSec: sanitizeSeekStep(
+        parsed.seekForwardStepLongSec,
+        DEFAULT.seekForwardStepLongSec,
+      ),
+      halfSpeedRate: sanitizeHalfSpeedRate(parsed.halfSpeedRate, DEFAULT.halfSpeedRate),
+      speedDownStep: sanitizeSpeedStep(parsed.speedDownStep, DEFAULT.speedDownStep),
+      speedUpStep: sanitizeSpeedStep(parsed.speedUpStep, DEFAULT.speedUpStep),
       theme: sanitizeTheme(parsed.theme),
       animeTitleLanguage:
         parsed.animeTitleLanguage === "romaji" || parsed.animeTitleLanguage === "native"
