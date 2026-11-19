@@ -218,6 +218,30 @@ async function getAnimeEpisodes(id: string): Promise<PlayEpisode[] | null> {
       if (img) ep.still = img;
     }
   }
+  // Provider air dates can lag AniList for a currently airing cour. When the
+  // list still contains a future episode, replace the dates from the same
+  // schedule the detail page banner uses. Completed lists are left alone so a
+  // single-seasons heuristic cannot rewrite old anime with irregular breaks.
+  if (
+    eps.some((episode) => {
+      const at = episode.airDate ? Date.parse(episode.airDate) : NaN;
+      return Number.isFinite(at) && at > Date.now();
+    })
+  ) {
+    try {
+      const [{ anilistIdForCwItem }, { fetchAnilistAiringSchedule, applyAiringSchedule }] =
+        await Promise.all([
+          import("@/lib/anilist/cw-next-airing"),
+          import("@/lib/anilist/next-airing"),
+        ]);
+      const anilistId = await anilistIdForCwItem(id);
+      if (anilistId != null) {
+        applyAiringSchedule(eps, await fetchAnilistAiringSchedule(anilistId));
+      }
+    } catch {
+      // AniList unavailable/rate-limited: keep provider dates.
+    }
+  }
   eps.sort((a, b) => a.season - b.season || a.episode - b.episode);
   if (generation === mediaCacheGeneration()) lruSet(addonEpsCache, cacheKey, eps, SEASON_CACHE_MAX);
   return eps;
@@ -727,6 +751,30 @@ async function loadCinemetaEpisodes(
       overview: v.overview || v.description,
       airDate: v.released || v.firstAired,
     });
+  }
+  // Provider air dates can lag AniList for a currently airing cour. When the
+  // list still contains a future episode, replace the dates from the same
+  // schedule the detail page banner uses. Completed lists are left alone so a
+  // single-seasons heuristic cannot rewrite old anime with irregular breaks.
+  if (
+    eps.some((episode) => {
+      const at = episode.airDate ? Date.parse(episode.airDate) : NaN;
+      return Number.isFinite(at) && at > Date.now();
+    })
+  ) {
+    try {
+      const [{ anilistIdForCwItem }, { fetchAnilistAiringSchedule, applyAiringSchedule }] =
+        await Promise.all([
+          import("@/lib/anilist/cw-next-airing"),
+          import("@/lib/anilist/next-airing"),
+        ]);
+      const anilistId = await anilistIdForCwItem(id);
+      if (anilistId != null) {
+        applyAiringSchedule(eps, await fetchAnilistAiringSchedule(anilistId));
+      }
+    } catch {
+      // AniList unavailable/rate-limited: keep provider dates.
+    }
   }
   eps.sort((a, b) => a.season - b.season || a.episode - b.episode);
   if (prefer) await overlayPreferredEpisodes(id, eps);
