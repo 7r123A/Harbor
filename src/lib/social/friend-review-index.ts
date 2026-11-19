@@ -27,7 +27,7 @@ export type FriendReviewIndex = Map<string, FriendReviewMark[]>;
 const FRIEND_CAP = 40;
 const PAGE_CAP = 3;
 const CONCURRENCY = 4;
-const CACHE_TTL = 5 * 60_000;
+const CACHE_TTL = 10_000;
 const MAX_MARKS = 12;
 /** Re-rendering every mounted badge per finished batch would be wasteful on long rails. */
 const PUBLISH_INTERVAL = 1200;
@@ -71,13 +71,12 @@ function addMark(
   const key = markKeyForItem(mediaType, itemKey);
   const handle = mark.handle.trim();
   if (!key || !handle) return;
-  const list = out.get(key) ?? [];
+  const list = [...(out.get(key) ?? [])];
   const folded = foldHandle(handle);
   if (list.some((existing) => foldHandle(existing.handle) === folded)) return;
-  if (list.length >= MAX_MARKS) return;
   list.push({ ...mark, handle });
   list.sort((a, b) => b.at - a.at);
-  out.set(key, list);
+  out.set(key, list.slice(0, MAX_MARKS));
 }
 
 async function scanFriend(friend: Friend, out: FriendReviewIndex): Promise<void> {
@@ -124,21 +123,18 @@ async function build(): Promise<FriendReviewIndex> {
     .slice(0, FRIEND_CAP);
 
   const ticket = ++running;
-  index = out;
-  publish(true);
-
   for (let i = 0; i < targets.length; i += CONCURRENCY) {
     if (ticket !== running) break;
     await Promise.all(targets.slice(i, i + CONCURRENCY).map((f) => scanFriend(f, out)));
     if (ticket !== running) break;
+    index = new Map(out);
     publish();
   }
   return out;
 }
 
 function snapshotIndex(): FriendReviewIndex | null {
-  if (builtAt && Date.now() - builtAt > CACHE_TTL) return null;
-  return index.size > 0 ? index : null;
+  return index.size > 0 || builtAt ? index : null;
 }
 
 export function cachedFriendReviewIndex(): FriendReviewIndex | null {
@@ -153,10 +149,7 @@ export function subscribeFriendReviewIndex(fn: () => void): () => void {
 }
 
 export async function loadFriendReviewIndex(force = false): Promise<FriendReviewIndex> {
-  if (!force) {
-    const hit = snapshotIndex();
-    if (hit) return hit;
-  }
+  if (!force && builtAt && Date.now() - builtAt < CACHE_TTL) return index;
   if (inflight) return inflight;
 
   inflight = build()
@@ -234,6 +227,7 @@ async function flushSummaryBatch(): Promise<void> {
   for (const item of batch) summaryPending.delete(item.contentType + "\u0000" + item.contentId);
   if (!batch.length) return;
   const isCurrent = captureSessionScope();
+  const fromServer = new Set<string>();
   let fallbackItems: typeof batch = [];
   try {
     const res = await socialPost<{
@@ -251,6 +245,7 @@ async function flushSummaryBatch(): Promise<void> {
     const next = new Map(index);
     for (const row of res.items ?? []) {
       const key = markKeyForItem(row.contentType, row.contentId);
+      fromServer.add(key);
       if (row.averageScore === undefined || row.recentRaters === undefined) {
         fallbackItems.push({ contentType: row.contentType, contentId: row.contentId });
       }
@@ -296,9 +291,17 @@ async function flushSummaryBatch(): Promise<void> {
         });
         if (!isCurrent()) return;
         const key = markKeyForItem(item.contentType, item.contentId);
-        const existing = hoverSummaries.get(key);
+        const existing = fromServer.has(key) ? hoverSummaries.get(key) : undefined;
         hoverSummaries.set(key, {
-          friends: existing?.friends,
+          friends:
+            existing?.friends ??
+            summary.friends.map((rating) => ({
+              handle: rating.handle,
+              alias: rating.alias,
+              avatarUrl: rating.avatarUrl,
+              at: Date.parse(rating.at) || 0,
+              totalCount: summary.friends.length,
+            })),
           averageScore: existing?.averageScore ?? summary.averageScore,
           total: existing?.total ?? summary.total,
           community: summary.recentRatings.map((rating) => ({

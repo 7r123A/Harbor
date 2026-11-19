@@ -136,7 +136,7 @@ const COMMUNITY_CAP = 40;
 /** Recent pages of a person's history (20 ratings each) before we stop looking for a title. */
 const PAGE_CAP = 3;
 const CONCURRENCY = 4;
-const CACHE_TTL = 5 * 60_000;
+const CACHE_TTL = 10_000;
 
 type AuthorMeta = {
   handle: string;
@@ -350,6 +350,7 @@ async function loadCommunityTitleRatings(
 export type TitleRatingSummary = {
   averageScore: number | null;
   recentRatings: TitleRating[];
+  friends: TitleRating[];
   total: number;
 };
 
@@ -361,8 +362,11 @@ export function loadTitleRatingSummary(target: TitleRef): Promise<TitleRatingSum
   const hit = summaryCache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL) return hit.promise;
   const isCurrent = captureSessionScope();
-  const promise = loadCommunityTitleRatings(target, false)
-    .then((snapshot) => {
+  const promise = Promise.all([
+    loadCommunityTitleRatings(target, false),
+    loadFriendTitleRatings(target),
+  ])
+    .then(([snapshot, friends]) => {
       if (!isCurrent()) throw new Error("Account changed");
       return {
         averageScore: snapshot.ratings.length
@@ -370,6 +374,7 @@ export function loadTitleRatingSummary(target: TitleRef): Promise<TitleRatingSum
             snapshot.ratings.length
           : null,
         recentRatings: snapshot.ratings.slice(0, 3),
+        friends: friends.ratings,
         total: snapshot.ratings.length,
       };
     })

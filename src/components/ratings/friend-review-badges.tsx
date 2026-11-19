@@ -1,5 +1,5 @@
 import { useT } from "@/lib/i18n";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
   ensureMarksForTitle,
   markKeyForItem,
@@ -53,9 +53,28 @@ export function FriendReviewBadges({
   const contentType = contentTypeFor(metaId, kind);
   const summary = useTitleHoverSummary(contentType, metaId);
   const averageScore = summary?.averageScore ?? null;
+  const badgeRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    ensureMarksForTitle(contentTypeFor(metaId, kind), metaId);
+    const refresh = () => {
+      if (document.visibilityState === "hidden") return;
+      const element = badgeRef.current;
+      if (
+        element?.checkVisibility &&
+        !element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
+      )
+        return;
+      ensureMarksForTitle(contentTypeFor(metaId, kind), metaId);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 15_000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, [metaId, kind]);
   const friends = summary?.friends ?? index?.get(markKeyForItem(contentType, metaId)) ?? [];
   const marks = friends.length > 0 ? friends : (summary?.community ?? []);
@@ -78,6 +97,7 @@ export function FriendReviewBadges({
         className={`pointer-events-auto z-10 ${className}`}
       >
         <span
+          ref={badgeRef}
           role="img"
           aria-label={t("No ratings yet. Be the first to rate!")}
           className="inline-flex items-center justify-center rounded-full px-2 py-1 text-ink-muted transition-colors hover:text-ink"
@@ -106,6 +126,7 @@ export function FriendReviewBadges({
       className={`pointer-events-none z-10 flex items-center ${className}`}
     >
       <span
+        ref={badgeRef}
         className="inline-flex shrink-0 items-center rounded-full p-0.5"
         style={{ backgroundColor: "color-mix(in srgb, var(--color-ink) 20%, var(--color-canvas))" }}
       >
