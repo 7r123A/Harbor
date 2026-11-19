@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { fetchEpisodeList, nextUnwatchedAfter } from "@/lib/series-episodes";
+import { fetchCwNextAiring } from "@/lib/anilist/cw-next-airing";
 import type { Meta } from "@/lib/cinemeta";
 import type { PlayEpisode } from "@/lib/view";
 import { getEpisodeProgress } from "@/lib/episode-progress";
@@ -1286,6 +1287,31 @@ export function useCwAdvance(
         const orderKey = (s: number, e: number) => s * 100000 + e;
         const seasonMeta = seasonIndex(list);
         const base = clearTimerFlags(i);
+        // Timer cards use provider episode dates, which can lag the AniList
+        // schedule the detail page shows for currently airing anime. Correct the
+        // countdown when AniList's next episode is the card's target.
+        const timerSchedule =
+          animeCwEnd === "timer" && isAnime
+            ? await fetchCwNextAiring(i._id).catch(() => null)
+            : null;
+        const timerAirDate = (episode: number, fallback?: string) =>
+          timerSchedule && episode === timerSchedule.episode
+            ? new Date(timerSchedule.airingAt * 1000).toISOString()
+            : fallback;
+        // Provider dates can be a week late for the current cour. When AniList
+        // knows the next airing, its episode boundary is authoritative: earlier
+        // episodes have aired, and the named episode has exactly this air date.
+        // Only a single-season provider list is safe to rewrite this way.
+        if (timerSchedule && new Set(list.map((entry) => entry.season)).size === 1) {
+          const airedAt = new Date(Date.now() - 60_000).toISOString();
+          for (const entry of list) {
+            if (entry.episode === timerSchedule.episode) {
+              entry.airDate = new Date(timerSchedule.airingAt * 1000).toISOString();
+            } else if (entry.episode < timerSchedule.episode) {
+              entry.airDate = airedAt;
+            }
+          }
+        }
         const setCaughtUp = () => {
           next.set(i._id, {
             ...base,
@@ -1387,7 +1413,7 @@ export function useCwAdvance(
                       },
                       upNext: true,
                       waitingForAir: true as const,
-                      nextAirDate: nextUnwatched.airDate,
+                      nextAirDate: timerAirDate(nextUnwatched.episode, nextUnwatched.airDate),
                     } as LibraryItem);
                   } else if (animeCwEnd === "timer" && !hideCaughtUp) {
                     setCaughtUp();
@@ -1481,7 +1507,7 @@ export function useCwAdvance(
             next.set(i._id, {
               ...base,
               waitingForAir: true as const,
-              nextAirDate: curEpInList.airDate,
+              nextAirDate: timerAirDate(curEpInList.episode, curEpInList.airDate),
             } as LibraryItem);
             finishCandidate();
             continue;
@@ -1503,7 +1529,7 @@ export function useCwAdvance(
             next.set(i._id, {
               ...base,
               waitingForAir: true as const,
-              nextAirDate: curEpInList.airDate,
+              nextAirDate: timerAirDate(curEpInList.episode, curEpInList.airDate),
             } as LibraryItem);
           } else if (
             animeCwEnd === "timer" &&
@@ -1659,7 +1685,7 @@ export function useCwAdvance(
             ...base,
             ...(base.state ? { state: { ...base.state, ...remoteLastWatched(i) } } : {}),
             waitingForAir: true as const,
-            nextAirDate: unplacedFollowUp.airDate,
+            nextAirDate: timerAirDate(unplacedFollowUp.episode, unplacedFollowUp.airDate),
           } as LibraryItem);
           finishCandidate();
           continue;
@@ -1718,7 +1744,7 @@ export function useCwAdvance(
             },
             upNext: true,
             waitingForAir: true as const,
-            nextAirDate: nextEp.airDate,
+            nextAirDate: timerAirDate(nextEp.episode, nextEp.airDate),
           } as LibraryItem);
         } else if (
           animeCwEnd === "timer" &&
@@ -1820,6 +1846,14 @@ export function useCwAdvance(
         if (next.has(id)) continue;
         const src = lib.find((i) => i._id === id);
         if (!src?.state) continue;
+        const schedule =
+          animeCwEnd === "timer" && (isAnimeCwItem(src) || ANIME_ID.test(id))
+            ? await fetchCwNextAiring(id).catch(() => null)
+            : null;
+        const airDate =
+          schedule && ep.episode === schedule.episode
+            ? new Date(schedule.airingAt * 1000).toISOString()
+            : ep.airDate;
         extraItems.push({
           ...src,
           state: {
@@ -1833,7 +1867,7 @@ export function useCwAdvance(
           upNext: ep.caughtUp ? undefined : true,
           caughtUp: ep.caughtUp,
           waitingForAir: ep.waitingForAir,
-          nextAirDate: ep.airDate,
+          nextAirDate: airDate,
         });
       }
       if (ctx.isCurrent() && !ctx.isSuperseded() && animeCwEnd === "timer") {
