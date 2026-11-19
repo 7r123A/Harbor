@@ -44,3 +44,17 @@ test("an invalid or absent season does not switch entries", () => {
   assert.equal(canonicalSeasonOwnerId("tt2359704", null, "kitsu:49847", pool), null);
   assert.equal(canonicalSeasonOwnerId("tt2359704", 0, "kitsu:49847", pool), null);
 });
+
+test("catalog cards use the native progress owner and airdate for the same provider episode", () => {
+  const { nativeSeasonRows } = load();
+  const catalog = {
+    number: 8,
+    imdbEpisode: 8,
+    imdbSeason: 2,
+    imdbId: "tt1",
+    airdate: "2026-11-21",
+  };
+  const native = { ...catalog, number: 3, sourceMetaId: "kitsu:17", airdate: "2026-11-17" };
+  const unrelated = { ...catalog, imdbId: "tt2" };
+  assert.deepEqual(nativeSeasonRows([catalog, unrelated], [native], 2), [native, unrelated]);
+});

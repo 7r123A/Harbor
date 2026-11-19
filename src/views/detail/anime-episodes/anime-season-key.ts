@@ -137,3 +137,20 @@ export function resolveAnimeDetailTarget(
     playback,
   };
 }
+
+export function nativeSeasonRows(
+  visibleEpisodes: KitsuEpisode[],
+  nativeEpisodes: KitsuEpisode[],
+  seasonHint: number,
+): KitsuEpisode[] {
+  const byCoordinate = new Map(
+    nativeEpisodes
+      .filter((ep) => ep.imdbSeason === seasonHint && ep.imdbEpisode != null)
+      .map((ep) => [ep.imdbEpisode, ep]),
+  );
+  return visibleEpisodes.map((ep) => {
+    if ((ep.imdbSeason ?? ep.seasonNumber) !== seasonHint) return ep;
+    const native = byCoordinate.get(ep.imdbEpisode ?? ep.number);
+    return native && (!ep.imdbId || !native.imdbId || ep.imdbId === native.imdbId) ? native : ep;
+  });
+}

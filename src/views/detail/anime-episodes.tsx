@@ -1,3 +1,6 @@
+import { lastPlayedEpisode } from "@/lib/resume";
+import { getAnimeCwId } from "@/lib/anime-cw-ids";
+import { nativeSeasonRows } from "./anime-episodes/anime-season-key";
 import {
   memo,
   useCallback,
@@ -48,12 +51,12 @@ import { animeUpToEpisodeSlice } from "./anime-episodes/up-to-episodes";
 
 import { useFranchiseEpisodes } from "./anime-episodes/use-franchise-episodes";
 import { isSoloSplitEntry } from "./anime-episodes/solo-entry";
-import { isFranchiseExtra } from "@/lib/providers/anime-detail";
+import { animeDetails, isFranchiseExtra } from "@/lib/providers/anime-detail";
 import { franchiseRoot, franchiseRootSync } from "@/lib/providers/anime-franchise-root";
 import { splitFranchiseDisplaySeason } from "@/lib/streams/anime-identity-core";
 import { useAnimeWatchedRouting } from "./anime-episodes/use-anime-watched-routing";
 import { useAnimeFranchiseNav } from "./anime-episodes/use-anime-franchise-nav";
-import { canonicalSeasonOwnerId } from "./anime-episodes/anime-season-key";
+import { fetchEntryEpisodes } from "@/lib/providers/anime-franchise-episodes";
 import { resolveTrackerAnimeEntry } from "@/lib/anime-tracker-entry";
 import { useTvdbProxyImages } from "./anime-episodes/use-tvdb-proxy-images";
 import { pickTvdbImage } from "@/lib/providers/tvdb-proxy";
@@ -242,7 +245,7 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
     soloEntry && soloPickerFranchise.length > 0 ? soloPickerFranchise : franchise;
   const panelPool = franchiseEpisodes !== episodes ? franchiseEpisodes : undefined;
   const mwVersion = useSyncExternalStore(subscribeManualWatched, manualWatchedVersion);
-  const preferredSeasonKey = useAnimePreferredSeason({
+  const progressSeasonKey = useAnimePreferredSeason({
     episodes: panelPool ?? episodes,
     metaId: meta.id,
     trackId,
@@ -252,6 +255,17 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
     pmdbWatched,
     mwVersion,
   });
+  const catalogResume = useMemo(() => {
+    if (!imdbId || soloEntry) return null;
+    const catalog = lastPlayedEpisode(imdbId);
+    if (!catalog) return null;
+    const latestEntryTime = Math.max(
+      lastPlayedEpisode(meta.id)?.t ?? 0,
+      lastPlayedEpisode(currentId)?.t ?? 0,
+    );
+    return catalog.t >= latestEntryTime ? catalog : null;
+  }, [imdbId, soloEntry, meta.id, currentId]);
+  const preferredSeasonKey = catalogResume ? String(catalogResume.season) : progressSeasonKey;
   // Preferred season must stay reactive to watched-data arrival (trakt/AniList/MAL
   // load after first paint with empty sets). Do not latch it: latching the first
   // value sticks Season 1 computed before progress loads and blocks navigation.
@@ -346,31 +360,119 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
     [tvdbActiveSeason, franchise, currentId],
   );
   const seasonHint = useMemo(() => {
+    if (tvdbPanel.panel?.activeType === "aired" && tvdbActiveSeason?.seasonNumber != null)
+      return tvdbActiveSeason.seasonNumber;
     const pool = tvdbPanel.panel?.visibleEpisodes ?? effectiveOrder?.visibleEpisodes ?? episodes;
     for (const episode of pool) {
       const season = episode.imdbSeason ?? episode.seasonNumber;
       if (season != null && season > 0) return season;
     }
     return null;
-  }, [tvdbPanel.panel?.visibleEpisodes, effectiveOrder?.visibleEpisodes, episodes]);
-  // A catalog/franchise umbrella can render the same cour as the native entry
-  // with a different provider season and a different episode list. Once the
-  // displayed season has a canonical owner, use that entry's episodes so the
-  // metadata, ratings and watched projection all come from the same work.
+  }, [tvdbActiveSeason, tvdbPanel.panel, effectiveOrder?.visibleEpisodes, episodes]);
+  const premiereEntry = useMemo(() => {
+    if (
+      tvdbPanel.panel?.activeType !== "aired" ||
+      !tvdbActiveSeason?.seasonNumber ||
+      !tvdbActiveSeason.from
+    )
+      return null;
+    const premiere = Date.parse(tvdbActiveSeason.from);
+    const candidates = franchise.filter(
+      (entry) =>
+        parseKitsuId(entry.meta.id) != null &&
+        entry.startDate &&
+        Math.abs(Date.parse(entry.startDate) - premiere) <= 7 * 86_400_000,
+    );
+    return candidates.length === 1 ? candidates[0].meta : null;
+  }, [tvdbPanel.panel?.activeType, tvdbActiveSeason, franchise]);
+  const savedSeasonEntry = useMemo(() => {
+    if (!imdbId || catalogResume?.season !== seasonHint) return null;
+    const id = getAnimeCwId(imdbId);
+    return id && parseKitsuId(id) != null && id !== currentId
+      ? { id, type: "series" as const, name: meta.name }
+      : null;
+  }, [imdbId, catalogResume, seasonHint, currentId, meta.name]);
+  const visibleFirstOwner = tvdbPanel.panel?.visibleEpisodes.find(
+    (ep) => ep.imdbSeason === seasonHint && ep.imdbEpisode === 1,
+  )?.sourceMetaId;
+  // Resolve the selected provider season independently of franchise navigation:
+  // the picker can stay on the same page while its episode owner changes.
+  const [nativeSeason, setNativeSeason] = useState<{
+    page: string;
+    season: number;
+    episodes: KitsuEpisode[];
+  } | null>(null);
   useEffect(() => {
-    if (seasonHint == null || activeEntryId !== currentId) return;
+    if (seasonHint == null || seasonHint < 1 || (!tvdbPanel.panel && !activeIsAnchor)) return;
     let cancelled = false;
-    void resolveTrackerAnimeEntry(meta.id, { season: seasonHint, episode: 1 })
-      .then((resolved) => {
-        if (cancelled || !resolved) return;
-        const owner = canonicalSeasonOwnerId(currentId, seasonHint, resolved.id, franchiseEpisodes);
-        if (owner) setActiveEntryId(owner);
+    const selectedEntry = premiereEntry ?? savedSeasonEntry;
+    if (selectedEntry && selectedEntry.id !== currentId) {
+      const publish = (rows: KitsuEpisode[], id: number) => {
+        if (cancelled || !rows.length || selectedEntry.id !== `kitsu:${id}`) return;
+        if (
+          !premiereEntry &&
+          !rows.some((ep) => ep.imdbId === imdbId && ep.imdbSeason === seasonHint)
+        )
+          return;
+        setNativeSeason({
+          page: meta.id,
+          season: seasonHint,
+          episodes: rows.map((ep) => ({
+            ...ep,
+            sourceMetaId: ep.sourceMetaId ?? selectedEntry.id,
+          })),
+        });
+      };
+      void animeDetails(settings, selectedEntry, publish)
+        .then((result) => {
+          if (!result || cancelled) return;
+          publish(result.episodes, result.kitsuId);
+          void result.enrichPromise.then((rows) => publish(rows, result.kitsuId)).catch(() => {});
+        })
+        .catch(() => {});
+      return () => {
+        cancelled = true;
+      };
+    }
+    const mappedOwners = new Set(
+      franchiseEpisodes
+        .filter((ep) => ep.imdbSeason === seasonHint && ep.imdbEpisode === 1)
+        .map((ep) => ep.sourceMetaId ?? ep.streamId?.match(/^(kitsu:\d+):\d+$/)?.[1] ?? currentId)
+        .filter((id) => parseKitsuId(id) != null),
+    );
+    const mappedId = visibleFirstOwner ?? (mappedOwners.size === 1 ? [...mappedOwners][0] : null);
+    const ownerRequest = mappedId
+      ? Promise.resolve({ id: mappedId })
+      : resolveTrackerAnimeEntry(meta.id, { season: seasonHint, episode: 1 });
+    void ownerRequest
+      .then(async (owner) => {
+        const id = owner && parseKitsuId(owner.id);
+        if (cancelled || id == null) return;
+        if (owner?.id === meta.id && episodes.some((ep) => ep.imdbSeason === seasonHint)) {
+          if (!cancelled) setNativeSeason({ page: meta.id, season: seasonHint, episodes });
+          return;
+        }
+        const rows = await fetchEntryEpisodes(id, settings);
+        if (!cancelled) setNativeSeason({ page: meta.id, season: seasonHint, episodes: rows });
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [meta.id, seasonHint, activeEntryId, currentId, franchiseEpisodes]);
+  }, [
+    meta.id,
+    seasonHint,
+    activeIsAnchor,
+    Boolean(tvdbPanel.panel),
+    visibleFirstOwner,
+    premiereEntry,
+    savedSeasonEntry,
+    imdbId,
+    settings,
+    franchiseEpisodes,
+    currentId,
+    episodes,
+  ]);
   // The matched franchise entry's episodes carry their TMDB season number (AniZip), which selects
   // the right localized per-season overview so the hero changes per season instead of staying static.
   const seasonOverview = useMemo(() => {
@@ -416,11 +518,18 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
     episodes.find((ep) => ep.imdbId === imdbId && ep.imdbSeason != null)?.imdbSeason ??
     episodes.find((ep) => ep.imdbSeason != null)?.imdbSeason ??
     null;
-  const yearMatch = /(\d{4})/.exec(meta.releaseInfo ?? "");
+  const selectedWork = premiereEntry ?? savedSeasonEntry;
+  const seasonTitle =
+    selectedWork && selectedWork.id !== currentId && !tvdbActiveSeason?.isGenericName
+      ? tvdbActiveSeason?.name
+      : undefined;
+  const yearMatch = /(\d{4})/.exec(
+    (seasonTitle && tvdbActiveSeason?.year) || meta.releaseInfo || "",
+  );
   const { ratings, season: ratingSeason } = useEntryEpisodeRatings(
     imdbId ?? null,
-    entrySeason,
-    meta.name ?? null,
+    seasonHint ?? entrySeason,
+    seasonTitle ?? selectedWork?.name ?? meta.name ?? null,
     yearMatch ? Number(yearMatch[1]) : null,
   );
   const unratedDisplay = tvdbPanel.panel
@@ -430,14 +539,21 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
       : effectiveOrder
         ? effectiveOrder.visibleEpisodes
         : episodes;
+  const selectedRows = useMemo(() => {
+    if (!nativeSeason || nativeSeason.page !== meta.id || nativeSeason.season !== seasonHint)
+      return unratedDisplay;
+    if (!tvdbPanel.panel && !activeIsAnchor) return unratedDisplay;
+    return nativeSeasonRows(unratedDisplay, nativeSeason.episodes, nativeSeason.season);
+  }, [nativeSeason, meta.id, seasonHint, unratedDisplay, tvdbPanel.panel, activeIsAnchor]);
+  const ratingOwner = selectedRows[0]?.sourceMetaId ?? meta.id;
   const baseDisplay = useMemo(
     () =>
-      withEpisodeImdbRatings(unratedDisplay, ratings, {
-        seriesMetaId: meta.id,
+      withEpisodeImdbRatings(selectedRows, ratings, {
+        seriesMetaId: ratingOwner,
         seriesImdbId: imdbId ?? null,
         ratingSeason,
       }),
-    [unratedDisplay, ratings, meta.id, imdbId, ratingSeason],
+    [selectedRows, ratings, ratingOwner, imdbId, ratingSeason],
   );
   const artworkSeasons = useMemo(
     () => [
