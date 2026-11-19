@@ -9,13 +9,65 @@ type CardRow = {
   cwMembers?: unknown;
 };
 
-const CARD_TTL_MS = 5 * 60_000;
+const CARD_TTL_MS = 6 * 60 * 60_000;
+const CARD_STORE_KEY = "harbor.identity.cardkeys.v1";
 const cardCache = new Map<string, { at: number; key: string | null }>();
 const listeners = new Set<() => void>();
 let version = 0;
 
+function storage(): Storage | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Card keys are stable across reloads (they only change on a weekly pack
+ * refresh), so hydrate them synchronously. Without this the first row render
+ * shows an ungrouped duplicate for a moment, then the warmed result replaces it.
+ */
+function hydrateCardCache(): void {
+  const store = storage();
+  if (!store) return;
+  try {
+    const raw = store.getItem(CARD_STORE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as {
+      entries?: Record<string, { at?: number; key?: string | null }>;
+    };
+    const now = Date.now();
+    for (const [id, entry] of Object.entries(parsed.entries ?? {})) {
+      if (typeof entry?.at !== "number" || now - entry.at > CARD_TTL_MS) continue;
+      cardCache.set(id, { at: entry.at, key: entry.key ?? null });
+    }
+  } catch {
+    // A broken cache is not worth failing the row over.
+  }
+}
+
+function persistCardCache(): void {
+  const store = storage();
+  if (!store) return;
+  try {
+    const now = Date.now();
+    const entries: Record<string, { at: number; key: string | null }> = {};
+    for (const [id, entry] of cardCache) {
+      if (now - entry.at > CARD_TTL_MS) continue;
+      entries[id] = entry;
+    }
+    store.setItem(CARD_STORE_KEY, JSON.stringify({ entries }));
+  } catch {
+    // Storage can be full or unavailable; grouping still works in memory.
+  }
+}
+
+hydrateCardCache();
+
 function notify(): void {
   version += 1;
+  persistCardCache();
   for (const listener of listeners) listener();
 }
 
@@ -37,6 +89,9 @@ export function subscribeIdentityCards(listener: () => void): () => void {
 
 export function clearIdentityCardCache(): void {
   cardCache.clear();
+  try {
+    storage()?.removeItem(CARD_STORE_KEY);
+  } catch {}
   notify();
 }
 
