@@ -335,6 +335,15 @@ export function useAnimeTvdbPanel(
             claimed,
           );
         }
+        const entryRow: KitsuEpisode | undefined = entryRowsByNumber.get(e.episodeNumber);
+        if (
+          entryRow &&
+          !claimed.has(entryRow.id) &&
+          (entryRow.tvdbEpisodeId === e.id ||
+            (entryRow.imdbSeason === e.seasonNumber && entryRow.imdbEpisode === e.episodeNumber))
+        ) {
+          match = entryRow;
+        }
         const currentMatch =
           currentByTvdbId.get(e.id) ??
           currentByPair.get(`${e.seasonNumber}:${e.episodeNumber}`) ??
@@ -404,6 +413,13 @@ export function useAnimeTvdbPanel(
         const ep: KitsuEpisode = match
           ? {
               ...match,
+              airdate:
+                match.airdate &&
+                isUpcomingDate(match.airdate) &&
+                rowAir[bi] &&
+                !isUpcomingDate(rowAir[bi]!)
+                  ? rowAir[bi]
+                  : (match.airdate ?? rowAir[bi] ?? null),
               thumbnail: !rowUnaired(bi) && img ? img : match.thumbnail,
               ...(!rowUnaired(bi) && img && img !== match.thumbnail && match.thumbnail
                 ? { thumbnailFallback: match.thumbnail }
