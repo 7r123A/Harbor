@@ -76,7 +76,7 @@ test("remote reads are skipped on fallback, and cache audio must be verified bef
   assert.doesNotMatch(remoteBlock, /Reading nearby dialogue audio timed out/);
   assert.match(
     hook,
-    /playbackFallbackRef\.current = \(preferBufferedAudio\) => listen\(preferBufferedAudio\)/,
+    /playbackFallbackRef\.current = \(preferBufferedAudio\) =>\s*listen\(preferBufferedAudio, "auto-sync"\)/,
   );
   assert.match(hook, /scene-read=skipped reason=buffered-playback-selected/);
   assert.match(hook, /subsync_prepare_cache_audio/);

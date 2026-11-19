@@ -75,7 +75,10 @@ import {
   SCENE_CLIP_SEC,
   selectPlaybackRetryScene,
 } from "@/lib/subtitles/autosync/scene-window";
-import { matchPlaybackSpeech } from "@/lib/subtitles/autosync/playback-asr";
+import {
+  MoonshineUnavailableError,
+  matchPlaybackSpeech,
+} from "@/lib/subtitles/autosync/playback-asr";
 import {
   moonshineMissingModelLanguage,
   moonshineLanguageName,
@@ -101,6 +104,7 @@ import {
   isLoopback,
   liveSyncFailureReason,
   outcomeScore,
+  playbackSyncCorrection,
   shouldFallbackToPlayback,
   shouldAttemptAudioPivot,
   toDriftState,
@@ -301,6 +305,9 @@ export function useAutoSync(params: {
   const retryRef = useRef<(() => void) | null>(null);
   const activeDisposeRef = useRef<(() => void) | null>(null);
   const liveTapCancelRef = useRef<(() => void) | null>(null);
+  // The scope of the viewer's latest Sync from playback request. While its result is on
+  // screen, "Try again" repeats that request rather than starting Auto sync.
+  const playbackRequestScopeRef = useRef<AutoSyncScope | null>(null);
   // The Auto sync pipeline is declared before the guided playback callback.
   // This lets only a user-initiated, unseekable remote run hand off safely.
   const playbackFallbackRef = useRef<((preferBufferedAudio: boolean) => void) | null>(null);
@@ -308,6 +315,7 @@ export function useAutoSync(params: {
     ctx: PipelineContext;
     transform: SyncTransform;
     confidence: number;
+    scope: AutoSyncScope;
   } | null>(null);
   const statusScopeRef = useRef<AutoSyncScope | null>(null);
   const manualTimingMediaRef = useRef<string | null>(null);
@@ -558,7 +566,14 @@ export function useAutoSync(params: {
       if (!isCurrent()) return false;
       const a = appliedRef.current;
       if (t.kind === "affine" && isDelayOnlyTransform(t)) {
-        if (Math.abs(t.offsetSec) < OFFSET_EPS && !a.transform) return true;
+        // An imperceptible shift needs no change only while the delay on screen is still the
+        // baseline it composes onto. A delay restored from the last session may not be.
+        if (
+          Math.abs(t.offsetSec) < OFFSET_EPS &&
+          !a.transform &&
+          Math.abs(liveSnapRef.current.subDelaySec - a.subDelayBefore) < OFFSET_EPS
+        )
+          return true;
         if (!isCurrent()) return false;
         // The original track is already selected. Re-selecting it here can
         // race an actual user subtitle change and leak the delay to that track.
@@ -803,6 +818,10 @@ export function useAutoSync(params: {
       bestScoreRef.current = -1;
       setOffer(null);
       setReason(null);
+      // A Moonshine model prompt belongs to the request that raised it, such as an earlier
+      // sync from playback; left set, it would replace this run's result in the popover.
+      setMoonshineModelLanguage(null);
+      setMoonshineDownloadError(null);
       localReferenceFocusRef.current = null;
       activeAnalysisDeadlineRef.current =
         sourceKind === "http" || sourceKind === "hls" || sourceKind === "debrid"
@@ -1079,6 +1098,7 @@ export function useAutoSync(params: {
                   ctx,
                   transform: o.candidate,
                   confidence: o.decision.pCorrect,
+                  scope: statusScope,
                 };
               }
             };
@@ -1542,7 +1562,9 @@ export function useAutoSync(params: {
     const s = settingsRef.current;
     if (s.subtitleAutoSyncCrowd === false) return;
     const r = lastReportRef.current;
-    if (!r) return;
+    // Thumbs rate the result on screen. A report from an earlier run, video or restored
+    // correction must not be sent on its behalf.
+    if (!r || r.scope !== statusScopeRef.current) return;
     const cfg = crowdConfigFromSettings(s);
     if (!cfg) return;
     void reportCrowdFeedback(r.ctx.cues, good, cfg);
@@ -1680,37 +1702,68 @@ export function useAutoSync(params: {
   ]);
 
   const listen = useCallback(
-    (preferBufferedAudio = false) => {
+    (preferBufferedAudio = false, requestedBy: "viewer" | "auto-sync" = "viewer") => {
       const b = bridgeRef.current;
       if (!b || engine !== "mpv") return;
+      const media = srcRef.current;
+      const liveSnap = liveSnapRef.current;
+      const selectedTrack = liveSnap.subtitleTracks.find((track) => track.selected) ?? null;
+      if (!selectedTrack) return;
+      // Checked on every request, not only when a scope begins, so asking again never slips
+      // past them. A track this scope generated itself may still be refined.
+      const refusal =
+        liveSnap.durationSec < MIN_DURATION_SEC
+          ? "The video is too short to sync from playback."
+          : isSyncedTrack(selectedTrack) &&
+              !isOwnGeneratedSyncTrack(selectedTrack, appliedRef.current.generatedTrackPath)
+            ? "Select the original subtitle track to sync it from playback."
+            : null;
+      const prefs = readPlayerPrefs(media.meta.id);
+      const viewerDelaySec = initialDelayForSelectedTrack(
+        selectedTrack,
+        prefs?.subDelaySec,
+        prefs?.subDelayTrackKind,
+      );
       let scope = statusScopeRef.current;
       if (!scope) {
-        const active = srcRef.current;
-        const snap = liveSnapRef.current;
-        const selectedTrack = snap.subtitleTracks.find((track) => track.selected) ?? null;
-        if (snap.durationSec < MIN_DURATION_SEC) return;
-        if (!selectedTrack || isSyncedTrack(selectedTrack)) {
-          return;
-        }
         scope = {
-          mediaKey: autoSyncMediaKey(active),
+          mediaKey: autoSyncMediaKey(media),
           trackId: selectedTrack.id,
-          audioKey: audioSelectionKey(snap),
+          audioKey: audioSelectionKey(liveSnap),
         };
         statusScopeRef.current = scope;
         doneKeyRef.current = autoSyncRunKey(scope.mediaKey, selectedTrack.id, scope.audioKey);
         appliedRef.current = {
           transform: null,
           originalTrackId: selectedTrack.id,
-          subDelayBefore: initialDelayForSelectedTrack(
-            selectedTrack,
-            readPlayerPrefs(active.meta.id)?.subDelaySec,
-            readPlayerPrefs(active.meta.id)?.subDelayTrackKind,
-          ),
+          subDelayBefore: viewerDelaySec,
           scope,
           changed: false,
         };
         bestScoreRef.current = -1;
+      } else if (!appliedRef.current.changed) {
+        // Nothing automatic is applied, so the delay is the viewer's own and may have changed
+        // since this scope began. Offers are measured from it, as in a new Auto sync run.
+        appliedRef.current.subDelayBefore = viewerDelaySec;
+      }
+      if (requestedBy === "viewer") playbackRequestScopeRef.current = scope;
+      // A playback result reuses the scope but is a single-scene estimate that is never
+      // reported, so its thumbs must not rate the Auto sync result it replaces.
+      lastReportRef.current = null;
+      if (refusal) {
+        // Only an explanation: the manual-timing hold still applies.
+        setOffer(null);
+        setMoonshineModelLanguage(null);
+        setMoonshineDownloadError(null);
+        setReason(refusal);
+        setStatus("error");
+        return;
+      }
+      // Manual timing only holds off *automatic* work. Syncing from playback is the viewer's
+      // own request, so like a forced Auto sync run it takes timing back; otherwise it would
+      // do nothing at all for the rest of the video once Live sync had been used.
+      if (manualTimingMediaRef.current === autoSyncMediaKey(media)) {
+        manualTimingMediaRef.current = null;
       }
       if (!isCurrentAutoSyncScope(scope)) return;
       localReferenceFocusRef.current = {
@@ -1860,9 +1913,23 @@ export function useAutoSync(params: {
                   void invoke("mpv_command", {
                     cmd: ["print-text", "[harbor/subsync] scene-read=matched"],
                   }).catch(() => {});
+                  const correction = playbackSyncCorrection({
+                    measuredDelaySec: sceneResult.offsetSec,
+                    baselineDelaySec: appliedRef.current.subDelayBefore,
+                    currentDelaySec: liveSnapRef.current.subDelaySec,
+                    toleranceSec: OFFSET_EPS,
+                  });
+                  if (correction.aligned) {
+                    setOffer(null);
+                    setReason(
+                      "The source audio indicates these subtitles are already aligned in the sampled scene. No timing change was made; other scenes are not verified.",
+                    );
+                    setStatus("synced");
+                    return;
+                  }
                   const transform: SyncTransform = {
                     kind: "affine",
-                    offsetSec: sceneResult.offsetSec,
+                    offsetSec: correction.offsetSec,
                     ratio: 1,
                   };
                   setOffer({
@@ -2019,6 +2086,8 @@ export function useAutoSync(params: {
                   anchorEndSec.toFixed(3),
                   anchorPath.replace(/\\/g, "/"),
                 ],
+              }).catch(() => {
+                throw new Error("cache-audio-dump-command-failed");
               });
               if (aborted || !isCurrentAutoSyncScope(scope)) return;
               // dump-cache has completed. Validate actual decoded samples; the
@@ -2117,7 +2186,7 @@ export function useAutoSync(params: {
                           cues: sourceCues
                             .filter((cue) => isLikelyDialogueCue(cue.text))
                             .map((cue) => [cue.start - startAt, cue.end - startAt]),
-                          durationSec: clipSec,
+                          durationSec: Math.min(prepared.durationSec, clipSec),
                           infoHash: null,
                           confMin: null,
                           mapSpec: "0:a:0",
@@ -2210,6 +2279,12 @@ export function useAutoSync(params: {
                       setMoonshineDownloadError(null);
                     }
                     moonshineFailure = `The ${moonshineLanguageName(missingLanguage)} Moonshine model is not installed. No model was downloaded. Silero remains available.`;
+                  } else if (error instanceof MoonshineUnavailableError && !directMoonshine) {
+                    // Moonshine compared nothing (it is off, has no model for this audio or no
+                    // runtime here), so the speech check that did run explains this outcome.
+                    void invoke("mpv_command", {
+                      cmd: ["print-text", "[harbor/subsync] playback-moonshine=unavailable"],
+                    }).catch(() => {});
                   } else {
                     moonshineFailure = String(error instanceof Error ? error.message : error);
                     if (moonshineFailure === "subsync-scene-timeout") {
@@ -2280,17 +2355,27 @@ export function useAutoSync(params: {
           if (Math.abs(result.offsetSec) > 60) {
             throw new Error("The estimated offset is too large to apply safely.");
           }
-          if (usedMoonshine && result.offsetSec === 0) {
+          const correction = playbackSyncCorrection({
+            measuredDelaySec: result.offsetSec,
+            baselineDelaySec: appliedRef.current.subDelayBefore,
+            currentDelaySec: liveSnapRef.current.subDelaySec,
+            toleranceSec: OFFSET_EPS,
+          });
+          if (correction.aligned) {
             setOffer(null);
             setReason(
-              "Moonshine speech timing indicates these subtitles are already aligned in the sampled scene. No timing change was made; other scenes are not verified.",
+              usedMoonshine
+                ? "Moonshine speech timing indicates these subtitles are already aligned in the sampled scene. No timing change was made; other scenes are not verified."
+                : usedSilero
+                  ? "Silero speech timing indicates these subtitles are already aligned in the sampled scene. No timing change was made; other scenes are not verified."
+                  : "The buffered audio indicates these subtitles are already aligned in the sampled scene. No timing change was made; other scenes are not verified.",
             );
             setStatus("synced");
             return;
           }
           const transform: SyncTransform = {
             kind: "affine",
-            offsetSec: result.offsetSec,
+            offsetSec: correction.offsetSec,
             ratio: 1,
           };
           setOffer({
@@ -2327,7 +2412,7 @@ export function useAutoSync(params: {
     [bridgeRef, clearDeadline, engine, isCurrentAutoSyncScope],
   );
 
-  playbackFallbackRef.current = (preferBufferedAudio) => listen(preferBufferedAudio);
+  playbackFallbackRef.current = (preferBufferedAudio) => listen(preferBufferedAudio, "auto-sync");
 
   // Auto sync normally uses the full evidence pipeline for network and local
   // media. The guided playback tap also serves as the user-initiated fallback
@@ -2346,8 +2431,15 @@ export function useAutoSync(params: {
     beginRun(true);
   }, [beginRun, listen]);
 
-  // Retry follows the same source-aware path as the menu's Auto sync action.
-  const retry = selected && !selected.external ? () => listen(true) : run;
+  // Retry repeats the viewer's request: a sync from playback is tried again from playback, and
+  // Auto sync follows the same source-aware path as the menu's Auto sync action.
+  const retry = useCallback(() => {
+    const track = liveSnapRef.current.subtitleTracks.find((t) => t.selected) ?? null;
+    const playbackRequest =
+      statusScopeRef.current !== null && playbackRequestScopeRef.current === statusScopeRef.current;
+    if ((track && !track.external) || playbackRequest) listen(true);
+    else run();
+  }, [listen, run]);
 
   // Download is strictly user initiated from the player prompt. Never infer a
   // language pack to download from subtitle language or an uncertain guess.

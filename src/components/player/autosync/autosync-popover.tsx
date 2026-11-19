@@ -119,7 +119,9 @@ export function AutosyncPopover({ handle }: { handle: AutoSyncHandle }) {
   }, [phase]);
 
   useEffect(() => {
-    if (phase === "analyzing" || phase === null) {
+    // A new analysis starts without a correction, so a result that changes nothing never
+    // shows the shift of an earlier offer.
+    if (phase === "analyzing" || phase === "listening" || phase === null) {
       correctionRef.current = "";
       return;
     }

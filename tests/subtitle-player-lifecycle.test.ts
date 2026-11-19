@@ -353,7 +353,7 @@ test("Auto sync never starts from playback for embedded subtitles", () => {
   // Embedded tracks reach the playback tap only through a user action.
   assert.match(
     autoSyncSource,
-    /const retry = selected && !selected\.external \? \(\) => listen\(true\) : run;/,
+    /const retry = useCallback\(\(\) => \{[\s\S]*?if \(\(track && !track\.external\) \|\| playbackRequest\) listen\(true\);\s*else run\(\);/,
   );
 });
 

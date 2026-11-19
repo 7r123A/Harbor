@@ -98,6 +98,25 @@ export function liveSyncFailureReason(input: {
   return "Playback audio was unavailable for subtitle syncing. Try another source or Manual offset.";
 }
 
+/**
+ * A playback measurement is the delay the subtitle file's own cue times need against the audio,
+ * not a change to whatever delay is on screen. Auto sync applies its corrections on top of the
+ * viewer's baseline delay, so the offer is the distance from that baseline: a viewer who had
+ * already nudged the track by hand must not get the measured delay added on top of the nudge.
+ * When the measurement matches the delay already on screen, nothing needs to change.
+ */
+export function playbackSyncCorrection(input: {
+  measuredDelaySec: number;
+  baselineDelaySec: number;
+  currentDelaySec: number;
+  toleranceSec: number;
+}): { aligned: true } | { aligned: false; offsetSec: number } {
+  const baseline = Number.isFinite(input.baselineDelaySec) ? input.baselineDelaySec : 0;
+  const current = Number.isFinite(input.currentDelaySec) ? input.currentDelaySec : baseline;
+  if (Math.abs(input.measuredDelaySec - current) < input.toleranceSec) return { aligned: true };
+  return { aligned: false, offsetSec: input.measuredDelaySec - baseline };
+}
+
 export function isLoopback(url: string): boolean {
   return /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])[:/]/i.test(url);
 }

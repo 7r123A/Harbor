@@ -37,6 +37,17 @@ export type MoonshineTimingDiagnostic = {
   acceptedIntervals: number;
 };
 
+/** Moonshine could not run at all: it is turned off, cannot pick a model for this audio, or its
+ * runtime is missing. Nothing was compared, so the speech check that ran before it explains the
+ * outcome better than this does, unless Moonshine was the engine the viewer asked for.
+ */
+export class MoonshineUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MoonshineUnavailableError";
+  }
+}
+
 /** The short prepared playback audio is transcribed in an isolated Moonshine worker. */
 export async function matchPlaybackSpeech(
   input: {
@@ -56,7 +67,7 @@ export async function matchPlaybackSpeech(
   diagnose?: (value: MoonshineTimingDiagnostic) => void,
 ): Promise<{ offsetSec: number; confidence: number }> {
   if (!input.enabled)
-    throw new Error(
+    throw new MoonshineUnavailableError(
       "Moonshine was not used. Enable Smart resync with speech recognition in Auto sync settings.",
     );
   const audio = normalizeLang(input.audioLanguage ?? "");
@@ -69,13 +80,13 @@ export async function matchPlaybackSpeech(
     audio !== subtitle &&
     !input.crossLanguage
   ) {
-    throw new Error(
+    throw new MoonshineUnavailableError(
       "Cross-language matching is off. Enable Match subtitles across languages in Auto sync settings.",
     );
   }
   const modelLanguage = resolveMoonshineLanguage(input.modelLanguage, input.audioLanguage);
   if (!modelLanguage) {
-    throw new Error(
+    throw new MoonshineUnavailableError(
       input.modelLanguage && input.modelLanguage !== "auto"
         ? "Moonshine does not support the chosen override language. Silero remains available."
         : "Moonshine cannot select a supported model from this audio track. Silero remains available; you can choose a language manually in Settings.",
@@ -88,9 +99,13 @@ export async function matchPlaybackSpeech(
   }>("moonshine_model_status", { language: modelLanguage });
   if (!isCurrent()) throw new Error("Sync cancelled.");
   if (!status.supported)
-    throw new Error("Moonshine testing requires Python 3. Install Python first.");
+    throw new MoonshineUnavailableError(
+      "Moonshine testing requires Python 3. Install Python first.",
+    );
   if (!status.runtimeInstalled)
-    throw new Error("Install the Moonshine testing runtime in Auto sync settings first.");
+    throw new MoonshineUnavailableError(
+      "Install the Moonshine testing runtime in Auto sync settings first.",
+    );
   if (!status.installed) throw moonshineMissingModelError(modelLanguage);
   progress("Recognizing buffered dialogue with Moonshine");
   const windows = await invoke<Window[]>("moonshine_transcribe_windows", {
