@@ -6,7 +6,8 @@ import {
   useFriendReviewIndex,
   useTitleHoverSummary,
 } from "@/lib/social/friend-review-index";
-import { HarborMark } from "@/components/icons/harbor-mark";
+import { UnratedReviewIcon } from "@/components/icons/unrated-review-icon";
+import { HoverTooltip } from "@/components/hover-tooltip";
 import { Avatar } from "@/views/profile/profile-bits";
 import type { FriendReviewMark } from "@/lib/social/friend-review-index";
 
@@ -70,12 +71,20 @@ export function FriendReviewBadges({
 
   if (marks.length === 0 && averageScore === null) {
     return (
-      <div className={`pointer-events-none z-10 flex items-center ${className}`}>
-        <span className="inline-flex items-center gap-1 rounded-full bg-elevated/80 px-2 py-1 text-[11px] font-medium leading-none text-ink-muted">
-          <HarborMark className="h-3 w-3 shrink-0 text-white" />
-          {t("Be first to rate!")}
+      <HoverTooltip
+        label={t("No ratings yet. Be the first to rate!")}
+        side="top"
+        align="end"
+        className={`pointer-events-auto z-10 ${className}`}
+      >
+        <span
+          role="img"
+          aria-label={t("No ratings yet. Be the first to rate!")}
+          className="inline-flex items-center justify-center text-ink-muted transition-colors hover:text-ink"
+        >
+          <UnratedReviewIcon />
         </span>
-      </div>
+      </HoverTooltip>
     );
   }
 

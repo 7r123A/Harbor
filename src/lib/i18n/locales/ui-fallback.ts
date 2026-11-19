@@ -3119,7 +3119,7 @@ const uiFallback: Record<string, string> = {
   "Friends average score": "Friends average score",
   "Friends only": "Friends only",
   "Harbor users average score": "Harbor users average score",
-  "Be first to rate!": "Be first to rate!",
+  "No ratings yet. Be the first to rate!": "No ratings yet. Be the first to rate!",
   "Recently rated by Harbor users": "Recently rated by Harbor users",
   "Highest mutual": "Highest mutual",
   "How your card looks when someone opens it from a review list. Your profile page keeps its own banner and theme, and this never changes it.":
