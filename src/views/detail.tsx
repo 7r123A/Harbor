@@ -302,6 +302,7 @@ export function DetailView({
   } | null>(null);
   const [franchise, setFranchise] = useState<FranchiseEntry[]>([]);
   const [animeCanonicalId, setAnimeCanonicalId] = useState<string | null>(null);
+  const [seasonCanonicalId, setSeasonCanonicalId] = useState<string | null>(null);
   const [ownLogo, setOwnLogo] = useState<string | undefined>(() =>
     peekCachedLogo(
       settings.tmdbKey,
@@ -555,7 +556,11 @@ export function DetailView({
     if (detectedKitsu == null) return;
     setAnimeCanonicalId((current) => current ?? `kitsu:${detectedKitsu}`);
   }, [detectedKitsu]);
+  // The episode panel can switch a catalog/franchise page to the native entry
+  // that owns the selected season. The airing banner must follow that entry.
   const anilistExtra = useAnimeAnilistDetails(animeCanonicalId, isAnime);
+  const seasonDetails = useAnimeAnilistDetails(seasonCanonicalId, isAnime);
+  const nextAiring = (seasonCanonicalId ? seasonDetails : anilistExtra)?.nextAiring;
   const animeCharacters = useAnimeCharacters(animeCanonicalId, isAnime);
   const stickyAwardName = useRef<string | null>(null);
   useEffect(() => {
@@ -3105,6 +3110,7 @@ export function DetailView({
                   (meta.id.startsWith("tt") ? meta.id : null)
                 }
                 onSeasonArt={handleSeasonArt}
+                onCanonicalEntry={setSeasonCanonicalId}
                 localizedOverview={localizedAnimeOverview}
                 seasonOverviews={detail?.seasonOverviews}
                 tmdbTvId={detail?.tmdbTvId}
@@ -3206,14 +3212,14 @@ export function DetailView({
 
         {(() => {
           const railSections: DetailSection[] = [];
-          if (isAnime && anilistExtra?.nextAiring) {
+          if (isAnime && nextAiring) {
             railSections.push({
               key: "animeAiring",
               label: t("Airing"),
               minHeight: 90,
               node: (
                 <AnimeAiringBanner
-                  nextAiring={anilistExtra.nextAiring}
+                  nextAiring={nextAiring}
                   reminderSeed={{
                     id: meta.id,
                     name: title || meta.name,

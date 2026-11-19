@@ -134,6 +134,7 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
   tmdbSeasons,
   seasonPosters,
   onSeasonArt,
+  onCanonicalEntry,
 }: {
   meta: Meta;
   episodes: KitsuEpisode[];
@@ -157,6 +158,7 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
       entryId: string;
     } | null,
   ) => void;
+  onCanonicalEntry?: (entryId: string | null) => void;
 }) {
   const t = useT();
   const { isConnected: traktConnected } = useTrakt();
@@ -644,10 +646,18 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
     for (const e of displayEpisodes) if (e.sourceMetaId != null) ids.add(e.sourceMetaId);
     return ids.size === 1 ? [...ids][0] : null;
   }, [displayEpisodes]);
+  useEffect(() => {
+    onCanonicalEntry?.(displaySourceId ?? (activeIsAnchor ? null : activeEntryId));
+    return () => onCanonicalEntry?.(null);
+  }, [displaySourceId, activeEntryId, activeIsAnchor, onCanonicalEntry]);
   const entryPoolEpisodes = useMemo(
     () =>
-      displaySourceId ? franchiseEpisodes.filter((e) => e.sourceMetaId === displaySourceId) : [],
-    [displaySourceId, franchiseEpisodes],
+      displaySourceId && nativeSeason?.episodes[0]?.sourceMetaId === displaySourceId
+        ? nativeSeason.episodes
+        : displaySourceId
+          ? franchiseEpisodes.filter((e) => e.sourceMetaId === displaySourceId)
+          : [],
+    [displaySourceId, franchiseEpisodes, nativeSeason],
   );
   const { watchedKeys: entryAnilistWatched } = useAnilistWatched(
     displaySourceId ?? "",
