@@ -80,7 +80,10 @@ export function FriendReviewBadges({
         <span
           role="img"
           aria-label={t("No ratings yet. Be the first to rate!")}
-          className="inline-flex items-center justify-center text-ink-muted transition-colors hover:text-ink"
+          className="inline-flex items-center justify-center rounded-full px-2 py-1 text-ink-muted transition-colors hover:text-ink"
+          style={{
+            backgroundColor: "color-mix(in srgb, var(--color-ink) 20%, var(--color-canvas))",
+          }}
         >
           <UnratedReviewIcon />
         </span>

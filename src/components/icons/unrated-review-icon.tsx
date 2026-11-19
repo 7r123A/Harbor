@@ -22,7 +22,7 @@ export function UnratedReviewIcon() {
       ))}
       <path d="M19 29a6 6 0 1 1 1-6" />
       <circle cx={14} cy={24} r={1.8} />
-      <path d="M10.5 29a3.8 3.8 0 0 1 7-1.5M23 25l5 5m0-5-5 5" />
+      <path d="M10.5 29a3.8 3.8 0 0 1 7-1.5M20 25l4 4m0-4-4 4" />
     </svg>
   );
 }
