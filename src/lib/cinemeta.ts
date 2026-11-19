@@ -1,6 +1,7 @@
 import { withMetaCache } from "@/lib/cinemeta-cache";
 import { addonOnlyMetadata } from "./metadata-policy";
 import { safeFetch as fetch } from "@/lib/safe-fetch";
+import { rememberTmdbImdbPair } from "./providers/tmdb/tmdb-imdb-resolve";
 export { persistableAddonOrigin } from "./addon-configuration-key";
 
 const CINEMETA = "https://v3-cinemeta.strem.io";
@@ -40,6 +41,8 @@ export type MetaSeason = {
 
 export type Meta = {
   id: string;
+  imdb_id?: string;
+  moviedb_id?: number;
   type: MetaType;
   name: string;
   /** Verified alternative titles from the same metadata record for stream matching. */
@@ -189,7 +192,7 @@ export async function meta(
   if (addonOnlyMetadata() || (!force && !cinemetaEnabled())) return null;
   const cleanId = id.replace(/^(series|movie):/, "");
   if (!cleanId.startsWith("tt")) return null;
-  return withMetaCache(type, cleanId, async () => {
+  const result = await withMetaCache(type, cleanId, async () => {
     const res = await fetch(`${CINEMETA}/meta/${type}/${cleanId}.json`);
     if (!res.ok) {
       const definitive = res.status >= 400 && res.status < 500 && res.status !== 429;
@@ -198,4 +201,14 @@ export async function meta(
     const json = await res.json();
     return { value: json.meta ?? null, cacheable: true };
   });
+  const tmdbId = Number(result?.moviedb_id);
+  if (
+    result?.id === cleanId &&
+    result.type === type &&
+    Number.isSafeInteger(tmdbId) &&
+    tmdbId > 0
+  ) {
+    rememberTmdbImdbPair(`tmdb:${type === "series" ? "tv" : "movie"}:${tmdbId}`, cleanId);
+  }
+  return result;
 }

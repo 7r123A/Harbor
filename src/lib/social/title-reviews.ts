@@ -14,8 +14,13 @@ import {
 import { loadUserDirectory } from "./user-directory";
 import { getMutualMatch } from "./mutual-ratings";
 import type { MutualMatch } from "./mutual-score";
-import { tmdbImdbId, tmdbIdFromImdb } from "@/lib/providers/tmdb/tmdb-imdb-resolve";
+import {
+  tmdbImdbId,
+  tmdbIdFromImdb,
+  tmdbFromImdbCached,
+} from "@/lib/providers/tmdb/tmdb-imdb-resolve";
 import { loadStoredSettings } from "@/lib/settings/load";
+import { meta as cinemetaMeta } from "@/lib/cinemeta";
 
 /**
  * Harbor now publishes a review hub at GET /social/reviews, which filters by title on the
@@ -230,6 +235,9 @@ async function scanAuthors(
       }
     } catch {
       // Optional ID resolution must not prevent reading the rating histories themselves.
+    }
+    if (/^tt\d+$/.test(target.itemKey) && !tmdbFromImdbCached(target.itemKey)) {
+      await cinemetaMeta(target.mediaType, target.itemKey).catch(() => null);
     }
   }
   const ratings: TitleRating[] = [];

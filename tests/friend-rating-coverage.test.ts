@@ -28,6 +28,7 @@ const { loadTitleRatingSummary, invalidateTitleReviewCaches } =
   await import("@/lib/social/title-reviews");
 const { sameTitle, pickTitleRating } = await import("@/lib/social/review-rank");
 const { clearUserDirectoryCache } = await import("@/lib/social/user-directory");
+const { tmdbFromImdbCached } = await import("@/lib/providers/tmdb/tmdb-imdb-resolve");
 
 test("verified title aliases match while different media types and unrelated ids stay separate", () => {
   assert.equal(
@@ -75,10 +76,26 @@ test("verified title aliases match while different media types and unrelated ids
   );
 });
 
-test("a new rating by the sixtieth friend contributes avatars and averages across catalog ids", async (t) => {
+test("fresh Cinemeta mappings find a new rating by the sixtieth friend without a TMDB key", async (t) => {
   let now = Date.now();
   let published = false;
   let historyReads = 0;
+  let metadataReads = 0;
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: { hostname: "fixture.invalid" },
+      setTimeout,
+      clearTimeout,
+    },
+  });
+  t.after(() => {
+    if (originalWindow) Object.defineProperty(globalThis, "window", originalWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+  assert.equal(tmdbFromImdbCached("tt9900011"), undefined);
+  assert.equal(tmdbFromImdbCached("tt9900012"), undefined);
   t.mock.method(Date, "now", () => now);
   const friends = Array.from({ length: 60 }, (_, index) => ({
     handle: `friend-${index}`,
@@ -87,6 +104,20 @@ test("a new rating by the sixtieth friend contributes avatars and averages acros
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
     const url = new URL(String(input));
     const path = url.pathname.replace("/themes/api", "");
+    if (url.hostname === "v3-cinemeta.strem.io") {
+      metadataReads++;
+      const movie = path === "/meta/movie/tt9900011.json";
+      assert.ok(movie || path === "/meta/series/tt9900012.json");
+      return Response.json({
+        meta: {
+          id: movie ? "tt9900011" : "tt9900012",
+          imdb_id: movie ? "tt9900011" : "tt9900012",
+          moviedb_id: movie ? 600011 : 600012,
+          type: movie ? "movie" : "series",
+          name: "Fixture",
+        },
+      });
+    }
     if (path === "/social/reviews") return Response.json({ error: "not_found" }, { status: 404 });
     if (path === "/social/friends") return Response.json(friends);
     if (path === "/social/groups/discover") return Response.json({ groups: [] });
@@ -98,7 +129,7 @@ test("a new rating by the sixtieth friend contributes avatars and averages acros
           published && path.includes("/friend-59/")
             ? [
                 {
-                  itemKey: movie ? "tmdb:movie:600001" : "tmdb:tv:600002",
+                  itemKey: movie ? "tmdb:movie:600011" : "tmdb:tv:600012",
                   mediaType: movie ? "movie" : "series",
                   score: movie ? 8 : 7,
                   at: "2026-11-19T00:00:00Z",
@@ -117,7 +148,7 @@ test("a new rating by the sixtieth friend contributes avatars and averages acros
     user: { id: "viewer", handle: "viewer", username: "viewer" },
   });
   try {
-    const target = { itemKey: "tt9900001", mediaType: "movie" } as const;
+    const target = { itemKey: "tt9900011", mediaType: "movie" } as const;
     assert.equal((await loadTitleRatingSummary(target)).total, 0);
     published = true;
     now += 10_001;
@@ -128,13 +159,16 @@ test("a new rating by the sixtieth friend contributes avatars and averages acros
       movie.friends.map((rating) => rating.handle),
       ["friend-59"],
     );
-    const series = await loadTitleRatingSummary({ itemKey: "tt9900002", mediaType: "series" });
+    const series = await loadTitleRatingSummary({ itemKey: "tt9900012", mediaType: "series" });
     assert.equal(series.averageScore, 7);
     assert.deepEqual(
       series.friends.map((rating) => rating.handle),
       ["friend-59"],
     );
     assert.equal(historyReads, 180);
+    assert.ok(metadataReads >= 2);
+    assert.equal(tmdbFromImdbCached("tt9900011"), "tmdb:movie:600011");
+    assert.equal(tmdbFromImdbCached("tt9900012"), "tmdb:tv:600012");
   } finally {
     reloadSession(true);
     invalidateTitleReviewCaches();

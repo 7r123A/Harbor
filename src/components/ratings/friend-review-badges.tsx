@@ -100,13 +100,13 @@ export function FriendReviewBadges({
           ref={badgeRef}
           role="img"
           aria-label={t("No ratings yet. Be the first to rate!")}
-          className="inline-flex shrink-0 items-center gap-1.5 text-ink-muted transition-colors hover:text-ink"
+          className="inline-flex shrink-0 items-center gap-0.5 text-ink-muted transition-colors hover:text-ink"
         >
           <span
             className="inline-flex shrink-0 items-center justify-center text-white"
             style={{ width: avatarSize, height: avatarSize }}
           >
-            <HarborMark className="h-[75%] w-[75%]" />
+            <HarborMark className="h-[55%] w-[55%]" />
           </span>
           <span
             className="inline-flex shrink-0 items-center rounded-full px-2 text-[12px] font-semibold leading-none tabular-nums text-ink"
@@ -137,7 +137,7 @@ export function FriendReviewBadges({
       title={totalCount > 0 ? label : undefined}
       className={`pointer-events-none z-10 flex items-center ${className}`}
     >
-      <span ref={badgeRef} className="inline-flex shrink-0 items-center gap-1.5">
+      <span ref={badgeRef} className="inline-flex shrink-0 items-center gap-0.5">
         {shown.length > 0 && (
           <span className="relative z-10 inline-flex shrink-0 items-center">
             {shown.map((mark, i) => (
@@ -154,7 +154,7 @@ export function FriendReviewBadges({
                   <Avatar src={mark.avatarUrl} size={avatarSize} alias={mark.alias} />
                 </span>
                 {i === shown.length - 1 && extra > 0 && (
-                  <span className="absolute -right-1 -top-0.5 z-10 inline-flex h-3 min-w-3 items-center justify-center rounded-full bg-elevated px-0.5 text-[8px] font-medium leading-none tabular-nums text-ink ring-1 ring-edge-soft">
+                  <span className="absolute -right-0.5 -top-0.5 z-10 inline-flex h-3 min-w-3 items-center justify-center rounded-full bg-elevated px-0.5 text-[8px] font-medium leading-none tabular-nums text-ink ring-1 ring-edge-soft">
                     +{extra}
                   </span>
                 )}

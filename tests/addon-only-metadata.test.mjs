@@ -38,6 +38,7 @@ function fixture({ only = true, addons = [], results = {}, order = [] } = {}) {
     "cinemeta.ts",
     {
       "./metadata-policy": policy,
+      "./providers/tmdb/tmdb-imdb-resolve": { rememberTmdbImdbPair: () => {} },
       "./addon-configuration-key": { persistableAddonOrigin: () => undefined },
       "@/lib/cinemeta-cache": { withMetaCache: async (_type, _id, work) => (await work()).value },
       "@/lib/addon-configuration-key": { addonConfigurationKey: () => undefined },
