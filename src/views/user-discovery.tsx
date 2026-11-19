@@ -1,5 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { ArrowLeft, Loader2, Search, SlidersHorizontal, UsersRound } from "lucide-react";
+import { Loader2, Search, SlidersHorizontal, UsersRound } from "lucide-react";
 import { useT } from "@/lib/i18n";
 import { useView } from "@/lib/view";
 import { currentAuthor, subscribeAuthor } from "@/lib/theme-auth";
@@ -10,7 +10,7 @@ import { DiscoveryUserCard } from "./user-discovery/user-card";
 
 export function UserDiscoveryView() {
   const t = useT();
-  const { goBack, openProfile } = useView();
+  const { openProfile } = useView();
   const viewer = useSyncExternalStore(subscribeAuthor, currentAuthor, currentAuthor);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<DiscoverySort>("newest");
@@ -39,14 +39,6 @@ export function UserDiscoveryView() {
   return (
     <div className="h-full overflow-x-hidden overflow-y-auto bg-canvas">
       <main className="mx-auto max-w-6xl px-6 pb-24 pt-24 sm:px-10">
-        <button
-          type="button"
-          onClick={goBack}
-          className="mb-7 inline-flex min-h-9 items-center gap-2 text-sm text-ink-muted hover:text-ink"
-        >
-          <ArrowLeft size={16} />
-          {t("Back")}
-        </button>
         <header className="mb-7">
           <span className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-ink-subtle">
             <UsersRound size={14} />
