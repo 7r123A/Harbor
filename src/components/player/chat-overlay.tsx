@@ -7,6 +7,7 @@ import type { ChatMessage } from "@/lib/together/provider";
 import type { Participant } from "@/lib/together/protocol";
 import { useSelfIdentity } from "@/lib/together/use-self-identity";
 import { useT } from "@/lib/i18n";
+import { pushBackHandler } from "@/lib/back-intercept";
 import { useSettings } from "@/lib/settings";
 
 const COMPOSE_TIMEOUT_MS = 4500;
@@ -79,6 +80,14 @@ export function ChatOverlay({
   useEffect(() => {
     setHistoryOpen(keepHistoryOpen);
   }, [keepHistoryOpen]);
+
+  useEffect(() => {
+    if (!historyOpen || keepHistoryOpen) return;
+    return pushBackHandler(() => {
+      setHistoryOpen(false);
+      return true;
+    });
+  }, [historyOpen, keepHistoryOpen]);
 
   useEffect(() => {
     if (!historyOpen || !listRef.current) return;
