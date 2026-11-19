@@ -23,8 +23,7 @@ export type FriendReviewMark = {
 };
 export type FriendReviewIndex = Map<string, FriendReviewMark[]>;
 
-/** Friends scanned, and how many recent history pages (20 ratings each) per friend. */
-const FRIEND_CAP = 40;
+/** Recent history pages (20 ratings each) per friend. */
 const PAGE_CAP = 3;
 const CONCURRENCY = 4;
 const CACHE_TTL = 10_000;
@@ -118,9 +117,7 @@ async function build(): Promise<FriendReviewIndex> {
   }
 
   const me = foldHandle(currentAuthor()?.handle ?? "");
-  const targets = friends
-    .filter((friend) => friend.handle && foldHandle(friend.handle) !== me)
-    .slice(0, FRIEND_CAP);
+  const targets = friends.filter((friend) => friend.handle && foldHandle(friend.handle) !== me);
 
   const ticket = ++running;
   for (let i = 0; i < targets.length; i += CONCURRENCY) {

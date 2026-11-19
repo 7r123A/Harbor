@@ -14,6 +14,8 @@ import {
 import { loadUserDirectory } from "./user-directory";
 import { getMutualMatch } from "./mutual-ratings";
 import type { MutualMatch } from "./mutual-score";
+import { tmdbImdbId, tmdbIdFromImdb } from "@/lib/providers/tmdb/tmdb-imdb-resolve";
+import { loadStoredSettings } from "@/lib/settings/load";
 
 /**
  * Harbor now publishes a review hub at GET /social/reviews, which filters by title on the
@@ -131,7 +133,6 @@ async function loadHubTitleRatings(
  * can already see.
  */
 /** People whose history is scanned for one title. Ratings are cached, so this is not per render. */
-const FRIEND_CAP = 48;
 const COMMUNITY_CAP = 40;
 /** Recent pages of a person's history (20 ratings each) before we stop looking for a title. */
 const PAGE_CAP = 3;
@@ -189,8 +190,9 @@ async function scanHistory(handle: string, mediaType: RatingMediaType): Promise<
           cursor ? { type: mediaType, cursor } : { type: mediaType },
         );
         for (const item of result.items ?? []) {
-          if (seen.has(item.itemKey)) continue;
-          seen.add(item.itemKey);
+          const key = `${item.mediaType}|${item.itemKey}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
           items.push(item);
         }
         if (!result.nextCursor || result.nextCursor === cursor) {
@@ -218,6 +220,18 @@ async function scanAuthors(
   authors: readonly AuthorMeta[],
   target: TitleRef,
 ): Promise<{ ratings: TitleRating[]; complete: boolean }> {
+  if (target.mediaType === "movie" || target.mediaType === "series") {
+    try {
+      const key = loadStoredSettings().tmdbKey;
+      if (key && target.itemKey.startsWith("tmdb:")) {
+        await tmdbImdbId(key, target.itemKey);
+      } else if (key && /^tt\d+$/.test(target.itemKey)) {
+        await tmdbIdFromImdb(key, target.itemKey, target.mediaType);
+      }
+    } catch {
+      // Optional ID resolution must not prevent reading the rating histories themselves.
+    }
+  }
   const ratings: TitleRating[] = [];
   let complete = true;
   for (let i = 0; i < authors.length; i += CONCURRENCY) {
@@ -269,11 +283,11 @@ export async function loadFriendTitleRatings(
     return { ratings: [], complete: status !== 401, scanned: 0, signedOut: status === 401 };
   }
 
-  const authors = friends.slice(0, FRIEND_CAP).map(toAuthorMeta);
+  const authors = friends.map(toAuthorMeta);
   const { ratings, complete } = await scanAuthors(authors, target);
   return {
     ratings: mergeTitleRatings(ratings, target, self.handle),
-    complete: complete && friends.length <= FRIEND_CAP,
+    complete,
     scanned: authors.length,
     signedOut: false,
     source: "scan",
@@ -368,14 +382,18 @@ export function loadTitleRatingSummary(target: TitleRef): Promise<TitleRatingSum
   ])
     .then(([snapshot, friends]) => {
       if (!isCurrent()) throw new Error("Account changed");
+      const ratings = mergeTitleRatings(
+        [...snapshot.ratings, ...friends.ratings],
+        target,
+        currentAuthor()?.handle,
+      );
       return {
-        averageScore: snapshot.ratings.length
-          ? snapshot.ratings.reduce((total, rating) => total + rating.score, 0) /
-            snapshot.ratings.length
+        averageScore: ratings.length
+          ? ratings.reduce((total, rating) => total + rating.score, 0) / ratings.length
           : null,
-        recentRatings: snapshot.ratings.slice(0, 3),
+        recentRatings: ratings.slice(0, 3),
         friends: friends.ratings,
-        total: snapshot.ratings.length,
+        total: ratings.length,
       };
     })
     .catch((error) => {

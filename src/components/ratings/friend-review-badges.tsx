@@ -1,12 +1,13 @@
 import { useT } from "@/lib/i18n";
 import { useEffect, useRef } from "react";
+import { inferRatingMediaType } from "@/lib/ratings/types";
 import {
   ensureMarksForTitle,
   markKeyForItem,
   useFriendReviewIndex,
   useTitleHoverSummary,
 } from "@/lib/social/friend-review-index";
-import { UnratedReviewIcon } from "@/components/icons/unrated-review-icon";
+import { HarborMark } from "@/components/icons/harbor-mark";
 import { HoverTooltip } from "@/components/hover-tooltip";
 import { Avatar } from "@/views/profile/profile-bits";
 import type { FriendReviewMark } from "@/lib/social/friend-review-index";
@@ -16,11 +17,10 @@ import type { FriendReviewMark } from "@/lib/social/friend-review-index";
  * many more did. Reads the shared friends-feed index, so a rail of cards costs one feed read.
  */
 function contentTypeFor(metaId: string, kind?: string): string {
-  if (kind === "manga") return "manga";
-  // Anime IDs can be carried by metas whose display type is only movie or series.
-  if (/^(kitsu|mal|anilist|anidb):/i.test(metaId)) return "anime";
-  if (kind === "series" || kind === "movie" || kind === "anime") return kind;
-  return "movie";
+  return inferRatingMediaType(metaId, {
+    type: kind,
+    isAnime: /^(kitsu|mal|anilist|anidb):/i.test(metaId),
+  });
 }
 
 /**
@@ -100,15 +100,20 @@ export function FriendReviewBadges({
           ref={badgeRef}
           role="img"
           aria-label={t("No ratings yet. Be the first to rate!")}
-          className="inline-flex shrink-0 items-center rounded-full p-0.5 text-ink-muted transition-colors hover:text-ink"
-          style={{
-            backgroundColor: "color-mix(in srgb, var(--color-ink) 20%, var(--color-canvas))",
-          }}
+          className="inline-flex shrink-0 items-center gap-1.5 text-ink-muted transition-colors hover:text-ink"
         >
-          <UnratedReviewIcon size={avatarSize} />
           <span
-            className="inline-flex shrink-0 items-center ps-1.5 pe-2 text-[12px] font-semibold leading-none tabular-nums text-ink"
-            style={{ height: avatarSize }}
+            className="inline-flex shrink-0 items-center justify-center text-white"
+            style={{ width: avatarSize, height: avatarSize }}
+          >
+            <HarborMark className="h-[75%] w-[75%]" />
+          </span>
+          <span
+            className="inline-flex shrink-0 items-center rounded-full px-2 text-[12px] font-semibold leading-none tabular-nums text-ink"
+            style={{
+              height: avatarSize,
+              backgroundColor: "color-mix(in srgb, var(--color-ink) 20%, var(--color-canvas))",
+            }}
             aria-hidden="true"
           >
             —
@@ -132,11 +137,7 @@ export function FriendReviewBadges({
       title={totalCount > 0 ? label : undefined}
       className={`pointer-events-none z-10 flex items-center ${className}`}
     >
-      <span
-        ref={badgeRef}
-        className="inline-flex shrink-0 items-center rounded-full p-0.5"
-        style={{ backgroundColor: "color-mix(in srgb, var(--color-ink) 20%, var(--color-canvas))" }}
-      >
+      <span ref={badgeRef} className="inline-flex shrink-0 items-center gap-1.5">
         {shown.length > 0 && (
           <span className="relative z-10 inline-flex shrink-0 items-center">
             {shown.map((mark, i) => (
@@ -164,8 +165,11 @@ export function FriendReviewBadges({
         {averageScore !== null && (
           <span
             title={t("Harbor users average score")}
-            className="inline-flex shrink-0 items-center ps-1.5 pe-2 text-[12px] font-semibold leading-none tabular-nums text-ink"
-            style={{ height: avatarSize }}
+            className="inline-flex shrink-0 items-center rounded-full px-2 text-[12px] font-semibold leading-none tabular-nums text-ink"
+            style={{
+              height: avatarSize,
+              backgroundColor: "color-mix(in srgb, var(--color-ink) 20%, var(--color-canvas))",
+            }}
           >
             <span>{averageScore.toFixed(1)}</span>
           </span>

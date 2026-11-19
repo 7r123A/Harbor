@@ -1,6 +1,7 @@
 import { parseQuotedBody } from "@/lib/ratings/quote";
 import type { PublicRating, RatingMediaType } from "@/lib/ratings/types";
 import type { MutualMatch } from "./mutual-score";
+import { tmdbImdbCached, tmdbFromImdbCached } from "@/lib/providers/tmdb/tmdb-imdb-resolve";
 
 /** The exact title a review belongs to: an item key is only unique inside its media type. */
 export type TitleRef = { itemKey: string; mediaType: RatingMediaType };
@@ -31,7 +32,15 @@ export function foldHandle(handle: string | null | undefined): string {
 }
 
 export function sameTitle(a: TitleRef, b: TitleRef): boolean {
-  return a.itemKey === b.itemKey && a.mediaType === b.mediaType;
+  if (a.mediaType !== b.mediaType) return false;
+  if (a.itemKey === b.itemKey) return true;
+  const aImdb = tmdbImdbCached(a.itemKey);
+  const bImdb = tmdbImdbCached(b.itemKey);
+  return (
+    !!(aImdb && bImdb && aImdb === bImdb) ||
+    tmdbFromImdbCached(a.itemKey) === b.itemKey ||
+    tmdbFromImdbCached(b.itemKey) === a.itemKey
+  );
 }
 
 function timeOf(at: string): number {
