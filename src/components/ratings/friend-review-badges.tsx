@@ -104,9 +104,9 @@ export function FriendReviewBadges({
         >
           <span
             className="inline-flex shrink-0 items-center justify-center text-ink-muted"
-            style={{ width: avatarSize, height: avatarSize }}
+            style={{ width: avatarSize + 4, height: avatarSize + 4 }}
           >
-            <UnratedReviewIcon size={avatarSize} />
+            <UnratedReviewIcon size={avatarSize + 4} />
           </span>
           <span
             className="inline-flex shrink-0 items-center rounded-full px-2 text-[12px] font-semibold leading-none tabular-nums text-ink"

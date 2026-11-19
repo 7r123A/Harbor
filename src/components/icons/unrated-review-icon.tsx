@@ -3,7 +3,7 @@ export function UnratedReviewIcon({ size = 26 }: { size?: number }) {
     <svg
       width={size}
       height={size}
-      viewBox="0 0 32 36"
+      viewBox="0 0 32 40"
       fill="none"
       stroke="currentColor"
       strokeWidth={1.7}
@@ -21,14 +21,14 @@ export function UnratedReviewIcon({ size = 26 }: { size?: number }) {
           strokeWidth={1.2}
         />
       ))}
-      <circle cx={16} cy={26} r={8} />
-      <circle cx={16} cy={23.5} r={2.5} />
-      <path d="M10 31c1-6 11-6 12 0" />
+      <circle cx={16} cy={28} r={10} />
+      <circle cx={16} cy={25} r={3} />
+      <path d="M8 35c1.3-8 14.7-8 16 0" />
       <path
-        d="m11 21 10 10m0-10L11 31"
+        d="m12.5 25 7 7m0-7-7 7"
         stroke="var(--color-danger, #ef7474)"
-        strokeWidth={2.6}
-        opacity={0.9}
+        strokeWidth={1.8}
+        opacity={0.8}
       />
     </svg>
   );
