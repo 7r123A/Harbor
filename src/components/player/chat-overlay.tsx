@@ -11,6 +11,7 @@ import { pushBackHandler } from "@/lib/back-intercept";
 import { useSettings } from "@/lib/settings";
 
 const COMPOSE_TIMEOUT_MS = 4500;
+const STICK_TO_BOTTOM_PX = 24;
 
 const CORNER_POSITION: Record<PanelCorner, string> = {
   "top-left": "top-20 left-6 items-start",
@@ -47,6 +48,7 @@ export function ChatOverlay({
   const inputRef = useRef<HTMLInputElement>(null);
   const composeTimer = useRef<number | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
 
   useEffect(() => {
     const id = window.setInterval(() => setTickNow(Date.now()), 1000);
@@ -64,18 +66,29 @@ export function ChatOverlay({
         setComposing(true);
         setTimeout(() => inputRef.current?.focus(), 30);
       }
-      if (e.key === "Escape") {
-        if (composing) {
-          setComposing(false);
-          setDraft("");
-        } else if (historyOpen) {
-          setHistoryOpen(false);
-        }
+      if (e.key === "Escape" && composing) {
+        setComposing(false);
+        setDraft("");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [composing, historyOpen]);
+  }, [composing]);
+
+  // Escape that closes the history must not reach the player's close binding,
+  // so it is taken in the capture phase like other player overlays.
+  useEffect(() => {
+    if (!historyOpen || keepHistoryOpen || composing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (document.querySelector('[data-harbor-context-layer][data-menu-phase="open"]')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setHistoryOpen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [historyOpen, keepHistoryOpen, composing]);
 
   useEffect(() => {
     setHistoryOpen(keepHistoryOpen);
@@ -90,8 +103,17 @@ export function ChatOverlay({
   }, [historyOpen, keepHistoryOpen]);
 
   useEffect(() => {
-    if (!historyOpen || !listRef.current) return;
-    listRef.current.scrollTop = listRef.current.scrollHeight;
+    const el = listRef.current;
+    if (!historyOpen || !el) return;
+    stickToBottom.current = true;
+    el.scrollTop = el.scrollHeight;
+  }, [historyOpen]);
+
+  // New messages follow the bottom only when the reader was already there.
+  useEffect(() => {
+    const el = listRef.current;
+    if (!historyOpen || !el || !stickToBottom.current) return;
+    el.scrollTop = el.scrollHeight;
   }, [historyOpen, messages.length]);
 
   useEffect(() => {
@@ -133,6 +155,11 @@ export function ChatOverlay({
     >
       <div
         ref={listRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stickToBottom.current =
+            el.scrollHeight - el.scrollTop - el.clientHeight < STICK_TO_BOTTOM_PX;
+        }}
         className={`flex max-w-full flex-col ${align} ${
           historyOpen
             ? "pointer-events-auto max-h-[45vh] overflow-y-scroll overscroll-contain pe-1"
