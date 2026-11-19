@@ -609,6 +609,9 @@ export function dismissCw(
     const cloudWrites: Promise<boolean>[] = [];
     let cleanupError: unknown;
     for (const member of [item, ...members]) {
+      // A display-only repaired proxy has never existed in the remote library.
+      // Only its genuine original members can authorize a cloud cleanup.
+      if (member.cwRepairSourceId) continue;
       const id = member._id;
       if (!id) continue;
       const { season, episode } = resolveEpisode(member);

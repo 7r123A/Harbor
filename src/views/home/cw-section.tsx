@@ -14,6 +14,7 @@ import type { ContinueDismiss } from "@/lib/continue-card-actions";
 import { QueueContinueCard } from "@/components/queue-basket/queue-continue-card";
 import { useQueueResumeItem } from "@/lib/queue";
 import { useIdentityCardGrouping } from "@/lib/identity/use-card-grouping";
+import { useSettings } from "@/lib/settings";
 
 type Props = {
   signedIn: boolean;
@@ -32,7 +33,9 @@ export function CWSection({
   onDismiss,
   loading,
 }: Props) {
-  const items = useIdentityCardGrouping(rawItems);
+  const { settings } = useSettings();
+  const repairEnabled = settings.animeIdentityEnabled && settings.animeIdentityRepairEnabled;
+  const items = useIdentityCardGrouping(rawItems, repairEnabled);
   const t = useT();
   const queueResumeItem = useQueueResumeItem();
   const showQueueCard = queueResumeItem !== null;

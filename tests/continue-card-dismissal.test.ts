@@ -432,3 +432,71 @@ test("an old failure cannot resurrect a queue entry after the newer request comp
   await assert.rejects(old, /newer/i);
   assert.equal(queue.queuedWatched("older-b", "fixture-auth"), undefined);
 });
+
+test("repaired display proxy dismisses its real source only and stays dismissed after restart", async () => {
+  const h = harness();
+  const original = {
+    ...entry(),
+    _id: "mal:14719",
+    name: "JoJo's Bizarre Adventure (2012)",
+    state: {
+      ...entry().state,
+      season: 6, episode: 1, video_id: "kitsu:49847:1",
+      timeOffset: 240_000, duration: 1_440_000,
+      lastWatched: "2026-11-19T10:00:00Z",
+    },
+  };
+  const repaired = {
+    ...original,
+    _id: "kitsu:49847",
+    cwRepairSourceId: original._id,
+    cwMembers: [original],
+  };
+  const playbackHistory = "preserve-other-viewings";
+  h.data.set("harbor.playback-history.v1", playbackHistory);
+  const cw = h.load("cw-dismiss");
+  const result = await cw.dismissCw(repaired, "fixture-auth", { acknowledged: true });
+  assert.equal(result.sync, "synced");
+  assert.equal(h.writes.length, 1, "only one genuine library source is cleared");
+  assert.equal(h.writes[0].item._id, "mal:14719");
+  assert.equal(h.writes[0].item.state.timeOffset, 0);
+  assert.equal(h.data.get("harbor.playback-history.v1"), playbackHistory);
+  assert.equal(cw.isCwDismissed(original), true);
+  assert.equal(cw.isCwDismissed(repaired), true);
+
+  const restarted = harness();
+  h.data.forEach((value, key) => restarted.data.set(key, value));
+  const loaded = restarted.load("cw-dismiss");
+  assert.equal(loaded.isCwDismissed(original), true);
+  assert.equal(loaded.isCwDismissed(repaired), true);
+  // New activity after dismissal remains eligible: this must not block rewatches.
+  const newProgress = {
+    ...original, state: {
+      ...original.state, timeOffset: 360_000,
+      lastWatched: new Date(Date.now() + 60_000).toISOString(),
+    },
+  };
+  assert.equal(loaded.isCwDismissed(newProgress), false);
+});
+
+test("when a real native sibling is merged, dismissal clears both genuine source records", async () => {
+  const h = harness();
+  const original = {
+    ...entry(), _id: "mal:14719",
+    state: { ...entry().state, season: 6, episode: 1, video_id: "kitsu:49847:1" },
+  };
+  const native = {
+    ...entry(), _id: "kitsu:49847",
+    state: { ...entry().state, season: 6, episode: 1, video_id: "kitsu:49847:1" },
+  };
+  const repaired = {
+    ...original, _id: "kitsu:49847",
+    cwRepairSourceId: original._id,
+    cwMembers: [original, native],
+  };
+  const result = await h.load("cw-dismiss").dismissCw(repaired, "fixture-auth", { acknowledged: true });
+  assert.equal(result.sync, "synced");
+  assert.deepEqual(new Set(h.writes.map((w) => w.item._id)),
+    new Set(["mal:14719", "kitsu:49847"]));
+  assert.equal(h.writes.length, 2, "no third write for the synthetic display proxy");
+});

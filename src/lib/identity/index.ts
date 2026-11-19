@@ -1,6 +1,7 @@
 import { clearIdentityCardCache } from "./card-grouping";
 import { invokeIdentity, setIdentityInvoker } from "./client";
 import { clearIdentityMisKeyCache } from "./mis-key";
+import { clearVerifiedCwRepairs } from "./cw-repair";
 import { identityEnabled, identityFlags } from "./flags";
 import type { IdentityBundle, IdentityLookup, IdentityStatus } from "./types";
 
@@ -49,6 +50,7 @@ export function clearIdentityCache(): void {
   // A pack swap changes card keys and retirement decisions too.
   clearIdentityCardCache();
   clearIdentityMisKeyCache();
+  clearVerifiedCwRepairs();
 }
 
 /**

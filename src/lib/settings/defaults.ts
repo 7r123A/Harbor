@@ -529,6 +529,7 @@ export const DEFAULT: Settings = {
   animeCwEnd: "hide",
   cwAdvanceNext: true,
   animeIdentityEnabled: false,
+  animeIdentityRepairEnabled: false,
   cwHideCaughtUp: true,
   cwPlayUnreleased: true,
   useNativeTitleBar: false,

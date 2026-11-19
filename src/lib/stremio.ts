@@ -48,6 +48,10 @@ export type LibraryItem = {
   providerPlaybackIds?: Partial<Record<"trakt" | "simkl" | "publicmetadb", string>>;
   /** Original source checkpoints represented by a verified anime CW group. */
   cwMembers?: LibraryItem[];
+  /** Display-only native correction: resume/sync still use the original source id. */
+  cwRepairSourceId?: string;
+  /** Verified exact native stream for offline picker/tracker resolution. */
+  cwRepairNativeStreamId?: string;
   isAnime?: boolean;
   upNext?: boolean;
   /** A verified caught-up card: show it neutrally without a countdown. */

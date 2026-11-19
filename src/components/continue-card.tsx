@@ -647,6 +647,12 @@ export const ContinueCard = memo(function ContinueCard({
         background: item.background,
       };
 
+  // Identity repair only changes the displayed work. Playback must continue
+  // reading the original source checkpoint; the episode carries the native
+  // Kitsu stream/sourceMetaId for correct picker and tracker targeting.
+  const playbackMeta: Meta = item.cwRepairSourceId
+    ? { ...meta, id: item.cwRepairSourceId }
+    : meta;
   const rawTitle = translatedTitle || hydratedMeta?.name?.trim() || item.name;
   const displayTitle = isAnimeCwItem(item)
     ? stripAnimeArcSuffix(stripFranchiseSuffix(rawTitle)) || rawTitle
@@ -681,7 +687,8 @@ export const ContinueCard = memo(function ContinueCard({
       effectiveKitsuVideo ?? (ep ? await resolveCwAnimeVideo(item, ep).catch(() => null) : null);
     const stateStreamId = item.state?.video_id;
     const directStreamId =
-      video?.id ?? (/^kitsu:\d+:\d+$/.test(stateStreamId ?? "") ? stateStreamId : undefined);
+      item.cwRepairNativeStreamId ?? video?.id ??
+      (/^kitsu:\d+:\d+$/.test(stateStreamId ?? "") ? stateStreamId : undefined);
     const animePlay = await resolveCwAnimePlayEpisode({
       metaId: item._id,
       videoId: item.state?.video_id,
@@ -692,7 +699,20 @@ export const ContinueCard = memo(function ContinueCard({
       kitsuStreamId: directStreamId,
       name: episodeTitle ?? video?.title ?? undefined,
     });
-    if (animePlay) return animePlay;
+    if (animePlay) {
+      // The native Kitsu stream owns tracker progress, but the ORIGINAL
+      // catalog row's provider S/E owns resume and Stremio playback history.
+      // A split cour can have native episode 1 at provider S2E13.
+      if (item.cwRepairSourceId && item.cwRepairNativeStreamId && ep)
+        return {
+          ...animePlay,
+          season: ep.season,
+          episode: ep.episode,
+          sourceMetaId: item._id,
+          kitsuStreamId: item.cwRepairNativeStreamId,
+        };
+      return animePlay;
+    }
     let episode: PlayEpisode | undefined = item.type === "series" && ep ? ep : undefined;
     if (!episode && kitsuThreeSeg) {
       if (video) {
@@ -735,6 +755,16 @@ export const ContinueCard = memo(function ContinueCard({
     // ordinary series) still gives the presence an episode name.
     if (episode && !episode.name && episodeTitle) episode = { ...episode, name: episodeTitle };
     if (episode && !episode.still && epStill) episode = { ...episode, still: epStill };
+    // The original checkpoint owns playback, while the verified Kitsu entry
+    // owns this stream and its AniList/MAL/Simkl episode progress.
+    if (episode && item.cwRepairSourceId && /^kitsu:[1-9]\d*$/.test(item._id)) {
+      const saved = item.cwRepairNativeStreamId ??
+        (/^kitsu:[1-9]\d*:[1-9]\d*$/.test(item.state?.video_id ?? "")
+          ? item.state?.video_id
+          : episode.kitsuStreamId);
+      if (saved?.startsWith(`${item._id}:`))
+        episode = { ...episode, sourceMetaId: item._id, kitsuStreamId: saved };
+    }
     return episode;
   };
 
@@ -745,12 +775,12 @@ export const ContinueCard = memo(function ContinueCard({
   ) => {
     const stream = () => {
       assertCurrent();
-      openPicker(meta, episode, { autoPlay: !chooseEveryTime, resume: !chooseEveryTime });
+      openPicker(playbackMeta, episode, { autoPlay: !chooseEveryTime, resume: !chooseEveryTime });
     };
-    const tmdbMatch = meta.id.match(/^tmdb:(?:movie|tv):(\d+)$/);
+    const tmdbMatch = playbackMeta.id.match(/^tmdb:(?:movie|tv):(\d+)$/);
     const identity = {
       tmdbId: tmdbMatch ? Number(tmdbMatch[1]) : undefined,
-      imdbId: meta.id.startsWith("tt") ? meta.id : undefined,
+      imdbId: playbackMeta.id.startsWith("tt") ? playbackMeta.id : undefined,
     };
     const kind = episode ? "series" : "movie";
     const connections = mediaServerConnections();
@@ -764,7 +794,7 @@ export const ContinueCard = memo(function ContinueCard({
       episode?.episode,
     );
     const serverCopies = serverPlayableCopies(serverItems, connections);
-    const local = resolveLocalPlayVersions(meta, episode ?? null, identity.imdbId);
+    const local = resolveLocalPlayVersions(playbackMeta, episode ?? null, identity.imdbId);
     const playLocal = (entry: (typeof local)[number]) => {
       assertCurrent();
       const source = localPlayerSrc(entry, undefined, episode);
@@ -772,9 +802,9 @@ export const ContinueCard = memo(function ContinueCard({
         ...source,
         meta: {
           ...source.meta,
-          id: meta.id,
-          poster: meta.poster ?? source.meta.poster,
-          background: meta.background,
+          id: playbackMeta.id,
+          poster: playbackMeta.poster ?? source.meta.poster,
+          background: playbackMeta.background,
         },
       });
     };
@@ -786,7 +816,7 @@ export const ContinueCard = memo(function ContinueCard({
       );
       if (!connection || !item) return;
       const source = await createMediaServerPlayerSrc({
-        meta,
+        meta: playbackMeta,
         imdbId: identity.imdbId,
         episode,
         connection,
@@ -838,7 +868,7 @@ export const ContinueCard = memo(function ContinueCard({
   ): Promise<boolean> => {
     // Continue Watching already knows the source that played a moment ago.
     // Opening it directly avoids waiting for the picker's source pipeline.
-    const actual = readActualPlaybackForTarget(meta.id, episode?.season, episode?.episode);
+    const actual = readActualPlaybackForTarget(playbackMeta.id, episode?.season, episode?.episode);
     if (!actual) {
       return false;
     }
@@ -849,7 +879,7 @@ export const ContinueCard = memo(function ContinueCard({
     if (src.homeServer) return false;
     if (actual.requiresSourceRefresh || src.streamRef?.infoHash) {
       assertCurrent();
-      openPicker(meta, episode, {
+      openPicker(playbackMeta, episode, {
         autoPlay: true,
         resume: true,
         continuation: continuationFor(actual, capturePlaybackActor()),
@@ -858,7 +888,7 @@ export const ContinueCard = memo(function ContinueCard({
     }
     if (!canReuseRecentRemotePlayback(actual)) return false;
     const resumeMs =
-      readResumeEntry(meta.id, episode?.season, episode?.episode)?.ms ?? actual.positionMs;
+      readResumeEntry(playbackMeta.id, episode?.season, episode?.episode)?.ms ?? actual.positionMs;
     const actor = capturePlaybackActor();
     const historyUrl = src.historyUrl ?? src.url;
     const url = await resolvePlaybackRedirect({

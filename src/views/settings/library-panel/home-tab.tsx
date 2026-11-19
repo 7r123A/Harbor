@@ -430,6 +430,17 @@ export function HomeTab() {
           value={settings.animeIdentityEnabled}
           onChange={(v) => update({ animeIdentityEnabled: v })}
         />
+        {settings.animeIdentityEnabled && (
+          <ToggleRow
+            label={t("Repair verified anime Continue Watching identities")}
+            newId="home:anime-identity-repair"
+            sub={t(
+              "Opt in to a display-only correction when a saved native stream or exact catalog episode proof and the local database establish one anime owner. Saved progress stays intact; external tracker, next-up and ambiguous cards are untouched.",
+            )}
+            value={settings.animeIdentityRepairEnabled}
+            onChange={(v) => update({ animeIdentityRepairEnabled: v })}
+          />
+        )}
         <AnimeIdentityStatus enabled={settings.animeIdentityEnabled} />
       </Section>
     </>

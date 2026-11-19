@@ -48,7 +48,9 @@ function harness(
   let target: any;
   const starts: any[] = [];
   const removed: any[] = [];
+  const playbackQueries: unknown[][] = [];
   const noopProvider = {
+    pickEpisodeTitle: () => null,
     aniZipByAnidb: async () => null,
     aniZipByAnilist: async () => null,
     aniZipByKitsu: async () => null,
@@ -184,7 +186,10 @@ function harness(
     "@/lib/playback-history": {
       capturePlaybackActor: () => profile,
       isPlaybackActorCurrent: (actor: string) => profile === actor,
-      readActualPlaybackForTarget: () => actual,
+      readActualPlaybackForTarget: (...args: unknown[]) => {
+        playbackQueries.push(args);
+        return actual;
+      },
     },
     "@/lib/cw-dismiss": {
       isCwDismissed: (item: any) => removed.some((entry) => entry._id === item._id),
@@ -240,6 +245,7 @@ function harness(
   return {
     starts,
     removed,
+    playbackQueries,
     videoCalls,
     titleCalls,
     item,
@@ -764,6 +770,115 @@ test("a hydration reset without a key change re-resolves the cour", async () => 
     await h.flush();
 
     assert.equal(h.videoCalls.length, 2, "the cleared cour resolves again");
+  } finally {
+    await h.dispose();
+  }
+});
+
+
+test("a repaired anime card plays the verified native stream while resuming its original source", async () => {
+  const source = {
+    _id: "mal:14719", type: "series", name: "JoJo's Bizarre Adventure (2012)",
+    state: {
+      season: 6, episode: 1, video_id: "kitsu:49847:1",
+      timeOffset: 240_000, duration: 1_440_000,
+    },
+  };
+  const card = {
+    ...source,
+    _id: "kitsu:49847",
+    cwRepairSourceId: source._id,
+    cwMembers: [source],
+  };
+  const h = harness(null, { item: card });
+  try {
+    await h.render();
+    await h.click("button[title='Play']");
+    await h.flush();
+    const play = h.starts.at(-1);
+    assert.equal(play.meta.id, "mal:14719", "resume/sync uses the actual library source");
+    assert.equal(play.episode.sourceMetaId, "kitsu:49847", "tracker targets native entry");
+    assert.equal(play.episode.kitsuStreamId, "kitsu:49847:1");
+    assert.deepEqual(play.mode, { autoPlay: true, resume: true });
+    assert.equal(h.playbackQueries.at(-1)?.[0], "mal:14719");
+
+    await h.click("button[title='Choose another source']");
+    await h.flush();
+    const choose = h.starts.at(-1);
+    assert.equal(choose.meta.id, "mal:14719");
+    assert.equal(choose.episode.sourceMetaId, "kitsu:49847");
+    assert.equal(choose.episode.kitsuStreamId, "kitsu:49847:1");
+
+    await h.click("button[aria-label^='Open details:']");
+    assert.equal(h.starts.at(-1)?.details?.id, "kitsu:49847", "details use native owner");
+
+    await h.click("button[aria-label='Remove from Continue Watching']");
+    assert.equal(h.removed.length, 1);
+    assert.equal(h.removed[0].cwRepairSourceId, "mal:14719");
+    assert.deepEqual(h.removed[0].cwMembers, [source]);
+  } finally {
+    await h.dispose();
+  }
+});
+
+test("an offline repaired IMDb catalog card uses the verified native stream but keeps catalog resume", async () => {
+  const source = {
+    _id: "tt2359704", type: "series", name: "JoJo's Bizarre Adventure",
+    isAnime: true,
+    state: {
+      season: 6, episode: 1, video_id: "tt2359704:6:1",
+      timeOffset: 360_000, duration: 1_440_000,
+    },
+  };
+  const card = {
+    ...source, _id: "kitsu:49847",
+    cwRepairSourceId: source._id,
+    cwRepairNativeStreamId: "kitsu:49847:1",
+    cwMembers: [source],
+  };
+  const h = harness(null, { item: card });
+  try {
+    await h.render();
+    await h.click("button[title='Play']");
+    await h.flush();
+    const request = h.starts.at(-1);
+    assert.equal(request.meta.id, "tt2359704");
+    assert.equal(request.episode.kitsuStreamId, "kitsu:49847:1");
+    assert.equal(request.episode.sourceMetaId, "kitsu:49847");
+    assert.deepEqual(request.mode, { autoPlay: true, resume: true });
+    assert.equal(h.playbackQueries.at(-1)?.[0], "tt2359704");
+  } finally {
+    await h.dispose();
+  }
+});
+
+test("split-cour repairs preserve original provider episode 13 for resume and native episode 1 for trackers", async () => {
+  const source = {
+    _id: "tt13706018", type: "series", name: "Spy x Family",
+    isAnime: true,
+    state: {
+      season: 1, episode: 13, video_id: "tt13706018:1:13",
+      timeOffset: 480_000, duration: 1_440_000,
+    },
+  };
+  const card = {
+    ...source, _id: "kitsu:45619",
+    cwRepairSourceId: source._id,
+    cwRepairNativeStreamId: "kitsu:45619:1",
+    cwMembers: [source],
+  };
+  const h = harness(null, { item: card });
+  try {
+    await h.render();
+    await h.click("button[title='Play']");
+    await h.flush();
+    const request = h.starts.at(-1);
+    assert.equal(request.meta.id, "tt13706018");
+    assert.equal(request.episode.season, 1);
+    assert.equal(request.episode.episode, 13, "original provider coordinate controls resume");
+    assert.equal(request.episode.kitsuStreamId, "kitsu:45619:1");
+    assert.equal(request.episode.sourceMetaId, "kitsu:45619");
+    assert.deepEqual(h.playbackQueries.at(-1), ["tt13706018", 1, 13]);
   } finally {
     await h.dispose();
   }
