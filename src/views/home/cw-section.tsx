@@ -13,6 +13,7 @@ import { isLibraryItemWatched } from "@/lib/trakt/library-key";
 import type { ContinueDismiss } from "@/lib/continue-card-actions";
 import { QueueContinueCard } from "@/components/queue-basket/queue-continue-card";
 import { useQueueResumeItem } from "@/lib/queue";
+import { useIdentityCardGrouping } from "@/lib/identity/use-card-grouping";
 
 type Props = {
   signedIn: boolean;
@@ -23,7 +24,15 @@ type Props = {
   loading?: boolean;
 };
 
-export function CWSection({ signedIn, isNuvio, items, watchedSet, onDismiss, loading }: Props) {
+export function CWSection({
+  signedIn,
+  isNuvio,
+  items: rawItems,
+  watchedSet,
+  onDismiss,
+  loading,
+}: Props) {
+  const items = useIdentityCardGrouping(rawItems);
   const t = useT();
   const queueResumeItem = useQueueResumeItem();
   const showQueueCard = queueResumeItem !== null;

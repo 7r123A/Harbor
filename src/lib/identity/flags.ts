@@ -23,6 +23,7 @@ export function identityFlags(): IdentityFlags {
     return {
       pack: parsed?.pack === true,
       shadow: parsed?.shadow === true,
+      cards: parsed?.cards === true,
     };
   } catch {
     return { ...IDENTITY_FLAG_DEFAULTS };
@@ -46,5 +47,5 @@ export function resetIdentityFlags(): void {
 
 export function identityEnabled(): boolean {
   const flags = identityFlags();
-  return flags.pack || flags.shadow;
+  return flags.pack || flags.shadow || flags.cards;
 }

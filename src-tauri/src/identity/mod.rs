@@ -43,6 +43,7 @@ mod live_tests {
         runtime.block_on(async {
             let started = Instant::now();
             let pack = pack::download_latest().await.expect("download pack");
+            let windows_xml = pack::download_anime_lists().await.expect("download windows");
             let download_ms = started.elapsed().as_millis();
 
             let path = std::env::temp_dir().join(format!(
@@ -59,6 +60,7 @@ mod live_tests {
             let reader = pack::decode_zstd(&pack.bytes).expect("decode zstd");
             let summary = import::import_jsonl(&mut conn, reader, &pack.version, &pack.sha256, 0)
                 .expect("import pack");
+            let windows = import::import_windows(&mut conn, &windows_xml).expect("import windows");
             let import_ms = import_started.elapsed().as_millis();
             let bytes = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
 
@@ -78,6 +80,9 @@ mod live_tests {
                 summary.related_edges
             );
             assert!(tensei2 > 0);
+            // Anime-Lists maps ~7.5k of the pack's AniDB ids to a TVDB/TMDB
+            // show; that is the measured window coverage, not a bug.
+            assert!(windows > 5_000, "windows: {windows}");
             assert!(bytes < 25 * 1024 * 1024, "db bytes: {bytes}");
 
             let sbr_aliases: i64 = conn
@@ -88,13 +93,14 @@ mod live_tests {
                 )
                 .unwrap();
             println!(
-                "identity smoke: download={download_ms}ms import={import_ms}ms db={:.1}MB entries={} identities={} related_entries={} related_edges={} sbr_aliases={}",
+                "identity smoke: download={download_ms}ms import={import_ms}ms db={:.1}MB entries={} identities={} related_entries={} related_edges={} sbr_aliases={} windows={}",
                 bytes as f64 / 1_048_576.0,
                 summary.entries,
                 summary.identities,
                 summary.related_entries,
                 summary.related_edges,
-                sbr_aliases
+                sbr_aliases,
+                windows
             );
             drop(conn);
             let _ = std::fs::remove_file(&path);

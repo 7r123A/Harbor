@@ -12,6 +12,7 @@ export type IdentityStatus = {
   upstreamSha256: string | null;
   builtAt: number | null;
   entries: number;
+  windows: number;
   schema: number;
 };
 
@@ -23,8 +24,23 @@ export type IdentityWindow = {
   anidb: number | null;
   tvdb: number | null;
   tmdbtv: number | null;
+  tvdbSeason: number | null;
+  tvdbOffset: number | null;
+  tmdbSeason: number | null;
+  tmdbOffset: number | null;
+};
+
+export type IdentityCardHint = {
+  id: string;
+  entry: number | null;
+  title: string | null;
+  mediaType: string | null;
+  cardKey: string | null;
+  tvdb: number | null;
+  tmdb: number | null;
   season: number | null;
   offset: number | null;
+  provisional: boolean;
 };
 
 export type IdentityBundle = {
@@ -40,6 +56,7 @@ export type IdentityBundle = {
 export type IdentityFlags = {
   pack: boolean;
   shadow: boolean;
+  cards: boolean;
 };
 
-export const IDENTITY_FLAG_DEFAULTS: IdentityFlags = { pack: false, shadow: false };
+export const IDENTITY_FLAG_DEFAULTS: IdentityFlags = { pack: false, shadow: false, cards: false };

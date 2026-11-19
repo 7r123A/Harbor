@@ -6,7 +6,7 @@ use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -17,6 +17,7 @@ pub struct IdentityStatus {
     pub upstream_sha256: Option<String>,
     pub built_at: Option<i64>,
     pub entries: i64,
+    pub windows: i64,
     pub schema: i64,
 }
 
@@ -77,6 +78,7 @@ pub fn status(app: &AppHandle, cached: Option<&Connection>) -> Result<IdentitySt
             upstream_sha256: None,
             built_at: None,
             entries: 0,
+            windows: 0,
             schema: 0,
         });
     }
@@ -96,6 +98,7 @@ pub fn status(app: &AppHandle, cached: Option<&Connection>) -> Result<IdentitySt
             built_at: read_meta(conn, "built_at")
                 .and_then(|value| value.parse::<i64>().ok()),
             entries: int("entries"),
+            windows: int("windows"),
             schema,
         })
     };
@@ -171,6 +174,6 @@ mod tests {
     #[test]
     fn status_of_missing_dir_is_not_ready() {
         // Path helpers require an AppHandle, so only pure parsing is unit-tested here.
-        assert_eq!(SCHEMA_VERSION, 1);
+        assert_eq!(SCHEMA_VERSION, 2);
     }
 }

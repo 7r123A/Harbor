@@ -7,6 +7,8 @@ use sha2::{Digest, Sha256};
 const RELEASE_URL: &str =
     "https://api.github.com/repos/cedya77/anime-offline-database/releases/tags/latest";
 const PACK_ASSET: &str = "anime-offline-database.jsonl.zst";
+const ANIME_LISTS_URL: &str =
+    "https://raw.githubusercontent.com/Anime-Lists/anime-lists/master/anime-list-master.xml";
 
 #[derive(Deserialize)]
 struct ReleaseAsset {
@@ -110,6 +112,27 @@ pub async fn download_latest() -> Result<DownloadedPack, String> {
         sha256,
         version: format!("{}@{stamp}", release.tag_name),
     })
+}
+
+/// Fetch the AniDB -> TVDB/TMDB window list. This is a best-effort companion
+/// to the pack: a failure leaves identity lookups working with no windows.
+pub async fn download_anime_lists() -> Result<Vec<u8>, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Harbor anime identity pack")
+        .timeout(Duration::from_secs(120))
+        .build()
+        .map_err(|error| format!("identity windows: client: {error}"))?;
+    let bytes = client
+        .get(ANIME_LISTS_URL)
+        .send()
+        .await
+        .map_err(|error| format!("identity windows: request: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("identity windows: status: {error}"))?
+        .bytes()
+        .await
+        .map_err(|error| format!("identity windows: body: {error}"))?;
+    Ok(bytes.to_vec())
 }
 
 /// Stream-decompress the pack. zstd keeps this bounded: the caller sees a

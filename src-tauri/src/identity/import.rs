@@ -1,5 +1,7 @@
 use std::io::BufRead;
 
+use quick_xml::events::Event;
+use quick_xml::Reader;
 use rusqlite::{params, Connection};
 use serde::Deserialize;
 
@@ -100,8 +102,10 @@ pub fn create_schema(conn: &Connection) -> Result<(), String> {
             anidb INTEGER,
             tvdb INTEGER,
             tmdbtv INTEGER,
-            season INTEGER,
-            off INTEGER
+            tvdb_season INTEGER,
+            tvdb_offset INTEGER,
+            tmdb_season INTEGER,
+            tmdb_offset INTEGER
         );
         CREATE TABLE meta(
             key TEXT PRIMARY KEY,
@@ -253,7 +257,7 @@ pub fn import_jsonl<R: BufRead>(
     conn.execute_batch(
         "
         CREATE INDEX raw_related_url ON raw_related(url);
-        CREATE INDEX idx_windows_tvdb ON windows(tvdb, season);
+        CREATE INDEX idx_windows_tvdb ON windows(tvdb, tvdb_season);
         CREATE INDEX idx_windows_entry ON windows(entry);
         ",
     )
@@ -336,6 +340,113 @@ pub fn import_jsonl<R: BufRead>(
     Ok(summary)
 }
 
+fn parse_optional_int(value: Option<&String>) -> Option<i64> {
+    value.and_then(|text| text.trim().parse::<i64>().ok())
+}
+
+fn parse_optional_season(value: Option<&String>) -> Option<i64> {
+    value
+        .and_then(|text| text.trim().parse::<i64>().ok())
+        .filter(|season| (0..=200).contains(season))
+}
+
+/// Import AniDB -> TVDB/TMDB provider windows from the Anime-Lists XML.
+///
+/// Anime-Lists declares no license; it is fetched at runtime, the same way the
+/// existing episode-list path already uses it, and only the window fields are
+/// stored. A malformed document leaves the pack's work/alias data intact with
+/// no windows rather than failing the whole import.
+pub fn import_windows(conn: &mut Connection, xml: &[u8]) -> Result<usize, String> {
+    let mut reader = Reader::from_reader(std::io::Cursor::new(xml));
+    reader.config_mut().trim_text(true);
+    let mut buffer = Vec::new();
+
+    let mut found = 0usize;
+    let mut tx = conn
+        .transaction()
+        .map_err(|error| format!("identity windows: begin: {error}"))?;
+    {
+        let mut select_entry = tx
+            .prepare("SELECT entry FROM identities WHERE scheme = ?1 AND id = ?2")
+            .map_err(|error| format!("identity windows: prepare identity: {error}"))?;
+        let mut insert = tx
+            .prepare(
+                "INSERT INTO windows(entry, anidb, tvdb, tmdbtv, tvdb_season, tvdb_offset, tmdb_season, tmdb_offset)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+            )
+            .map_err(|error| format!("identity windows: prepare insert: {error}"))?;
+
+        loop {
+            let event = reader
+                .read_event_into(&mut buffer)
+                .map_err(|error| format!("identity windows: xml: {error}"))?;
+            match event {
+                Event::Start(element) | Event::Empty(element)
+                    if element.name().as_ref() == b"anime" =>
+                {
+                    let mut attrs = std::collections::HashMap::new();
+                    for attribute in element.attributes().with_checks(false) {
+                        let attribute = attribute
+                            .map_err(|error| format!("identity windows: attribute: {error}"))?;
+                        let key = String::from_utf8_lossy(attribute.key.as_ref()).to_string();
+                        let value = attribute
+                            .unescape_value()
+                            .map_err(|error| format!("identity windows: value: {error}"))?
+                            .to_string();
+                        attrs.insert(key, value);
+                    }
+                    let Some(anidb) = attrs.get("anidbid").and_then(|id| id.parse::<i64>().ok())
+                    else {
+                        buffer.clear();
+                        continue;
+                    };
+                    let entry = select_entry
+                        .query_row(params![SCHEME_ANIDB, anidb.to_string()], |row| {
+                            row.get::<_, i64>(0)
+                        })
+                        .ok();
+                    let Some(entry) = entry else {
+                        buffer.clear();
+                        continue;
+                    };
+                    let tvdb = parse_optional_int(attrs.get("tvdbid"));
+                    let tmdbtv = parse_optional_int(attrs.get("tmdbtv"));
+                    if tvdb.is_none() && tmdbtv.is_none() {
+                        buffer.clear();
+                        continue;
+                    }
+                    insert
+                        .execute(params![
+                            entry,
+                            anidb,
+                            tvdb,
+                            tmdbtv,
+                            parse_optional_season(attrs.get("defaulttvdbseason")),
+                            parse_optional_int(attrs.get("episodeoffset")),
+                            parse_optional_season(attrs.get("tmdbseason")),
+                            parse_optional_int(attrs.get("tmdboffset")),
+                        ])
+                        .map_err(|error| format!("identity windows: insert: {error}"))?;
+                    found += 1;
+                }
+                Event::Eof => break,
+                _ => {}
+            }
+            buffer.clear();
+        }
+    }
+    tx.commit()
+        .map_err(|error| format!("identity windows: commit: {error}"))?;
+    conn.execute(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES('windows', ?1)",
+        params![found.to_string()],
+    )
+    .map_err(|error| format!("identity windows: meta: {error}"))?;
+    conn.execute_batch("ANALYZE; PRAGMA optimize;")
+        .map_err(|error| format!("identity windows: optimize: {error}"))?;
+    Ok(found)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,5 +502,26 @@ mod tests {
             )
             .unwrap();
         assert_eq!(decode_ids(&blob), vec![2]);
+    }
+
+    #[test]
+    fn imports_anime_list_windows_for_known_anidb_ids() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA journal_mode = MEMORY;").unwrap();
+        import_jsonl(&mut conn, Cursor::new(FIXTURE), "test", "sha", 0).unwrap();
+        let xml = r#"<?xml version="1.0"?><anime-list>
+            <anime anidbid="19287" tvdbid="262954" defaulttvdbseason="6" episodeoffset="" tmdbtv="45790" tmdbseason="6" tmdboffset=""/>
+            <anime anidbid="424242" tvdbid="999" defaulttvdbseason="1"/>
+        </anime-list>"#;
+        let count = import_windows(&mut conn, xml.as_bytes()).unwrap();
+        assert_eq!(count, 1, "unknown anidb ids are skipped");
+        let (tvdb, season): (i64, i64) = conn
+            .query_row(
+                "SELECT tvdb, tvdb_season FROM windows WHERE entry = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((tvdb, season), (262954, 6));
     }
 }

@@ -1378,6 +1378,7 @@ pub fn run() {
             identity::commands::identity_ensure_pack,
             identity::commands::identity_lookup_batch,
             identity::commands::identity_entry_bundle,
+            identity::commands::identity_card_hints,
             #[cfg(feature = "games")]
             games::games_pokemon,
             #[cfg(feature = "games")]
