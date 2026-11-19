@@ -668,6 +668,8 @@ export type Settings = {
   animeIdentityEnabled: boolean;
   /** Opt-in, display-only repair of a checkpoint with proven native episode ownership. */
   animeIdentityRepairEnabled: boolean;
+  /** Apply the verified anime episode only to live provider scrobbles. */
+  animeIdentityLiveScrobbleEnabled: boolean;
   cwHideCaughtUp: boolean;
   /** Whether Continue Watching may play an episode whose release date is still in the future. */
   cwPlayUnreleased: boolean;

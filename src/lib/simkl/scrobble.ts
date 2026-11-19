@@ -113,6 +113,7 @@ export async function simklScrobble(
   episode: EpisodeRef,
   progress: number,
   info?: ScrobbleInfo,
+  verifiedOnly = false,
 ): Promise<boolean> {
   const profile = activeProfileId();
   const session = getSession();
@@ -125,9 +126,12 @@ export async function simklScrobble(
   const body = buildBody(metaId, episode, progress, info);
   const isAnimeNode = body != null && "anime" in body;
   // A named anime entry stays the priority the existing path established.
+  if (verifiedOnly && !isAnimeNode) return false;
   if (isAnimeNode) {
     const currentId = animeBodyEntryId(body);
-    if (currentId) {
+    // An independently verified episode must not be replaced by a second,
+    // heuristic cour lookup. Its owner was already proven by the local pack.
+    if (currentId && !verifiedOnly) {
       const entry = await resolveTrackerAnimeEntry(metaId, {
         season: episode?.season,
         episode: episode?.episode,
@@ -161,7 +165,7 @@ export async function simklScrobble(
   } else if (body) {
     if (await post(action, body)) return done(true);
   }
-  if (!owned()) return false;
+  if (!owned() || (verifiedOnly && isAnimeNode)) return false;
   const retry = await fallbackBody(metaId, episode, progress);
   if (!owned() || !retry) return false;
   return done(await post(action, retry));

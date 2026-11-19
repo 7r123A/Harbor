@@ -441,6 +441,17 @@ export function HomeTab() {
             onChange={(v) => update({ animeIdentityRepairEnabled: v })}
           />
         )}
+        {settings.animeIdentityEnabled && (
+          <ToggleRow
+            label={t("Use the anime database for live scrobbling")}
+            newId="home:anime-identity-live-scrobble"
+            sub={t(
+              "Resolve an anime episode once as playback starts and use its verified owner for AniList, MAL, Simkl, Trakt and PublicMetaDB. Does not backfill history or synchronize accounts. Off by default.",
+            )}
+            value={settings.animeIdentityLiveScrobbleEnabled}
+            onChange={(v) => update({ animeIdentityLiveScrobbleEnabled: v })}
+          />
+        )}
         <AnimeIdentityStatus enabled={settings.animeIdentityEnabled} />
       </Section>
     </>

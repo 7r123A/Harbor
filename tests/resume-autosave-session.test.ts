@@ -242,3 +242,34 @@ test("outgoing anime tracker sync uses its own resolved ID and reaches both trac
     ],
   );
 });
+
+
+test("verified live scrobble updates AniList and MAL by native cour while retaining the original resume record", () => {
+  const h = resumeAutosaveHarness();
+  h.enableAnimeSync();
+  const p = playbackParams(6, 1);
+  p.src.meta.id = "mal:14719";
+  p.src.episode = { season: 6, episode: 1, kitsuStreamId: "kitsu:49847:1" } as typeof p.src.episode;
+  const proof = {
+    work: {
+      entryId: "kitsu:49847", entryEpisode: 1,
+      aliases: { kitsu: "kitsu:49847", mal: "mal:61469", anilist: "anilist:190327" },
+      catalogIds: ["tmdb:tv:45790"], evidence: "pack+window",
+    },
+  };
+  const withProof = { ...p, liveScrobble: { phase: "ready", proof } };
+  h.render(withProof);
+  h.render({
+    ...withProof,
+    snap: { ...p.snap, status: "playing", positionSec: 950, durationSec: 1000 },
+  });
+  h.clock(950);
+  h.tick();
+  assert.equal(h.trackerProgress.some((write) =>
+    write[0] === "anilist" && write[1] === "anilist:190327" && write[2] === 1), true);
+  assert.equal(h.trackerProgress.some((write) =>
+    write[0] === "mal" && write[1] === "mal:61469" && write[2] === 1), true);
+  assert.equal(h.cleared.at(-1)?.[0], "mal:14719", "completed episode clears only the original resume identity");
+  assert.equal(h.history.at(-1)?.[0], "mal:14719", "original playback history never changes");
+  h.unmount();
+});

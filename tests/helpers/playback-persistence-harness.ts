@@ -8,6 +8,7 @@ import {
 } from "../../src/lib/player/playback-end.ts";
 import { playerLoadIdentity } from "../../src/lib/player/load-identity.ts";
 import { animeTrackerTarget } from "../../src/lib/tracker-progress.ts";
+import { nativeLiveProgressTargets } from "../../src/lib/identity/live-scrobble.ts";
 
 export function playbackPersistenceHarness(kind: "local" | "cloud" = "local") {
   const effects: Array<{ deps: unknown[] | undefined; cleanup?: () => void }> = [];
@@ -59,6 +60,7 @@ export function playbackPersistenceHarness(kind: "local" | "cloud" = "local") {
     markMalWatching: noop,
     syncMalProgress: noop,
     animeTrackerTarget,
+    nativeLiveProgressTargets,
     activeProfileId: () => profileId,
     getSession: () => trackerSession,
     animeIdentityEligible: () => false,

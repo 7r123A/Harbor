@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
+import type { LiveScrobbleResolution } from "@/lib/identity/use-live-scrobble";
 import { getPlaybackPosition } from "@/lib/player/playback-clock";
 import { useSettings } from "@/lib/settings";
 import type { PlayerSrc } from "@/lib/view";
@@ -22,10 +23,15 @@ const COMPLETION_RATIO = 0.9;
 const MIN_SAVE_INTERVAL_MS = 60_000;
 const SEEK_SAVE_DEBOUNCE_MS = 800;
 
-export function usePublicMetaDbScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }): void {
+export function usePublicMetaDbScrobble({
+  src, snap, liveScrobble = { phase: "off", proof: null },
+}: { src: PlayerSrc; snap: Snap; liveScrobble?: LiveScrobbleResolution }): void {
   const { isConnected } = usePublicMetaDb();
   const { settings } = useSettings();
-  const enabled = isConnected && settings.publicmetadbScrobbleEnabled;
+  const verifiedTarget = liveScrobble.proof?.pmdbTarget ?? null;
+  const enabled = isConnected && settings.publicmetadbScrobbleEnabled &&
+    liveScrobble.phase !== "resolving" &&
+    (!liveScrobble.proof || verifiedTarget != null);
 
   const targetRef = useRef<PmdbTarget | null>(null);
   const durationRef = useRef(0);
@@ -149,8 +155,12 @@ export function usePublicMetaDbScrobble({ src, snap }: { src: PlayerSrc; snap: S
 
     void (async () => {
       let resolved: PmdbTarget | null = null;
-      if (src.episode) {
-        resolved = await resolvePmdbEpisodeTarget(
+      if (src.episode && liveScrobble.proof && !verifiedTarget) {
+        // Episode identity is verified, but no exact TMDB window exists.
+        // No catalog fallback may write a different cour as watched.
+        resolved = null;
+      } else if (src.episode) {
+        resolved = verifiedTarget ?? await resolvePmdbEpisodeTarget(
           metaId,
           {
             season: src.episode.season,
@@ -194,6 +204,8 @@ export function usePublicMetaDbScrobble({ src, snap }: { src: PlayerSrc; snap: S
     src.episode?.absoluteNumber,
     src.imdbId,
     src.meta.type,
+    verifiedTarget,
+    liveScrobble.proof,
   ]);
 
   // Active playback interval: periodically saves progress & detects seeks.

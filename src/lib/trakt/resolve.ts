@@ -56,6 +56,7 @@ export async function commitPlaybackState(
   metaId: string,
   progress: number,
   deps?: CatalogDeps,
+  verifiedOnly = false,
 ): Promise<void> {
   const owned = captureOwner();
   if (!owned()) return;
@@ -65,7 +66,7 @@ export async function commitPlaybackState(
     return;
   }
   if ((await send(target, progress)) === "recorded") return;
-  if (!owned()) return;
+  if (!owned() || verifiedOnly) return;
   if (!isResolvableTarget(target)) return;
   const resolved = await resolveForMeta(metaId, target.season, target.number, deps);
   if (!owned() || !resolved.ok) return;
@@ -90,6 +91,7 @@ export async function commitWatchedEpisode(
   metaId: string,
   progress: number,
   deps?: CatalogDeps,
+  verifiedOnly = false,
 ): Promise<CommitOutcome> {
   const owned = captureOwner();
   if (!owned() || target.kind === "show") return "failed";
@@ -104,7 +106,7 @@ export async function commitWatchedEpisode(
   if (!owned()) return "failed";
   if (direct === "recorded" || direct === "already-recorded") return recorded(direct);
   if (progress >= WATCHED_PCT && (await pushWatched(target))) return recorded("recorded");
-  if (!owned() || target.kind !== "episode") return "failed";
+  if (!owned() || verifiedOnly || target.kind !== "episode") return "failed";
   if (!isResolvableTarget(target)) return "failed";
 
   const resolved = await resolveForMeta(metaId, target.season, target.number, deps);

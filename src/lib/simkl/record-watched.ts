@@ -27,6 +27,7 @@ export async function recordWatchedFallback(
   metaId: string,
   episode: PlayerSrc["episode"] | undefined,
   info?: ScrobbleInfo,
+  verifiedOnly = false,
 ): Promise<boolean> {
   const profile = activeProfileId();
   const session = getSession();
@@ -39,6 +40,9 @@ export async function recordWatchedFallback(
     if (await markEpisodesWatched({ [anime.scheme]: anime.id }, 1, [anime.number]))
       return done(true);
   }
+  // A failed verified native write must not become a guessed umbrella show
+  // write, even on terminal completion or after a later pending replay.
+  if (verifiedOnly) return false;
   const r = stremioIdToSimklTarget(metaId, episode);
   const t = r.ok
     ? r.target
