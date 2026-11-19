@@ -314,9 +314,9 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
         parseKitsuId(entry.meta.id) != null &&
         franchiseEpisodes.some((ep) => ep.sourceMetaId === entryId);
       if (inPool) setActiveEntryId(entryId);
-      else openMeta(entry.meta, { exact: true });
+      else openMeta(entry.meta, { exact: true, seasonScrollTop: scrollRef.current?.scrollTop });
     },
-    [currentId, franchise, franchiseEpisodes, openMeta],
+    [currentId, franchise, franchiseEpisodes, openMeta, scrollRef],
   );
   const entryEpisodes = useMemo(
     () =>

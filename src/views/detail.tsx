@@ -433,6 +433,7 @@ export function DetailView({
     promoteMetaToRoot,
     openMeta,
     openManga,
+    metaHasSeasonScroll,
   } = useView();
   useTvdbCastFallback(meta, detail, detectedKitsu, setDetail);
   const { snapshot: roomSnapshot, claimHost } = useTogether();
@@ -443,7 +444,12 @@ export function DetailView({
   const { toggle: toggleFavorite } = useMediaFavorites();
   const isFav = useIsFavorite(meta.id, [detail?.imdbId]);
   const inSession = roomSnapshot.state === "joined" && roomSnapshot.participants.length >= 2;
-  useScrollMemory(`meta:${meta.id}`, scrollRef, settings.resumeDetailScroll, true);
+  useScrollMemory(
+    `meta:${meta.id}`,
+    scrollRef,
+    settings.resumeDetailScroll || metaHasSeasonScroll,
+    true,
+  );
 
   useEffect(() => {
     if (!meta.id.startsWith("simkl:")) return;
