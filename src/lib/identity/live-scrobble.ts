@@ -98,6 +98,15 @@ export async function resolveLiveAnimeScrobble(
     : NATIVE.test(ep.sourceMetaId ?? "") ? ep.sourceMetaId!
     : NATIVE.test(src.meta.id) ? src.meta.id : null;
   if (!nativeId) return null;
+  // The pack only knows TVDB/TMDB show windows. An IMDb page is not linked
+  // to those windows until the *native episode* independently names the same
+  // IMDb show and provider coordinates (AniZip/Kitsu episode mapping).
+  // Otherwise a stale stream from any unrelated series with that season can
+  // redirect five tracker writes to the wrong work.
+  if (/^tt[1-9]\d*$/.test(src.meta.id) &&
+      (ep.imdbId !== src.meta.id ||
+       !Number.isSafeInteger(ep.imdbSeason) || ep.imdbSeason! < 1 ||
+       !Number.isSafeInteger(ep.imdbEpisode) || ep.imdbEpisode! < 1)) return null;
   const number = nativeStream ? Number(nativeStream[2]) : ep.episode;
 
   // Explicitly verify the native work and episode from the installed pack.

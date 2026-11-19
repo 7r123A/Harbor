@@ -15,7 +15,7 @@ function movie(row: LibraryItem): boolean {
   return row.type === "movie" && !row.isAnime && MOVIE.test(row._id);
 }
 
-function completed(row: LibraryItem): boolean {
+export function isCompletedMovieCheckpoint(row: LibraryItem): boolean {
   if (!movie(row) || (row.removed && !row.temp)) return false;
   if (row.upNext || row.caughtUp || row.waitingForAir) return false;
   const state = row.state;
@@ -50,7 +50,7 @@ export function reconcileCompletedMovies<T extends LibraryItem>(
   rows: readonly T[],
   aliases: MovieAliasIds = movieIdentityIds,
 ): MovieReconciliation<T> {
-  const completions = rows.filter(completed);
+  const completions = rows.filter(isCompletedMovieCheckpoint);
   if (!completions.length) return { rows: [...rows], suppressed: [], completions: [] };
 
   const parent = new Map<string, string>();
@@ -95,7 +95,7 @@ export function reconcileCompletedMovies<T extends LibraryItem>(
 
   const suppressed: T[] = [];
   const visible = rows.filter((row) => {
-    if (!movie(row) || completed(row)) return true;
+    if (!movie(row) || isCompletedMovieCheckpoint(row)) return true;
     const key = root(row._id);
     if ((imdbByGroup.get(key)?.size ?? 0) > 1) return true;
     const completedTime = completedAt.get(key);
@@ -113,9 +113,9 @@ export function reconcileCompletedMovies<T extends LibraryItem>(
  * don't look up unrelated movies in a large library.
  */
 export function movieCompletionAliasWarmRows(rows: readonly LibraryItem[]): LibraryItem[] {
-  const completedTitles = new Set(rows.filter(completed).map(cwTitleKey).filter(Boolean));
+  const completedTitles = new Set(rows.filter(isCompletedMovieCheckpoint).map(cwTitleKey).filter(Boolean));
   if (completedTitles.size === 0) return [];
   const candidates = rows.filter((row) =>
     movie(row) && completedTitles.has(cwTitleKey(row)));
-  return candidates.some((row) => !completed(row)) ? candidates : [];
+  return candidates.some((row) => !isCompletedMovieCheckpoint(row)) ? candidates : [];
 }

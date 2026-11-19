@@ -84,6 +84,16 @@ pub fn identity_status(
     db::status(&app, None)
 }
 
+/// Never promote a staged pack with no verified season windows. The old DB
+/// remains installed and its freshness timestamp is not advanced.
+fn require_imported_windows(count: usize) -> Result<(), String> {
+    if count == 0 {
+        Err("identity windows: no usable mappings; existing pack preserved".to_string())
+    } else {
+        Ok(())
+    }
+}
+
 #[tauri::command]
 pub async fn identity_ensure_pack(
     app: AppHandle,
@@ -99,15 +109,20 @@ pub async fn identity_ensure_pack(
                     .built_at
                     .map(|built| now_ms() - built < FRESH_FOR_MS)
                     .unwrap_or(false);
-                if fresh {
+                // An older incomplete install without season windows cannot
+                // be considered fresh for seven days; retry the companion.
+                if fresh && status.windows > 0 {
                     return Ok(status);
                 }
             }
         }
     }
 
+    // Both sources are required for a coherent install. If Anime-Lists is
+    // temporarily offline, preserve the previous working database rather than
+    // replacing it with a new pack that has no season mappings for a week.
     let downloaded = pack::download_latest().await?;
-    let windows_xml = pack::download_anime_lists().await.ok();
+    let windows_xml = pack::download_anime_lists().await?;
     let tmp = db::tmp_path(&app)?;
     db::ensure_dir(&app)?;
     if tmp.exists() {
@@ -127,12 +142,8 @@ pub async fn identity_ensure_pack(
         .map_err(|error| format!("identity import: pragmas: {error}"))?;
         let reader = pack::decode_zstd(&bytes)?;
         import::import_jsonl(&mut conn, reader, &version, &sha256, now_ms())?;
-        match windows_xml {
-            Some(xml) => {
-                import::import_windows(&mut conn, &xml)?;
-            }
-            None => eprintln!("[harbor::identity] Anime-Lists windows unavailable; continuing without windows"),
-        }
+        let imported_windows = import::import_windows(&mut conn, &windows_xml)?;
+        require_imported_windows(imported_windows)?;
         drop(conn);
         Ok(())
     })
@@ -545,4 +556,14 @@ pub fn identity_clear_data(
         }
     }
     db::status(&app, None)
+}
+#[cfg(test)]
+mod refresh_integrity_tests {
+    use super::require_imported_windows;
+
+    #[test]
+    fn rejects_partial_refresh_before_swapping_existing_database() {
+        assert!(require_imported_windows(0).is_err());
+        assert!(require_imported_windows(42).is_ok());
+    }
 }

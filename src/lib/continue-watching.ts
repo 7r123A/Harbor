@@ -11,7 +11,7 @@ import {
 import { animeCwIdsVersion, subscribeAnimeCwIds } from "@/lib/anime-cw-ids";
 import { dedupeAnimeCw, warmCwAnimeIdentities } from "@/lib/cw-anime-identity";
 import { sortCwFinal } from "@/lib/cw-order";
-import { reconcileCompletedMovies, movieCompletionAliasWarmRows } from "@/lib/cw-movie-completion";
+import { reconcileCompletedMovies, movieCompletionAliasWarmRows, isCompletedMovieCheckpoint } from "@/lib/cw-movie-completion";
 import { isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import { setExternalCwSources } from "@/lib/feed/external-cw";
 import { useExternalCw } from "@/lib/feed/external-cw";
@@ -211,10 +211,19 @@ export function useContinueWatching(excludeId?: string, limit = 12): CwCard[] {
     const localMovies = listLocalCwMerged(hideSharedCw)
       .filter((entry) => localCwSourceEnabled(entry, cwSources))
       .map(localToLibraryItem);
-    const candidates = movieCompletionAliasWarmRows([...libraryMovies, ...localMovies]);
+    // Include only enabled, privacy-allowed external checkpoints. A newer
+    // tracker completion may be the ONLY proof that an older local movie was
+    // finished, and warmed aliases are needed for IMDb/TMDB cross-ID pairs.
+    const trackerMovies = hideSharedCw ? [] : externalCw.filter((row) =>
+      row.external === "trakt" ? cwSources.trakt :
+      row.external === "simkl" ? cwSources.simkl :
+      row.external === "publicmetadb" ? cwSources.publicmetadb : false);
+    const candidates = movieCompletionAliasWarmRows([
+      ...libraryMovies, ...localMovies, ...trackerMovies,
+    ]);
     if (candidates.length > 0)
       void warmCwAnimeIdentities(candidates, { tmdbKey: settings.tmdbKey }).catch(() => {});
-  }, [items, localVersion, hideSharedCw, isNuvioProvider, cwSources, settings.tmdbKey, activeProfile?.id]);
+  }, [items, externalCw, localVersion, hideSharedCw, isNuvioProvider, cwSources, settings.tmdbKey, activeProfile?.id]);
 
   const cards = useMemo(() => {
     void localVersion;
@@ -233,6 +242,9 @@ export function useContinueWatching(excludeId?: string, limit = 12): CwCard[] {
       if (hideSharedCw) return false;
       if (i.external === "simkl" || i.external === "trakt" || i.external === "publicmetadb") {
         if (i.upNext || i.waitingForAir || i.caughtUp) return true;
+        // Completion evidence from an enabled tracker must remain in the pool
+        // until the older local/IMDb/TMDB checkpoint is reconciled.
+        if (isCompletedMovieCheckpoint(i)) return true;
         const offset = i.state?.timeOffset ?? 0;
         const dur = i.state?.duration ?? 0;
         if (offset <= 0 || (i.state?.flaggedWatched ?? 0) > 0) return false;

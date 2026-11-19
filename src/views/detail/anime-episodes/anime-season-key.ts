@@ -156,6 +156,23 @@ export function nativeSeasonRows(
 }
 
 
+/** Only an episode that names this exact IMDb show and provider season
+ * can authorize a tracker status / airing-timer owner. A saved or searched
+ * season candidate by itself is just a hint, never verified ownership. */
+export function verifiedSeasonOwnerFromEpisodes(
+  rows: readonly Pick<KitsuEpisode, "sourceMetaId" | "imdbId" | "imdbSeason">[],
+  imdbId: string | null | undefined,
+  season: number | null,
+): string | null {
+  if (!imdbId || !/^tt[1-9]\d*$/.test(imdbId) ||
+      !Number.isInteger(season) || season == null || season < 1) return null;
+  const owners = new Set(rows
+    .filter((row) => row.imdbId === imdbId && row.imdbSeason === season)
+    .map((row) => row.sourceMetaId)
+    .filter((id): id is string => !!id && /^(?:kitsu|mal|anilist|anidb):[1-9]\d*$/.test(id)));
+  return owners.size === 1 ? [...owners][0] : null;
+}
+
 /**
  * Native rows are resolved for one specific provider season; do not use rows
  * from the previously selected season while the next one is loading.

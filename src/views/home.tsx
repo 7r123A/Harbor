@@ -86,7 +86,7 @@ import {
   warmCwAnimeIdentities,
 } from "@/lib/cw-anime-identity";
 import { sortCwFinal } from "@/lib/cw-order";
-import { reconcileCompletedMovies, movieCompletionAliasWarmRows } from "@/lib/cw-movie-completion";
+import { reconcileCompletedMovies, movieCompletionAliasWarmRows, isCompletedMovieCheckpoint } from "@/lib/cw-movie-completion";
 import { cwCacheOwnerKey } from "@/lib/cw-derived-caches";
 import {
   cwAnimeVersion,
@@ -782,10 +782,15 @@ export function Home({
         ? items.filter((i) => !ANIME_CLOUD_ID.test(i._id)) : []),
       ...localCwItems.filter((i) => i.external !== "nuvio"),
     ];
+    if (!hideSharedCw) pool.push(...externalCw.filter((row) =>
+      row.external === "trakt" ? settings.cwSources.trakt :
+      row.external === "simkl" ? settings.cwSources.simkl :
+      row.external === "publicmetadb" ? settings.cwSources.publicmetadb : false));
     const candidates = movieCompletionAliasWarmRows(pool);
     if (candidates.length > 0)
       void warmCwAnimeIdentities(candidates, { tmdbKey: settings.tmdbKey }).catch(() => {});
-  }, [items, localCwItems, hideSharedCw, isNuvioProvider, settings.cwSources.library, settings.tmdbKey]);
+  }, [items, externalCw, localCwItems, hideSharedCw, isNuvioProvider,
+      settings.cwSources, settings.tmdbKey]);
 
   const continueWatching = useMemo(() => {
     const disabledSources = new Set<string>();
@@ -800,6 +805,9 @@ export function Home({
       if (hideSharedCw) return false;
       if (i.external === "simkl" || i.external === "trakt" || i.external === "publicmetadb") {
         if (i.upNext || i.waitingForAir || i.caughtUp) return true;
+        // Completion evidence from an enabled tracker must remain in the pool
+        // until the older local/IMDb/TMDB checkpoint is reconciled.
+        if (isCompletedMovieCheckpoint(i)) return true;
         const offset = i.state?.timeOffset ?? 0;
         const dur = i.state?.duration ?? 0;
         if (offset <= 0 || (i.state?.flaggedWatched ?? 0) > 0) return false;

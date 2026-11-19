@@ -16,11 +16,12 @@ export function useLiveScrobbleResolution({
   const relevant = Boolean(ep && (
     src.isAnime || src.meta.type === "anime" ||
     /^(?:kitsu|mal|anilist|anidb):/.test(src.meta.id) ||
-    /^kitsu:[1-9]\d*:[1-9]\d*$/.test(ep.kitsuStreamId ?? "")));
+    /^kitsu:[1-9]\d*:[1-9]\d*$/.test(ep.kitsuStreamId ?? "") ||
+    /^(?:kitsu|mal|anilist|anidb):[1-9]\d*$/.test(ep.sourceMetaId ?? "")));
   const enabled = enabledSetting && relevant;
   const key = [
     src.meta.id, src.meta.type, src.isAnime, ep?.season, ep?.episode,
-    ep?.imdbSeason, ep?.imdbEpisode, ep?.kitsuStreamId, ep?.sourceMetaId,
+    ep?.imdbId, ep?.imdbSeason, ep?.imdbEpisode, ep?.kitsuStreamId, ep?.sourceMetaId,
   ].join("|");
   const [state, setState] = useState<State | null>(null);
 

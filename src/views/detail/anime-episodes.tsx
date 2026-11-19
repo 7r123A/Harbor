@@ -1,6 +1,8 @@
 import { lastPlayedEpisode } from "@/lib/resume";
 import { getAnimeCwId } from "@/lib/anime-cw-ids";
-import { nativeSeasonRows, nativeSeasonOwnerId } from "./anime-episodes/anime-season-key";
+import {
+  nativeSeasonRows, nativeSeasonOwnerId, verifiedSeasonOwnerFromEpisodes,
+} from "./anime-episodes/anime-season-key";
 import { matchingKitsuSeasonEntry } from "./anime-episodes/anime-season-lookup";
 import {
   memo,
@@ -451,10 +453,9 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
     if (selectedEntry && selectedEntry.id !== currentId) {
       const publish = (rows: KitsuEpisode[], id: number) => {
         if (cancelled || !rows.length || selectedEntry.id !== `kitsu:${id}`) return;
-        if (
-          !premiereEntry &&
-          !rows.some((ep) => ep.imdbId === imdbId && ep.imdbSeason === seasonHint)
-        )
+        // A candidate from resume, search, or premiere metadata is not the
+        // tracker owner until its actual episodes match the selected show.
+        if (!rows.some((ep) => ep.imdbId === imdbId && ep.imdbSeason === seasonHint))
           return;
         setNativeSeason({
           page: meta.id,
@@ -490,12 +491,14 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
       .then(async (owner) => {
         const id = owner && parseKitsuId(owner.id);
         if (cancelled || id == null) return;
-        if (owner?.id === meta.id && episodes.some((ep) => ep.imdbSeason === seasonHint)) {
+        if (owner?.id === meta.id &&
+            episodes.some((ep) => ep.imdbId === imdbId && ep.imdbSeason === seasonHint)) {
           if (!cancelled) setNativeSeason({ page: meta.id, season: seasonHint, episodes });
           return;
         }
         const rows = await fetchEntryEpisodes(id, settings);
-        if (!cancelled) setNativeSeason({ page: meta.id, season: seasonHint, episodes: rows });
+        if (!cancelled && rows.some((ep) => ep.imdbId === imdbId && ep.imdbSeason === seasonHint))
+          setNativeSeason({ page: meta.id, season: seasonHint, episodes: rows });
       })
       .catch(() => {});
     return () => {
@@ -690,21 +693,21 @@ export const AnimeEpisodes = memo(function AnimeEpisodes({
     for (const e of displayEpisodes) if (e.sourceMetaId != null) ids.add(e.sourceMetaId);
     return ids.size === 1 ? [...ids][0] : null;
   }, [displayEpisodes]);
-  // Tracker status must follow the same native entry used for the selected
-  // season's episodes. A mixed TVDB season has no single displaySourceId, but
-  // the resolved native rows or first provider episode still identify its owner.
-  const nativeOwner = nativeSeasonOwnerId(nativeSeason, meta.id, seasonHint);
-  const selectedCanonicalEntryId =
-    (tvdbPanel.panel
-      ? (premiereEntry?.id ?? savedSeasonEntry?.id ?? searchedSeasonId ?? nativeOwner ?? visibleFirstOwner)
-      : null) ??
-    displaySourceId ??
-    (activeIsAnchor ? null : activeEntryId);
-  // Never show the opened base entry's status for another season when its
-  // native owner is still unresolved. That would be a false Completed/Watching.
+  // Never show the opened base entry's status for another season while its
+  // actual owner is unresolved. Saved, searched and premiere candidates are
+  // not proof; the selected provider episodes must independently match IMDb.
   const requiresSeasonOwner =
     !activeIsAnchor ||
     Boolean(tvdbPanel.panel && seasonHint != null && seasonHint !== (entrySeason ?? 1));
+  const nativeOwner = nativeSeasonOwnerId(nativeSeason, meta.id, seasonHint);
+  const verifiedNativeOwner = nativeOwner &&
+    verifiedSeasonOwnerFromEpisodes(nativeSeason?.episodes ?? [], imdbId, seasonHint) === nativeOwner
+      ? nativeOwner : null;
+  const verifiedDisplayOwner = verifiedSeasonOwnerFromEpisodes(displayEpisodes, imdbId, seasonHint);
+  const selectedCanonicalEntryId = tvdbPanel.panel
+    ? (verifiedNativeOwner ?? verifiedDisplayOwner ??
+       (requiresSeasonOwner ? null : displaySourceId ?? activeEntryId))
+    : displaySourceId ?? (activeIsAnchor ? null : activeEntryId);
   useEffect(() => {
     onCanonicalEntry?.(selectedCanonicalEntryId, requiresSeasonOwner);
   }, [selectedCanonicalEntryId, requiresSeasonOwner, onCanonicalEntry]);

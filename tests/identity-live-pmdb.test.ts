@@ -108,3 +108,149 @@ test("PMDB does not write while shared anime identity is still resolving", async
   await flushPromises();
   hook.unmount();
 });
+
+
+test("PublicMetaDB flushes A's last progress when B starts resolving", async () => {
+  const saves: Array<{ id: number; pos: number }> = [];
+  const timers = new Map<number, () => void>();
+  let now = 200_000;
+  let position = 300;
+  let nextTimer = 0;
+  const hook = hookHarness("src/lib/publicmetadb/scrobble-hook.ts", "usePublicMetaDbScrobble", {
+    "@/lib/player/playback-clock": { getPlaybackPosition: () => position },
+    "@/lib/settings": { useSettings: () => ({ settings: { publicmetadbScrobbleEnabled: true } }) },
+    "./provider": { usePublicMetaDb: () => ({ isConnected: true }) },
+    "./ids": {
+      resolvePmdbEpisodeTarget: async (_meta: string, ep: any) => ({
+        tmdb_id: ep.episode === 1 ? 45790 : 99999,
+        media_type: "tv", season: ep.season, episode: ep.episode,
+      }),
+      resolvePmdbTarget: async () => null,
+    },
+    "./scrobble": {
+      pmdbSaveResume: async (target: any, pos: number) => {
+        saves.push({ id: target.tmdb_id, pos });
+        return { action: "saved" };
+      },
+      pmdbDeleteResumeForTarget: async () => true,
+    },
+    "./pending-sync": {
+      recordPendingResume: () => {},
+      syncPendingResume: async (_t: any, _p: number, _d: number, writer: () => Promise<boolean>) => writer(),
+    },
+    "./history": { markPmdbWatched: async () => true },
+  }, {
+    Date: { now: () => now },
+    window: {
+      setInterval: (cb: () => void) => {
+        const id = ++nextTimer;
+        timers.set(id, cb);
+        return id;
+      },
+      clearInterval: (id: number) => timers.delete(id),
+      setTimeout: () => ++nextTimer,
+      clearTimeout: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    },
+  });
+  const srcA = {
+    meta: { id: "tt2359704", name: "JoJo", type: "series" },
+    episode: { season: 6, episode: 1 },
+  };
+  const targetA = { tmdb_id: 45790, media_type: "tv", season: 6, episode: 1 };
+  const proof = {
+    work: { entryId: "kitsu:49847", entryEpisode: 1 },
+    episode: { ...srcA.episode, sourceMetaId: "kitsu:49847" },
+    pmdbTarget: targetA, traktTarget: null,
+  };
+  const snap = { status: "playing", positionSec: 300, durationSec: 1000 };
+  hook.render({ src: srcA, snap, liveScrobble: { phase: "ready", proof } });
+  await flushPromises();
+  // A has an unsaved 45 seconds since its last periodic checkpoint. The
+  // interval observes the position but does not meet the save-time threshold.
+  now += 12_000;
+  position = 345;
+  for (const timer of timers.values()) timer();
+  await flushPromises();
+  assert.equal(saves.length, 0, "A's newer position has not been periodically saved");
+  position = 0;
+  hook.render({
+    src: { ...srcA, episode: { season: 6, episode: 2 } },
+    snap: { status: "loading", positionSec: 0, durationSec: 0 },
+    liveScrobble: { phase: "resolving", proof: null },
+  });
+  await flushPromises();
+  assert.deepEqual(saves, [{ id: 45790, pos: 345_000 }],
+    "switch flush uses outgoing A eligibility and verified target, not B's resolving state");
+  hook.unmount();
+});
+
+
+test("PublicMetaDB flushes A after resolving to fallback with proof null, even when target effect does not rerun", async () => {
+  const saves: Array<{ id: number; pos: number }> = [];
+  const timers = new Map<number, () => void>();
+  let now = 200_000;
+  let position = 300;
+  let nextTimer = 0;
+  const hook = hookHarness("src/lib/publicmetadb/scrobble-hook.ts", "usePublicMetaDbScrobble", {
+    "@/lib/player/playback-clock": { getPlaybackPosition: () => position },
+    "@/lib/settings": { useSettings: () => ({ settings: { publicmetadbScrobbleEnabled: true } }) },
+    "./provider": { usePublicMetaDb: () => ({ isConnected: true }) },
+    "./ids": {
+      resolvePmdbEpisodeTarget: async (_meta: string, ep: any) => ({
+        tmdb_id: ep.episode === 1 ? 45790 : 99999,
+        media_type: "tv", season: ep.season, episode: ep.episode,
+      }),
+      resolvePmdbTarget: async () => null,
+    },
+    "./scrobble": {
+      pmdbSaveResume: async (target: any, pos: number) => {
+        saves.push({ id: target.tmdb_id, pos });
+        return { action: "saved" };
+      },
+      pmdbDeleteResumeForTarget: async () => true,
+    },
+    "./pending-sync": {
+      recordPendingResume: () => {},
+      syncPendingResume: async (_t: any, _p: number, _d: number, writer: () => Promise<boolean>) => writer(),
+    },
+    "./history": { markPmdbWatched: async () => true },
+  }, {
+    Date: { now: () => now },
+    window: {
+      setInterval: (cb: () => void) => { const id = ++nextTimer; timers.set(id, cb); return id; },
+      clearInterval: (id: number) => timers.delete(id),
+      setTimeout: () => ++nextTimer, clearTimeout: () => {},
+      addEventListener: () => {}, removeEventListener: () => {},
+    },
+  });
+  const srcA = {
+    meta: { id: "tt2359704", name: "JoJo", type: "series" },
+    episode: { season: 6, episode: 1 },
+  };
+  const snap = { status: "playing", positionSec: 300, durationSec: 1000 };
+  const pending = { phase: "resolving", proof: null } as const;
+  const fallback = { phase: "ready", proof: null } as const;
+  hook.render({ src: srcA, snap, liveScrobble: pending });
+  await flushPromises();
+  // Stage 1 has finished, but no verified work was found. Both proof and
+  // verifiedTarget remain null, so the target effect will NOT reinitialize A.
+  hook.render({ src: srcA, snap, liveScrobble: fallback });
+  await flushPromises();
+  now += 12_000;
+  position = 345;
+  for (const timer of timers.values()) timer();
+  await flushPromises();
+  assert.equal(saves.length, 0, "A has accumulated progress that is not yet saved");
+  position = 0;
+  hook.render({
+    src: { ...srcA, episode: { season: 6, episode: 2 } },
+    snap: { status: "loading", positionSec: 0, durationSec: 0 },
+    liveScrobble: pending,
+  });
+  await flushPromises();
+  assert.deepEqual(saves, [{ id: 45790, pos: 345_000 }],
+    "outgoing A must save using its latest fallback eligibility, not B's resolving state");
+  hook.unmount();
+});

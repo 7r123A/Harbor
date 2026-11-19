@@ -55,6 +55,10 @@ export function usePublicMetaDbScrobble({
   const episode = src.episode?.episode;
   const key = `${metaId}|${season ?? ""}|${episode ?? ""}`;
   const lastKeyRef = useRef<string | null>(null);
+  // Preserve the outgoing episode's last eligibility even when the incoming
+  // episode is still resolving. The separately committed eligibility effect
+  // below updates A without resetting its playback progress or target.
+  const previousEligibilityRef = useRef({ key, enabled });
 
   const clearPendingSeek = () => {
     if (pendingSeekTimerRef.current != null) {
@@ -134,7 +138,8 @@ export function usePublicMetaDbScrobble({
     const prevKey = lastKeyRef.current;
     if (prevKey && prevKey !== key) {
       clearPendingSeek();
-      if (enabledRef.current) {
+      if (previousEligibilityRef.current.key === prevKey &&
+          previousEligibilityRef.current.enabled) {
         const t = targetRef.current;
         const d = durationRef.current;
         const p = lastPosRef.current;
@@ -142,6 +147,7 @@ export function usePublicMetaDbScrobble({
       }
     }
     lastKeyRef.current = key;
+    previousEligibilityRef.current = { key, enabled };
 
     let cancelled = false;
     targetRef.current = null;
@@ -207,6 +213,15 @@ export function usePublicMetaDbScrobble({
     verifiedTarget,
     liveScrobble.proof,
   ]);
+
+  // A can finish Stage 1 with proof: null and become fallback-ready without
+  // changing the target effect's dependencies. Record this enabled transition
+  // independently. This effect is declared after the target effect so on A->B
+  // the target effect first flushes A using its previous committed eligibility.
+  useEffect(() => {
+    if (lastKeyRef.current === key)
+      previousEligibilityRef.current = { key, enabled };
+  }, [key, enabled]);
 
   // Active playback interval: periodically saves progress & detects seeks.
   useEffect(() => {

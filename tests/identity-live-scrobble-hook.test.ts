@@ -89,3 +89,72 @@ test("disabling then re-enabling while the same episode plays starts a fresh pro
   assert.deepEqual(h.render(1), { phase: "ready", proof: null });
   h.unmount();
 });
+
+
+test("catalog series with only a native sourceMetaId enters Stage 1, while ordinary TV stays unchanged", async () => {
+  const calls: string[] = [];
+  const h = hookHarness("src/lib/identity/use-live-scrobble.ts", "useLiveScrobbleResolution", {
+    "./live-scrobble": {
+      resolveLiveAnimeScrobble: async (src: any) => {
+        calls.push(src.episode.sourceMetaId ?? "none");
+        return null;
+      },
+    },
+  });
+  const catalog = {
+    meta: { id: "tmdb:tv:45790", name: "JoJo", type: "series" },
+    isAnime: false,
+    episode: { season: 6, episode: 1, sourceMetaId: "kitsu:49847" },
+  };
+  assert.equal(h.render({ src: catalog, enabledSetting: true }).phase, "resolving");
+  await flushPromises();
+  assert.deepEqual(calls, ["kitsu:49847"]);
+  assert.equal(h.render({ src: catalog, enabledSetting: true }).phase, "ready");
+  const normal = {
+    ...catalog,
+    episode: { season: 6, episode: 2 },
+  };
+  assert.equal(h.render({ src: normal, enabledSetting: true }).phase, "off");
+  assert.deepEqual(calls, ["kitsu:49847"]);
+  h.unmount();
+});
+
+
+test("a corrected IMDb episode mapping invalidates a same-episode verified tracker proof", async () => {
+  const pending: Array<{ imdbId: string | undefined; settle: (proof: any) => void }> = [];
+  const h = hookHarness(
+    "src/lib/identity/use-live-scrobble.ts",
+    "useLiveScrobbleResolution",
+    { "./live-scrobble": { resolveLiveAnimeScrobble: (src: any) => new Promise((resolve) => {
+      pending.push({ imdbId: src.episode.imdbId, settle: resolve });
+    }) } },
+  );
+  const src = {
+    ...source(1),
+    meta: { id: "tt2359704", type: "series", name: "JoJo" },
+    episode: {
+      ...source(1).episode,
+      imdbId: "tt2359704", imdbSeason: 6, imdbEpisode: 1,
+    },
+  };
+  const enabledSetting = true;
+  assert.equal(h.render({ src, enabledSetting }).phase, "resolving");
+  pending[0].settle({ work: { entryId: "kitsu:49847", entryEpisode: 1 } });
+  await flushPromises();
+  assert.equal(h.render({ src, enabledSetting }).proof?.work.entryId, "kitsu:49847");
+
+  // No change to season, episode number, stream, or sourceMetaId: only the
+  // independent IMDb evidence was corrected. An older proof cannot survive.
+  const corrected = {
+    ...src, episode: { ...src.episode, imdbId: "tt9999999" },
+  };
+  assert.equal(h.render({ src: corrected, enabledSetting }).phase, "resolving");
+  assert.equal(pending.length, 2, "new IMDb mapping must trigger a new lookup");
+  assert.equal(pending[1].imdbId, "tt9999999");
+  pending[1].settle(null);
+  await flushPromises();
+  assert.deepEqual(h.render({ src: corrected, enabledSetting }), {
+    phase: "ready", proof: null,
+  }, "stale verified target must not be reused after IMDb evidence changes");
+  h.unmount();
+});

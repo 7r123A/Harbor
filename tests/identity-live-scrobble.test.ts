@@ -139,3 +139,59 @@ test("ordinary TV and movies are untouched even when the database exists", async
     episode: { ...source.episode, kitsuStreamId: undefined, sourceMetaId: undefined },
   }, deps()), null);
 });
+
+
+test("unrelated IMDb catalog show cannot borrow a stale Kitsu season for live tracker writes", async () => {
+  const unrelated = {
+    ...source,
+    meta: { ...source.meta, id: "tt9999999" },
+    episode: {
+      ...source.episode,
+      imdbId: "tt2359704", imdbSeason: 6, imdbEpisode: 1,
+    },
+  };
+  assert.equal(await resolveLiveAnimeScrobble(unrelated, deps()), null);
+  const unproven = {
+    ...source,
+    meta: { ...source.meta, id: "tt2359704" },
+  };
+  assert.equal(await resolveLiveAnimeScrobble(unproven, deps()), null,
+    "a native stream and matching season alone cannot authenticate an IMDb page");
+});
+
+test("exact IMDb show and native video episode mapping can independently verify its owner", async () => {
+  const proven = {
+    ...source,
+    meta: { ...source.meta, id: "tt2359704" },
+    episode: {
+      ...source.episode,
+      imdbId: "tt2359704", imdbSeason: 6, imdbEpisode: 1,
+    },
+  };
+  const proof = await resolveLiveAnimeScrobble(proven, deps());
+  assert.equal(proof?.work.entryId, "kitsu:49847");
+  assert.equal(proof?.pmdbTarget?.tmdb_id, 45790);
+  assert.equal(proof?.traktTarget?.kind, "episode");
+  const nativeNumbering = {
+    ...proven, episode: { ...proven.episode, season: 1 },
+  };
+  assert.equal((await resolveLiveAnimeScrobble(nativeNumbering, deps()))?.work.entryId,
+    "kitsu:49847", "native episode season 1 may correspond to IMDb season 6");
+});
+
+test("an IMDb candidate with missing or contradictory provider coordinates fails closed", async () => {
+  for (const patch of [
+    { imdbId: undefined }, { imdbSeason: undefined }, { imdbEpisode: undefined },
+    { imdbId: "tt9999999" },
+  ]) {
+    const candidate = {
+      ...source,
+      meta: { ...source.meta, id: "tt2359704" },
+      episode: {
+        ...source.episode, imdbId: "tt2359704", imdbSeason: 6, imdbEpisode: 1,
+        ...patch,
+      },
+    };
+    assert.equal(await resolveLiveAnimeScrobble(candidate, deps()), null, JSON.stringify(patch));
+  }
+});

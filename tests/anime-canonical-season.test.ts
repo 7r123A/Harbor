@@ -78,3 +78,21 @@ test("native owner selection works for a non-JoJo sequel and rejects ambiguous o
   ] }, "tt-black-clover", 2), null);
   assert.equal(nativeSeasonOwnerId({ page: "tt-black-clover", season: 2, episodes: [] }, "tt-black-clover", 2), null);
 });
+
+
+test("tracker and airing owner requires a matching IMDb provider episode, not a remembered candidate", () => {
+  const { verifiedSeasonOwnerFromEpisodes } = load();
+  const verified = [{ sourceMetaId: "kitsu:49847", imdbId: "tt2359704", imdbSeason: 6 }];
+  assert.equal(verifiedSeasonOwnerFromEpisodes(verified, "tt2359704", 6), "kitsu:49847");
+  assert.equal(verifiedSeasonOwnerFromEpisodes(verified, "tt9999999", 6), null,
+    "the candidate belongs to another show");
+  assert.equal(verifiedSeasonOwnerFromEpisodes(verified, "tt2359704", 5), null,
+    "the candidate belongs to another season");
+  assert.equal(verifiedSeasonOwnerFromEpisodes([
+    { sourceMetaId: "kitsu:44294", imdbId: "tt9999999", imdbSeason: 6 },
+  ], "tt2359704", 6), null,
+    "an older saved cour cannot become the current tracker/timer owner");
+  assert.equal(verifiedSeasonOwnerFromEpisodes([
+    ...verified, { sourceMetaId: "kitsu:44294", imdbId: "tt2359704", imdbSeason: 6 },
+  ], "tt2359704", 6), null, "ambiguous providers must not pick an arbitrary native owner");
+});

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { hookHarness } from "./helpers/hook-harness.ts";
+import {
+  reconcileCompletedMovies, movieCompletionAliasWarmRows, isCompletedMovieCheckpoint,
+} from "../src/lib/cw-movie-completion.ts";
 
 const item = (id: string, external?: string) => ({
   _id: id,
@@ -56,7 +59,10 @@ function harness(bigPicture: boolean, sources: any, privateProfile = false) {
     },
     "@/lib/stremio": {
       ANIME_CLOUD_ID: /^(kitsu|mal):/,
-      isCwMember: () => true,
+      isCwMember: (row: any) =>
+        (row.state?.flaggedWatched ?? 0) === 0 &&
+        (!(row.state?.duration > 0) ||
+          (row.state.timeOffset ?? 0) / row.state.duration < 0.9),
       cwMemberViaResume: () => false,
       cwSortKey: () => 1,
       episodeFromVideoId: () => null,
@@ -72,8 +78,9 @@ function harness(bigPicture: boolean, sources: any, privateProfile = false) {
     },
     "@/lib/anime-cw-ids": { animeCwIdsVersion: () => 0, subscribeAnimeCwIds: () => noop },
     "@/lib/cw-movie-completion": {
-      reconcileCompletedMovies: (rows: any[]) => ({ rows, suppressed: [], completions: [] }),
-      movieCompletionAliasWarmRows: () => [],
+      reconcileCompletedMovies,
+      movieCompletionAliasWarmRows,
+      isCompletedMovieCheckpoint,
     },
     "@/lib/cw-anime-identity": {
       dedupeAnimeCw: (items: any[]) =>
@@ -117,6 +124,12 @@ function harness(bigPicture: boolean, sources: any, privateProfile = false) {
     masks,
     warmed,
     dismissed,
+    useLocalMovie(id: string, t = Date.parse("2025-12-01T12:00:00Z")) {
+      local.splice(0, local.length, {
+        id, type: "movie", name: "Thunderbolts*", isAnime: false,
+        source: "local", positionMs: 600_000, durationMs: 7_600_000, t,
+      } as any);
+    },
     publishTrackerItems(next: typeof trackerItems) {
       trackerItems = next;
     },
@@ -205,4 +218,50 @@ test("identity warmer receives only enabled, visible sources and retains merged 
     (privateHarness.warmed.at(-1) ?? []).map((i) => i._id ?? i.id),
     ["kitsu:301"],
   );
+});
+
+
+for (const service of ["trakt", "simkl", "publicmetadb"] as const) {
+  test(`shared CW: ${service} completion hides an older TMDB local movie through a verified IMDb alias`, () => {
+    const sources = {
+      library: false, local: true, trakt: service === "trakt",
+      simkl: service === "simkl", publicmetadb: service === "publicmetadb",
+    };
+    const h = harness(false, sources);
+    h.useLocalMovie("tmdb:movie:986056");
+    h.publishTrackerItems([{
+      _id: "tt20969586", type: "movie", name: "Thunderbolts*",
+      isAnime: false, external: service, removed: false, temp: false,
+      altIds: ["tmdb:movie:986056"],
+      _mtime: "2026-11-19T12:00:00Z",
+      state: {
+        flaggedWatched: 1, timeOffset: 0, duration: 7_600_000,
+        lastWatched: "2026-11-19T12:00:00Z",
+      },
+    } as any]);
+    assert.deepEqual(h.ids(), [],
+      "a newer tracker completion suppresses the older local checkpoint");
+    assert.ok(h.warmed.some((batch) =>
+      batch.some((row) => row._id === "tt20969586") &&
+      batch.some((row) => row._id === "tmdb:movie:986056")),
+      "source-allowed external completions also participate in alias warming");
+    h.settings.cwSources = { ...sources, [service]: false };
+    assert.deepEqual(h.ids(), ["tmdb:movie:986056"],
+      "disabled external tracker must not suppress a private local checkpoint");
+  });
+}
+
+test("shared CW: per-profile privacy blocks external completion evidence", () => {
+  const h = harness(false, {
+    library: false, local: true, trakt: true, simkl: false,
+  }, true);
+  h.useLocalMovie("tt20969586");
+  h.publishTrackerItems([{
+    _id: "tt20969586", type: "movie", name: "Thunderbolts*",
+    external: "trakt", removed: false, temp: false,
+    _mtime: "2026-11-19T12:00:00Z",
+    state: { timeOffset: 0, duration: 7_600_000, flaggedWatched: 1,
+      lastWatched: "2026-11-19T12:00:00Z" },
+  } as any]);
+  assert.deepEqual(h.ids(), ["tt20969586"]);
 });
