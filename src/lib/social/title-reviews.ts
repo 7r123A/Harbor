@@ -18,6 +18,7 @@ import {
   tmdbImdbId,
   tmdbIdFromImdb,
   tmdbFromImdbCached,
+  tmdbImdbCached,
 } from "@/lib/providers/tmdb/tmdb-imdb-resolve";
 import { loadStoredSettings } from "@/lib/settings/load";
 import { meta as cinemetaMeta } from "@/lib/cinemeta";
@@ -47,7 +48,7 @@ type HubReview = {
   match?: MutualMatch;
 };
 
-let hubAvailable = true;
+let hubRetryAt = 0;
 
 function ratingFromHub(item: HubReview): TitleRating | null {
   const author = item.author;
@@ -72,11 +73,24 @@ function ratingFromHub(item: HubReview): TitleRating | null {
   };
 }
 
-/**
- * One server-side read of a title's reviews. Returns null when this deployment has no
- * review hub so the caller can use the history scan; refuses to silently hide a real
- * failure of a route that does exist.
- */
+async function resolveTitleIdentity(target: TitleRef): Promise<void> {
+  if (target.mediaType !== "movie" && target.mediaType !== "series") return;
+  try {
+    const key = loadStoredSettings().tmdbKey;
+    if (key && target.itemKey.startsWith("tmdb:")) {
+      await tmdbImdbId(key, target.itemKey);
+    } else if (key && /^tt\d+$/.test(target.itemKey)) {
+      await tmdbIdFromImdb(key, target.itemKey, target.mediaType);
+    }
+  } catch {
+    // Optional ID resolution must not prevent reading the ratings themselves.
+  }
+  if (/^tt\d+$/.test(target.itemKey) && !tmdbFromImdbCached(target.itemKey)) {
+    await cinemetaMeta(target.mediaType, target.itemKey).catch(() => null);
+  }
+}
+
+/** Reads every review page across verified catalog aliases of the same title. */
 async function loadHubTitleRatings(
   target: TitleRef,
   scope: "friends" | "all",
@@ -84,41 +98,49 @@ async function loadHubTitleRatings(
   signedOut: boolean,
   includeMatch: boolean,
 ): Promise<TitleRatingsSnapshot | null> {
-  if (!hubAvailable) return null;
+  if (Date.now() < hubRetryAt) return null;
+  await resolveTitleIdentity(target);
   const ratings: TitleRating[] = [];
-  let cursor: string | undefined;
-  const seen = new Set<string>();
-  for (;;) {
-    const query = new URLSearchParams({
-      contentType: target.mediaType,
-      contentId: target.itemKey,
-      scope,
-      sort: "newest",
-      limit: String(HUB_PAGE),
-    });
-    if (includeMatch && !signedOut) query.set("includeMatch", "1");
-    if (cursor) query.set("cursor", cursor);
-    let data: { items?: HubReview[]; nextCursor?: string };
-    try {
-      data = await socialGet<{ items?: HubReview[]; nextCursor?: string }>(
-        `/social/reviews?${query.toString()}`,
-      );
-    } catch (error) {
-      const status = (error as { status?: number }).status;
-      if (status === 404 || status === 405) {
-        hubAvailable = false;
-        return null;
+  const contentIds = new Set([target.itemKey]);
+  const imdb = tmdbImdbCached(target.itemKey);
+  const tmdb = tmdbFromImdbCached(target.itemKey);
+  if (imdb) contentIds.add(imdb);
+  if (tmdb) contentIds.add(tmdb);
+  for (const contentId of contentIds) {
+    let cursor: string | undefined;
+    const seen = new Set<string>();
+    for (;;) {
+      const query = new URLSearchParams({
+        contentType: target.mediaType,
+        contentId,
+        scope,
+        sort: "newest",
+        limit: String(HUB_PAGE),
+      });
+      if (includeMatch && !signedOut) query.set("includeMatch", "1");
+      if (cursor) query.set("cursor", cursor);
+      let data: { items?: HubReview[]; nextCursor?: string };
+      try {
+        data = await socialGet<{ items?: HubReview[]; nextCursor?: string }>(
+          `/social/reviews?${query.toString()}`,
+        );
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        if (status === 404 || status === 405) {
+          hubRetryAt = Date.now() + 30_000;
+          return null;
+        }
+        throw error;
       }
-      throw error;
+      for (const item of data.items ?? []) {
+        const rating = ratingFromHub(item);
+        if (rating) ratings.push(rating);
+      }
+      if (!data.nextCursor) break;
+      if (seen.has(data.nextCursor)) throw new Error("Repeated title reviews cursor");
+      seen.add(data.nextCursor);
+      cursor = data.nextCursor;
     }
-    for (const item of data.items ?? []) {
-      const rating = ratingFromHub(item);
-      if (rating) ratings.push(rating);
-    }
-    if (!data.nextCursor) break;
-    if (seen.has(data.nextCursor)) throw new Error("Repeated title reviews cursor");
-    seen.add(data.nextCursor);
-    cursor = data.nextCursor;
   }
   return {
     ratings: mergeTitleRatings(ratings, target, selfHandle),
@@ -225,21 +247,7 @@ async function scanAuthors(
   authors: readonly AuthorMeta[],
   target: TitleRef,
 ): Promise<{ ratings: TitleRating[]; complete: boolean }> {
-  if (target.mediaType === "movie" || target.mediaType === "series") {
-    try {
-      const key = loadStoredSettings().tmdbKey;
-      if (key && target.itemKey.startsWith("tmdb:")) {
-        await tmdbImdbId(key, target.itemKey);
-      } else if (key && /^tt\d+$/.test(target.itemKey)) {
-        await tmdbIdFromImdb(key, target.itemKey, target.mediaType);
-      }
-    } catch {
-      // Optional ID resolution must not prevent reading the rating histories themselves.
-    }
-    if (/^tt\d+$/.test(target.itemKey) && !tmdbFromImdbCached(target.itemKey)) {
-      await cinemetaMeta(target.mediaType, target.itemKey).catch(() => null);
-    }
-  }
+  await resolveTitleIdentity(target);
   const ratings: TitleRating[] = [];
   let complete = true;
   for (let i = 0; i < authors.length; i += CONCURRENCY) {
@@ -395,10 +403,9 @@ export function loadTitleRatingSummary(target: TitleRef): Promise<TitleRatingSum
         target,
         currentAuthor()?.handle,
       );
+      const totalScore = ratings.reduce((total, rating) => total + rating.score, 0);
       return {
-        averageScore: ratings.length
-          ? ratings.reduce((total, rating) => total + rating.score, 0) / ratings.length
-          : null,
+        averageScore: ratings.length ? Math.round((totalScore / ratings.length) * 10) / 10 : null,
         recentRatings: ratings.slice(0, 3),
         friends: friends.ratings,
         total: ratings.length,

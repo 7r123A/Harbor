@@ -1,21 +1,13 @@
 import { useT } from "@/lib/i18n";
 import { useEffect, useRef } from "react";
 import { inferRatingMediaType } from "@/lib/ratings/types";
-import {
-  ensureMarksForTitle,
-  markKeyForItem,
-  useFriendReviewIndex,
-  useTitleHoverSummary,
-} from "@/lib/social/friend-review-index";
+import { ensureMarksForTitle, useTitleHoverSummary } from "@/lib/social/friend-review-index";
 import { UnratedReviewIcon } from "@/components/icons/unrated-review-icon";
 import { HoverTooltip } from "@/components/hover-tooltip";
 import { Avatar } from "@/views/profile/profile-bits";
 import type { FriendReviewMark } from "@/lib/social/friend-review-index";
 
-/**
- * The poster-side half of the social signal: up to three friends who rated this title, plus how
- * many more did. Reads the shared friends-feed index, so a rail of cards costs one feed read.
- */
+/** The same media-type inference used when a title is rated. */
 function contentTypeFor(metaId: string, kind?: string): string {
   return inferRatingMediaType(metaId, {
     type: kind,
@@ -49,7 +41,6 @@ export function FriendReviewBadges({
   avatarSize?: number;
 }) {
   const t = useT();
-  const index = useFriendReviewIndex();
   const contentType = contentTypeFor(metaId, kind);
   const summary = useTitleHoverSummary(contentType, metaId);
   const averageScore = summary?.averageScore ?? null;
@@ -64,7 +55,7 @@ export function FriendReviewBadges({
         !element.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })
       )
         return;
-      ensureMarksForTitle(contentTypeFor(metaId, kind), metaId);
+      void ensureMarksForTitle(contentTypeFor(metaId, kind), metaId);
     };
     refresh();
     const timer = window.setInterval(refresh, 15_000);
@@ -76,7 +67,7 @@ export function FriendReviewBadges({
       document.removeEventListener("visibilitychange", refresh);
     };
   }, [metaId, kind]);
-  const friends = summary?.friends ?? index?.get(markKeyForItem(contentType, metaId)) ?? [];
+  const friends = summary?.friends ?? [];
   const marks = friends.length > 0 ? friends : (summary?.community ?? []);
   if (marks.length === 0 && averageScore === null && !summary) return null;
 

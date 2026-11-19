@@ -29,6 +29,7 @@ const { loadTitleRatingSummary, invalidateTitleReviewCaches } =
 const { sameTitle, pickTitleRating } = await import("@/lib/social/review-rank");
 const { clearUserDirectoryCache } = await import("@/lib/social/user-directory");
 const { tmdbFromImdbCached } = await import("@/lib/providers/tmdb/tmdb-imdb-resolve");
+const { ensureMarksForTitle } = await import("@/lib/social/friend-review-index");
 
 test("verified title aliases match while different media types and unrelated ids stay separate", () => {
   assert.equal(
@@ -173,5 +174,51 @@ test("fresh Cinemeta mappings find a new rating by the sixtieth friend without a
     reloadSession(true);
     invalidateTitleReviewCaches();
     clearUserDirectoryCache();
+  }
+});
+
+test("the live review API combines verified catalog ids and uses each person's latest score once", async (t) => {
+  const now = Date.now() + 60_000;
+  t.mock.method(Date, "now", () => now);
+  const queriedIds = new Set<string>();
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = new URL(String(input));
+    assert.equal(url.pathname, "/themes/api/social/reviews");
+    const contentId = url.searchParams.get("contentId")!;
+    queriedIds.add(contentId);
+    const row = (handle: string, score: number, minute: number) => ({
+      id: `${handle}-${contentId}`,
+      contentType: "movie",
+      contentId,
+      score,
+      updatedAt: `2026-11-19T00:0${minute}:00Z`,
+      createdAt: "2026-11-19T00:00:00Z",
+      author: { handle, displayName: handle },
+    });
+    const items =
+      url.searchParams.get("scope") === "friends"
+        ? []
+        : contentId === "tt9900001"
+          ? [row("shared", 8, 0), row("other", 6, 2)]
+          : [row("shared", 10, 3), row("third", 5, 1)];
+    return Response.json({ items, total: items.length });
+  });
+  invalidateTitleReviewCaches();
+  applyAuthResult({
+    token: "fixture-token",
+    user: { id: "viewer", handle: "viewer", username: "viewer" },
+  });
+  try {
+    const summary = await ensureMarksForTitle("movie", "tt9900001");
+    assert.equal(summary?.averageScore, 7);
+    assert.equal(summary?.total, 3);
+    assert.deepEqual(
+      summary?.community.map((mark) => mark.handle),
+      ["shared", "other", "third"],
+    );
+    assert.deepEqual([...queriedIds], ["tt9900001", "tmdb:movie:600001"]);
+  } finally {
+    reloadSession(true);
+    invalidateTitleReviewCaches();
   }
 });
