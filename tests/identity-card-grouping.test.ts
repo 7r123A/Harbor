@@ -155,3 +155,38 @@ test("a grouped card keeps the position of its representative", async () => {
   assert.equal(merged._id, "kitsu:3", "merged card sits at the representative's position");
   assert.equal((merged.cwMembers as unknown[]).length, 2);
 });
+
+test("representative uses the newest member checkpoint, not just the visible row", async () => {
+  reset();
+  setIdentityFlags({ pack: true, cards: true });
+  setIdentityInvoker(async (command, args) => {
+    assert.equal(command, "identity_card_hints");
+    const ids = (args as { ids: string[] }).ids;
+    return ids.map((id) => ({
+      id,
+      entry: id === "kitsu:100" ? 10 : 11,
+      title: id,
+      mediaType: "TV",
+      cardKey: "tvdb:99",
+      tvdb: 99,
+      tmdb: null,
+      season: 1,
+      offset: 0,
+      provisional: false,
+    }));
+  });
+  const olderButDedupedNewest = {
+    _id: "kitsu:100",
+    state: { lastWatched: "2020-01-01T00:00:00Z" },
+    cwMembers: [
+      { _id: "kitsu:100", state: { lastWatched: "2020-01-01T00:00:00Z" } },
+      { _id: "tt99", state: { lastWatched: "2026-11-19T10:00:00Z" } },
+    ],
+  };
+  const other = { _id: "kitsu:101", state: { lastWatched: "2024-01-01T00:00:00Z" } };
+  await warmIdentityCards([olderButDedupedNewest, other]);
+
+  const grouped = groupCwCards([olderButDedupedNewest, other]);
+  assert.equal(grouped.length, 1);
+  assert.equal(grouped[0]?._id, "kitsu:100", "newest deduped member keeps the card at its slot");
+});

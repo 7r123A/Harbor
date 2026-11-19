@@ -99,11 +99,26 @@ export function identityCardsVersion(): number {
   return version;
 }
 
-function activity(row: CardRow): number {
+function stamp(row: CardRow): number {
   const watched = Date.parse(row.state?.lastWatched ?? "");
   if (Number.isFinite(watched)) return watched;
   const mtime = typeof row._mtime === "number" ? row._mtime : Date.parse(String(row._mtime ?? ""));
   return Number.isFinite(mtime) ? mtime : 0;
+}
+
+/**
+ * Newest playback evidence for a card, including its deduped members. This
+ * mirrors cwPlaybackAt so the representative chosen here is also the row the
+ * upstream sort placed at its activity position.
+ */
+function activity(row: CardRow): number {
+  let best = stamp(row);
+  const members = Array.isArray(row.cwMembers) ? (row.cwMembers as CardRow[]) : [];
+  for (const member of members) {
+    const at = stamp(member);
+    if (at > best) best = at;
+  }
+  return best;
 }
 
 function seriesCardKey(hint: IdentityCardHint | undefined): string | null {
