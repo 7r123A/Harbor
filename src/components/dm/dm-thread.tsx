@@ -564,35 +564,35 @@ export function DmThread({
                             )}
                           </>
                         )}
-                        {message.reactions.length > 0 && (
-                          <div
-                            className={`mt-1 flex flex-wrap items-center gap-1 ${mine ? "justify-end" : ""}`}
-                          >
-                            {message.reactions.map((r) => (
-                              <button
-                                key={r.emoji}
-                                type="button"
-                                onClick={() => void toggleReaction(message, r.emoji)}
-                                aria-pressed={r.mine}
-                                aria-label={t("React with {emoji}", { emoji: r.emoji })}
-                                title={
-                                  r.mine
-                                    ? t("Remove {emoji} reaction", { emoji: r.emoji })
-                                    : t("React with {emoji}", { emoji: r.emoji })
-                                }
-                                className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10.5px] tabular-nums transition-colors ${
-                                  r.mine
-                                    ? "bg-ink/15 text-ink"
-                                    : "bg-current/10 hover:bg-current/15"
-                                }`}
-                              >
-                                <span aria-hidden>{r.emoji}</span>
-                                {r.count > 1 ? r.count : ""}
-                              </button>
-                            ))}
-                          </div>
-                        )}
                       </div>
+                      {message.reactions.length > 0 && (
+                        <div
+                          className={`mt-1 flex flex-wrap items-center gap-1 ${mine ? "justify-end" : ""}`}
+                        >
+                          {message.reactions.map((r) => (
+                            <button
+                              key={r.emoji}
+                              type="button"
+                              onClick={() => void toggleReaction(message, r.emoji)}
+                              aria-pressed={r.mine}
+                              aria-label={t("React with {emoji}", { emoji: r.emoji })}
+                              title={
+                                r.mine
+                                  ? t("Remove {emoji} reaction", { emoji: r.emoji })
+                                  : t("React with {emoji}", { emoji: r.emoji })
+                              }
+                              className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[12px] tabular-nums transition-colors ${
+                                r.mine
+                                  ? "bg-elevated text-ink ring-1 ring-accent/50"
+                                  : "bg-elevated text-ink hover:bg-raised ring-1 ring-edge-soft"
+                              }`}
+                            >
+                              <span aria-hidden>{r.emoji}</span>
+                              {r.count > 1 ? r.count : ""}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       <div
                         className={`mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-ink-subtle ${mine ? "flex-row-reverse" : ""}`}
                       >

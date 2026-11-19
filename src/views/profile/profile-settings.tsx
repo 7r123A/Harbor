@@ -16,7 +16,6 @@ import { socialPatch } from "@/lib/social/client";
 import {
   CARD_THEMES,
   CARD_MAX_BYTES,
-  cardBackground,
   cardThemeById,
   removeCardBackground,
   saveCardAppearance,
@@ -49,6 +48,7 @@ import { ProfileMedia } from "./profile-media";
 import { LocationSelect } from "./location-select";
 import { CustomizationPanel } from "./customization/customization-panel";
 import { ProfileThemePicker } from "./profile-theme-picker";
+import { ProfileCardPanel } from "./profile-card-panel";
 import { AboutEditor } from "./customization/about-editor";
 import { useCustomUrlAvailability, type UrlStatus } from "./use-customurl-availability";
 import type {
@@ -691,6 +691,133 @@ export function ProfileSettings({
 
                     <ProfileThemePicker summary={summary} onSaved={onSaved} />
 
+                    <div className="rounded-xl bg-elevated px-4 py-3.5 ring-1 ring-edge-soft">
+                      <div className="flex items-center gap-2">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-[13.5px] font-medium text-ink">
+                            {t("Profile card appearance")}
+                          </div>
+                          <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-subtle">
+                            {t(
+                              "Choose the theme visitors see on your cards in discovery, reviews, DMs and hover previews. Your profile page keeps its own theme.",
+                            )}
+                          </div>
+                        </div>
+                        {cardBusy && (
+                          <Loader2 size={15} className="animate-spin text-ink-subtle" aria-hidden />
+                        )}
+                      </div>
+
+                      <ProfileCardPanel profile={summary} className="mx-auto mt-3 max-w-[320px]" />
+
+                      <div className="mt-3 grid grid-cols-4 gap-2">
+                        <button
+                          type="button"
+                          disabled={!!cardBusy}
+                          onClick={() => void applyCard({ cardTheme: null }, "theme")}
+                          aria-pressed={!summary.profileCard?.theme}
+                          className={`flex h-12 items-center justify-center rounded-md border text-[11px] font-medium transition-colors disabled:opacity-60 ${
+                            !summary.profileCard?.theme
+                              ? "border-ink bg-surface text-ink"
+                              : "border-edge-soft bg-surface/40 text-ink-muted hover:border-edge"
+                          }`}
+                        >
+                          {t("Default")}
+                        </button>
+                        {CARD_THEMES.map((theme) => {
+                          const on = summary.profileCard?.theme === theme.id;
+                          return (
+                            <button
+                              key={theme.id}
+                              type="button"
+                              disabled={!!cardBusy}
+                              onClick={() => void applyCard({ cardTheme: theme.id }, "theme")}
+                              aria-pressed={on}
+                              title={theme.label}
+                              className={`h-12 rounded-md border transition-transform disabled:opacity-60 ${
+                                on
+                                  ? "border-ink ring-2 ring-inset ring-ink"
+                                  : "border-edge-soft hover:scale-[1.02]"
+                              }`}
+                              style={{
+                                backgroundImage:
+                                  "linear-gradient(135deg, " +
+                                  theme.from +
+                                  " 0%, " +
+                                  theme.to +
+                                  " 100%)",
+                              }}
+                            >
+                              <span className="rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                {theme.label}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <label className="flex h-9 items-center gap-2 rounded-md border border-edge-soft bg-surface/40 px-2.5 text-[12px] text-ink-muted">
+                          {t("Accent")}
+                          <input
+                            type="color"
+                            value={
+                              summary.profileCard?.accent ??
+                              cardThemeById(summary.profileCard?.theme)?.accent ??
+                              "#7b5cff"
+                            }
+                            disabled={!!cardBusy}
+                            onChange={(e) =>
+                              void applyCard({ cardAccent: e.target.value }, "accent")
+                            }
+                            className="h-6 w-8 cursor-pointer rounded border-0 bg-transparent p-0"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          disabled={!!cardBusy}
+                          onClick={() => cardRef.current?.click()}
+                          className="flex h-9 items-center gap-1.5 rounded-md border border-edge-soft bg-surface/40 px-2.5 text-[12px] font-medium text-ink-muted transition-colors enabled:hover:text-ink disabled:opacity-60"
+                        >
+                          <ImageIcon size={14} />
+                          {summary.profileCard?.bgUrl
+                            ? t("Replace background")
+                            : t("Upload background")}
+                        </button>
+                        {summary.profileCard?.bgUrl && (
+                          <button
+                            type="button"
+                            disabled={!!cardBusy}
+                            onClick={() => void clearCardBackground()}
+                            className="flex h-9 items-center gap-1.5 rounded-md border border-edge-soft bg-surface/40 px-2.5 text-[12px] font-medium text-ink-muted transition-colors enabled:hover:text-ink disabled:opacity-60"
+                          >
+                            <X size={14} />
+                            {t("Remove")}
+                          </button>
+                        )}
+                        <input
+                          ref={cardRef}
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp,image/gif"
+                          className="hidden"
+                          onChange={(e) => void pickCardBackground(e.target.files?.[0])}
+                        />
+                      </div>
+                      <p className="mt-2 text-[11.5px] leading-relaxed text-ink-subtle">
+                        {t(
+                          "PNG, JPEG, WebP or GIF, up to 8 MB. An animated GIF keeps moving in the app and in the card image.",
+                        )}
+                      </p>
+                      {cardError && (
+                        <p
+                          className="mt-2 rounded-md bg-danger/10 px-3 py-2 text-[12px] text-danger"
+                          role="alert"
+                        >
+                          {cardError}
+                        </p>
+                      )}
+                    </div>
+
                     <ActionRow
                       title={t("Customize profile")}
                       desc={t("Custom font, page background, and a freeform HTML/CSS canvas")}
@@ -1067,158 +1194,6 @@ export function ProfileSettings({
                         {dmError}
                       </p>
                     )}
-
-                    <div className="rounded-xl bg-elevated px-4 py-3.5 ring-1 ring-edge-soft">
-                      <div className="flex items-center gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="text-[13.5px] font-medium text-ink">
-                            {t("Profile card appearance")}
-                          </div>
-                          <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-subtle">
-                            {t(
-                              "How your card looks when someone opens it from a review list. Your profile page keeps its own banner and theme, and this never changes it.",
-                            )}
-                          </div>
-                        </div>
-                        {cardBusy && (
-                          <Loader2 size={15} className="animate-spin text-ink-subtle" aria-hidden />
-                        )}
-                      </div>
-
-                      <div
-                        className="mt-3 flex h-24 items-end gap-2 overflow-hidden rounded-lg bg-canvas/60 p-3 ring-1 ring-edge-soft"
-                        style={{
-                          ...cardBackground(summary.profileCard),
-                          backgroundSize: "cover",
-                          backgroundPosition: "center",
-                        }}
-                      >
-                        <img
-                          src={summary.avatarUrl || ""}
-                          alt=""
-                          className="h-10 w-10 rounded-full bg-canvas object-cover ring-2 ring-canvas/70"
-                          draggable={false}
-                        />
-                        <div className="min-w-0 pb-0.5">
-                          <p
-                            className="truncate text-[12.5px] font-semibold text-ink"
-                            style={
-                              summary.profileCard?.accent
-                                ? { color: summary.profileCard.accent }
-                                : undefined
-                            }
-                          >
-                            {summary.alias || summary.handle}
-                          </p>
-                          <p className="truncate text-[11px] text-ink-muted">@{summary.handle}</p>
-                        </div>
-                      </div>
-
-                      <div className="mt-3 grid grid-cols-4 gap-2">
-                        <button
-                          type="button"
-                          disabled={!!cardBusy}
-                          onClick={() => void applyCard({ cardTheme: null }, "theme")}
-                          aria-pressed={!summary.profileCard?.theme}
-                          className={`flex h-12 items-center justify-center rounded-md border text-[11px] font-medium transition-colors disabled:opacity-60 ${
-                            !summary.profileCard?.theme
-                              ? "border-ink bg-surface text-ink"
-                              : "border-edge-soft bg-surface/40 text-ink-muted hover:border-edge"
-                          }`}
-                        >
-                          {t("Default")}
-                        </button>
-                        {CARD_THEMES.map((theme) => {
-                          const on = summary.profileCard?.theme === theme.id;
-                          return (
-                            <button
-                              key={theme.id}
-                              type="button"
-                              disabled={!!cardBusy}
-                              onClick={() => void applyCard({ cardTheme: theme.id }, "theme")}
-                              aria-pressed={on}
-                              title={theme.label}
-                              className={`h-12 rounded-md border transition-transform disabled:opacity-60 ${
-                                on
-                                  ? "border-ink ring-2 ring-inset ring-ink"
-                                  : "border-edge-soft hover:scale-[1.02]"
-                              }`}
-                              style={{
-                                backgroundImage:
-                                  "linear-gradient(135deg, " +
-                                  theme.from +
-                                  " 0%, " +
-                                  theme.to +
-                                  " 100%)",
-                              }}
-                            >
-                              <span className="sr-only">{theme.label}</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <label className="flex h-9 items-center gap-2 rounded-md border border-edge-soft bg-surface/40 px-2.5 text-[12px] text-ink-muted">
-                          {t("Accent")}
-                          <input
-                            type="color"
-                            value={
-                              summary.profileCard?.accent ??
-                              cardThemeById(summary.profileCard?.theme)?.accent ??
-                              "#7b5cff"
-                            }
-                            disabled={!!cardBusy}
-                            onChange={(e) =>
-                              void applyCard({ cardAccent: e.target.value }, "accent")
-                            }
-                            className="h-6 w-8 cursor-pointer rounded border-0 bg-transparent p-0"
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          disabled={!!cardBusy}
-                          onClick={() => cardRef.current?.click()}
-                          className="flex h-9 items-center gap-1.5 rounded-md border border-edge-soft bg-surface/40 px-2.5 text-[12px] font-medium text-ink-muted transition-colors enabled:hover:text-ink disabled:opacity-60"
-                        >
-                          <ImageIcon size={14} />
-                          {summary.profileCard?.bgUrl
-                            ? t("Replace background")
-                            : t("Upload background")}
-                        </button>
-                        {summary.profileCard?.bgUrl && (
-                          <button
-                            type="button"
-                            disabled={!!cardBusy}
-                            onClick={() => void clearCardBackground()}
-                            className="flex h-9 items-center gap-1.5 rounded-md border border-edge-soft bg-surface/40 px-2.5 text-[12px] font-medium text-ink-muted transition-colors enabled:hover:text-ink disabled:opacity-60"
-                          >
-                            <X size={14} />
-                            {t("Remove")}
-                          </button>
-                        )}
-                        <input
-                          ref={cardRef}
-                          type="file"
-                          accept="image/png,image/jpeg,image/webp,image/gif"
-                          className="hidden"
-                          onChange={(e) => void pickCardBackground(e.target.files?.[0])}
-                        />
-                      </div>
-                      <p className="mt-2 text-[11.5px] leading-relaxed text-ink-subtle">
-                        {t(
-                          "PNG, JPEG, WebP or GIF, up to 8 MB. An animated GIF keeps moving in the app and in the card image.",
-                        )}
-                      </p>
-                      {cardError && (
-                        <p
-                          className="mt-2 rounded-md bg-danger/10 px-3 py-2 text-[12px] text-danger"
-                          role="alert"
-                        >
-                          {cardError}
-                        </p>
-                      )}
-                    </div>
                   </div>
                 )}
               </div>

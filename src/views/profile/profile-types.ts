@@ -75,6 +75,7 @@ export type ProfileSummary = {
   customUrl?: string;
   online: boolean;
   presence?: PresenceStatus;
+  status?: PresenceStatus;
   watching?: ProfileWatching;
   memberSince: string;
   counts: ProfileCounts;

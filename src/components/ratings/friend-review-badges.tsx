@@ -5,7 +5,7 @@ import { ensureMarksForTitle, useTitleHoverSummary } from "@/lib/social/friend-r
 import { UnratedReviewIcon } from "@/components/icons/unrated-review-icon";
 import { HoverTooltip } from "@/components/hover-tooltip";
 import { Avatar } from "@/views/profile/profile-bits";
-import harborMarkUrl from "@/assets/harbor-logo-test.svg";
+import { HarborMark } from "@/components/icons/harbor-mark";
 import type { FriendReviewMark } from "@/lib/social/friend-review-index";
 
 /** The same media-type inference used when a title is rated. */
@@ -86,12 +86,7 @@ export function FriendReviewBadges({
         label=""
         details={
           <div className="text-center">
-            <span
-              role="img"
-              aria-label="Harbor"
-              className="mx-auto mb-2 block h-6 w-6 bg-[#d5b77a]"
-              style={{ mask: `url(${harborMarkUrl}) center / contain no-repeat` }}
-            />
+            <HarborMark className="mx-auto mb-2 h-6 w-6 text-[#eba018]" />
             <span className="block font-normal text-ink-muted">
               {t("No available ratings yet.")}
             </span>
@@ -121,7 +116,7 @@ export function FriendReviewBadges({
   return (
     <HoverTooltip
       label=""
-      mark={<img src={harborMarkUrl} alt="Harbor" className="h-5 w-5 brightness-0 invert" />}
+      mark={<HarborMark className="h-5 w-5 text-ink" />}
       details={
         <span className="mt-1 block font-normal text-ink-muted">
           {t("Harbor users average score")}

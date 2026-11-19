@@ -21,12 +21,17 @@ import {
   type QuickSort,
 } from "@/lib/social/quick-reviews";
 import { UserHoverCard } from "@/views/profile/user-hover-card";
+import { ProfileJoinedAt } from "@/views/profile/profile-joined-at";
+import {
+  cardBackground,
+  profileCardStyle,
+  type ProfileCardLook,
+} from "@/lib/social/profile-card-appearance";
 import { socialGet } from "@/lib/social/client";
 import { openDmConversation } from "@/lib/social/dm-store";
 import { requestOpenDm } from "@/lib/social/dm-store";
 import { requestOpenProfile } from "@/lib/social/open-profile";
 import { profileMediaMeta } from "@/lib/social/profile-media-meta";
-type ProfileCardLook = Record<string, unknown> | null | undefined;
 import { fetchUserRatings } from "@/lib/social/ratings-api";
 import { currentAuthor } from "@/lib/theme-auth";
 import { useView } from "@/lib/view";
@@ -429,18 +434,27 @@ export function ReviewerQuickMenu({
 
   return (
     <ModalShell closing={closing} onDismiss={close} width={560} labelledBy="reviewer-quick-title">
-      <div className="relative flex max-h-[min(84vh,760px)] flex-col overflow-hidden">
+      <div
+        className="relative flex max-h-[min(84vh,760px)] flex-col overflow-hidden bg-elevated"
+        style={profileCardStyle(profile?.profileCard)}
+      >
         <div className="relative flex min-h-0 flex-1 flex-col">
-          <div className="relative h-24 w-full shrink-0 overflow-hidden bg-elevated">
-            {profile?.bannerUrl ? (
+          <div
+            className="relative h-24 w-full shrink-0 overflow-hidden bg-elevated"
+            style={cardBackground(profile?.profileCard)}
+          >
+            {profile?.profileCard?.bgUrl || profile?.bannerUrl ? (
               <img
-                src={profile.bannerUrl}
+                src={profile?.profileCard?.bgUrl || profile?.bannerUrl}
                 alt=""
                 className="h-full w-full object-cover"
                 draggable={false}
               />
             ) : (
-              <div className="h-full w-full bg-gradient-to-r from-elevated to-canvas" />
+              <div
+                className="h-full w-full bg-gradient-to-r from-elevated to-canvas"
+                style={cardBackground(profile?.profileCard)}
+              />
             )}
             <button
               type="button"
@@ -492,6 +506,10 @@ export function ReviewerQuickMenu({
                     handle={mine || visibleFriendship === "blocked" ? undefined : profileHandle}
                   />
                 </div>
+                <ProfileJoinedAt
+                  value={profile?.memberSince}
+                  className="mt-1 block text-[11px] leading-relaxed text-ink-subtle"
+                />
               </div>
               <div className="flex shrink-0 items-center gap-1.5 pb-1">
                 {!mine && (

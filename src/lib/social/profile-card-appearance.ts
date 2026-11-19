@@ -1,7 +1,10 @@
-import { authToken } from "@/lib/theme-auth";
+import { authToken, captureSessionScope } from "@/lib/theme-auth";
 import { HARBOR_API_BASE } from "@/lib/config/endpoints";
 import { socialPatch } from "./client";
 import type { ProfileSummary } from "@/views/profile/profile-types";
+import type { CSSProperties } from "react";
+import type { ProfileCardAppearance } from "./profile-card-appearance-types";
+import { publishProfileCardSummary } from "./profile-card-summary";
 
 // Custom profile-card appearance. The card is a separate surface from the profile page:
 // these settings change what the card image and the card-shaped quick menu look like,
@@ -70,6 +73,35 @@ export function cardBackground(
   return {};
 }
 
+/** Scoped tokens keep a user's card preference off the surrounding page. */
+export function profileCardStyle(look?: ProfileCardAppearance): CSSProperties {
+  const preset = cardThemeById(look?.theme);
+  const accent = /^#[0-9a-f]{6}$/i.test(look?.accent ?? "") ? look!.accent : preset?.accent;
+  if (!preset && !accent) return {};
+  return {
+    ...(preset
+      ? {
+          "--color-canvas": preset.to,
+          "--color-surface": preset.to,
+          "--color-elevated": `color-mix(in srgb, ${preset.to} 88%, #fff)`,
+          "--color-raised": `color-mix(in srgb, ${preset.to} 78%, #fff)`,
+          "--color-ink": "#f7f7fa",
+          "--color-ink-muted": "#c6c6d0",
+          "--color-ink-subtle": "#a5a5b4",
+          "--color-edge": "#ffffff30",
+          "--color-edge-soft": "#ffffff1f",
+          colorScheme: "dark",
+        }
+      : {}),
+    ...(accent
+      ? {
+          "--color-accent": accent,
+          "--color-accent-soft": `color-mix(in srgb, ${accent} 15%, transparent)`,
+        }
+      : {}),
+  } as CSSProperties;
+}
+
 export function saveCardAppearance(input: {
   cardTheme?: CardThemeId | null;
   cardAccent?: string | null;
@@ -77,16 +109,22 @@ export function saveCardAppearance(input: {
   const body: Record<string, unknown> = {};
   if (input.cardTheme !== undefined) body.cardTheme = input.cardTheme;
   if (input.cardAccent !== undefined) body.cardAccent = input.cardAccent;
-  return socialPatch<ProfileSummary>("/social/me/profile", body);
+  return socialPatch<ProfileSummary>("/social/me/profile", body).then((summary) => {
+    publishProfileCardSummary(summary);
+    return summary;
+  });
 }
 
-function unwrap(r: Response): Promise<ProfileSummary> {
+function unwrap(r: Response, isCurrent: () => boolean): Promise<ProfileSummary> {
   return r
     .json()
     .catch(() => ({}))
     .then((d: { error?: string }) => {
+      if (!isCurrent()) throw new Error("Account changed");
       if (!r.ok) throw new Error(cardUploadError(d.error));
-      return d as ProfileSummary;
+      const summary = d as ProfileSummary;
+      publishProfileCardSummary(summary);
+      return summary;
     });
 }
 
@@ -113,6 +151,7 @@ function cardUploadError(code: string | undefined): string {
  * GIFs at all. The server validates the bytes with sharp and re-encodes stills.
  */
 export async function uploadCardBackground(file: File): Promise<ProfileSummary> {
+  const isCurrent = captureSessionScope();
   const token = authToken();
   if (!token) throw new Error("Sign in first.");
   if (file.size > CARD_MAX_BYTES) throw new Error(cardUploadError("too_large"));
@@ -123,15 +162,16 @@ export async function uploadCardBackground(file: File): Promise<ProfileSummary> 
     headers: { Authorization: `Bearer ${token}` },
     body: fd,
   });
-  return unwrap(r);
+  return unwrap(r, isCurrent);
 }
 
 export async function removeCardBackground(): Promise<ProfileSummary> {
+  const isCurrent = captureSessionScope();
   const token = authToken();
   if (!token) throw new Error("Sign in first.");
   const r = await fetch(`${API}/social/profile/card-background/remove`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
-  return unwrap(r);
+  return unwrap(r, isCurrent);
 }

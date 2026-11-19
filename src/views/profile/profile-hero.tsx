@@ -15,6 +15,7 @@ import {
 import { useEffect, useId, useMemo, useState } from "react";
 import { ConfirmableAction } from "@/components/context-menu/action-items";
 import { ShareModal } from "./share-modal";
+import { ProfileJoinedAt } from "./profile-joined-at";
 import { countryFlagSrc } from "@/components/flag";
 import { acceptFriend, removeFriend, sendFriendRequest } from "@/lib/social/friends";
 import { type DmError } from "@/lib/social/dm";
@@ -226,6 +227,10 @@ export function ProfileHero({
                   {countryName(p.location)}
                 </span>
               )}
+              <ProfileJoinedAt
+                value={p.memberSince}
+                className="basis-full text-[11.5px] text-ink-subtle"
+              />
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">

@@ -3298,6 +3298,10 @@ const uiFallback: Record<string, string> = {
   Requested: "Requested",
   "Sending...": "Sending...",
   Add: "Add",
+  "Joined {date}": "Joined {date}",
+  "Loading profile": "Loading profile",
+  "Choose the theme visitors see on your cards in discovery, reviews, DMs and hover previews. Your profile page keeps its own theme.":
+    "Choose the theme visitors see on your cards in discovery, reviews, DMs and hover previews. Your profile page keeps its own theme.",
 };
 
 export default uiFallback;
