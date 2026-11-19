@@ -7,7 +7,7 @@ import {
   useFriendReviewIndex,
   useTitleHoverSummary,
 } from "@/lib/social/friend-review-index";
-import { HarborMark } from "@/components/icons/harbor-mark";
+import { UnratedReviewIcon } from "@/components/icons/unrated-review-icon";
 import { HoverTooltip } from "@/components/hover-tooltip";
 import { Avatar } from "@/views/profile/profile-bits";
 import type { FriendReviewMark } from "@/lib/social/friend-review-index";
@@ -103,10 +103,10 @@ export function FriendReviewBadges({
           className="inline-flex shrink-0 items-center gap-0.5 text-ink-muted transition-colors hover:text-ink"
         >
           <span
-            className="inline-flex shrink-0 items-center justify-center text-white"
+            className="inline-flex shrink-0 items-center justify-center text-ink-muted"
             style={{ width: avatarSize, height: avatarSize }}
           >
-            <HarborMark className="h-[55%] w-[55%]" />
+            <UnratedReviewIcon size={avatarSize} />
           </span>
           <span
             className="inline-flex shrink-0 items-center rounded-full px-2 text-[12px] font-semibold leading-none tabular-nums text-ink"
