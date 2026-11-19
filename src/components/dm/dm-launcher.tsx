@@ -382,6 +382,7 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
                     setSelected(null);
                   }}
                   aria-label={t("New message")}
+                  title={t("New message")}
                   className="grid h-8 w-8 place-items-center rounded-full text-ink-muted transition-colors hover:bg-elevated hover:text-ink"
                 >
                   <SquarePen size={15} aria-hidden />
@@ -390,6 +391,7 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
                   type="button"
                   onClick={() => setOpen(false)}
                   aria-label={t("Minimize messages")}
+                  title={t("Minimize messages")}
                   className="grid h-8 w-8 place-items-center rounded-full text-ink-muted transition-colors hover:bg-elevated hover:text-ink"
                 >
                   <Minus size={16} aria-hidden />
@@ -402,6 +404,7 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
                     setComposing(false);
                   }}
                   aria-label={t("Close messages")}
+                  title={t("Close messages")}
                   className="grid h-8 w-8 place-items-center rounded-full text-ink-muted transition-colors hover:bg-elevated hover:text-ink"
                 >
                   <X size={16} aria-hidden />
@@ -464,6 +467,7 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
                   openConversation(toast.event.conversation.id);
                   setToast(null);
                 }}
+                title={t("Open conversation")}
                 className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 pe-9 text-start transition-colors hover:bg-elevated"
               >
                 <DmAvatar user={toast.event.conversation.other} />
@@ -481,6 +485,7 @@ export function DmLauncher({ playing: playerPlaying = false }: { playing?: boole
               type="button"
               onClick={() => setToast(null)}
               aria-label={t("Dismiss")}
+              title={t("Dismiss")}
               className="absolute end-1.5 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full text-ink-subtle transition-colors hover:bg-elevated hover:text-ink"
             >
               <X size={14} aria-hidden />

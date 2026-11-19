@@ -77,6 +77,7 @@ const REACTION_CHOICES = [
 
 /** The picker is a row of buttons, not a text field: the allowed set is the server's. */
 function ReactionPicker({ onPick }: { onPick: (emoji: string) => void }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   return (
     <span className="relative">
@@ -84,7 +85,8 @@ function ReactionPicker({ onPick }: { onPick: (emoji: string) => void }) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        aria-label="React"
+        aria-label={t("React")}
+        title={t("React")}
         className="grid h-5 w-5 place-items-center rounded-full text-[11px] leading-none hover:bg-elevated hover:text-ink"
       >
         <span aria-hidden>+</span>
@@ -99,6 +101,8 @@ function ReactionPicker({ onPick }: { onPick: (emoji: string) => void }) {
               key={emoji}
               type="button"
               role="menuitem"
+              aria-label={t("React with {emoji}", { emoji })}
+              title={t("React with {emoji}", { emoji })}
               onClick={() => {
                 setOpen(false);
                 onPick(emoji);
@@ -394,6 +398,7 @@ export function DmThread({
           type="button"
           onClick={onBack}
           aria-label={t("Back to conversations")}
+          title={t("Back to conversations")}
           className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-muted transition-colors hover:bg-elevated hover:text-ink"
         >
           <ArrowLeft size={17} aria-hidden />
@@ -418,6 +423,7 @@ export function DmThread({
               onClose();
             }}
             aria-label={t("Open profile")}
+            title={t("Open profile")}
             className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-muted transition-colors hover:bg-elevated hover:text-ink"
           >
             <ExternalLink size={15} aria-hidden />
@@ -427,6 +433,7 @@ export function DmThread({
           type="button"
           onClick={() => void toggleMute()}
           aria-label={muted ? t("Unmute conversation") : t("Mute conversation")}
+          title={muted ? t("Unmute conversation") : t("Mute conversation")}
           aria-pressed={muted}
           className={`grid h-8 w-8 shrink-0 place-items-center rounded-full transition-colors hover:bg-elevated ${
             muted ? "text-accent" : "text-ink-muted hover:text-ink"
@@ -437,18 +444,11 @@ export function DmThread({
         <button
           type="button"
           onClick={() => void hide()}
-          aria-label={t("Delete conversation from inbox")}
+          aria-label={t("Hide conversation from inbox")}
+          title={t("Hide conversation from inbox")}
           className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-muted transition-colors hover:bg-elevated hover:text-danger"
         >
           <Archive size={15} aria-hidden />
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={t("Close messages")}
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-muted transition-colors hover:bg-elevated hover:text-ink"
-        >
-          <X size={16} aria-hidden />
         </button>
       </div>
 
@@ -478,6 +478,7 @@ export function DmThread({
               <button
                 type="button"
                 onClick={onBack}
+                title={t("Back to conversations")}
                 className="mt-3 rounded-full bg-elevated px-3 py-1.5 text-[12px] font-semibold text-ink ring-1 ring-edge-soft"
               >
                 {t("Back to conversations")}
@@ -501,6 +502,7 @@ export function DmThread({
                   type="button"
                   onClick={() => void loadOlder()}
                   disabled={olderLoading}
+                  title={t("Load older messages")}
                   className="inline-flex items-center gap-1.5 rounded-full bg-elevated px-3 py-1.5 text-[11.5px] font-medium text-ink-muted ring-1 ring-edge-soft hover:text-ink disabled:opacity-60"
                 >
                   {olderLoading && <Loader2 size={12} className="animate-spin" aria-hidden />}
@@ -577,6 +579,7 @@ export function DmThread({
                                 onClick={() => setEditingId(null)}
                                 className="grid h-6 w-6 place-items-center rounded-full hover:bg-current/10"
                                 aria-label={t("Cancel edit")}
+                                title={t("Cancel edit")}
                               >
                                 <X size={13} aria-hidden />
                               </button>
@@ -586,6 +589,7 @@ export function DmThread({
                                 disabled={!editDraft.trim() || busyId === message.id}
                                 className="grid h-6 w-6 place-items-center rounded-full hover:bg-current/10 disabled:opacity-50"
                                 aria-label={t("Save edit")}
+                                title={t("Save edit")}
                               >
                                 {busyId === message.id ? (
                                   <Loader2 size={13} className="animate-spin" aria-hidden />
@@ -616,6 +620,11 @@ export function DmThread({
                                 onClick={() => void toggleReaction(message, r.emoji)}
                                 aria-pressed={r.mine}
                                 aria-label={t("React with {emoji}", { emoji: r.emoji })}
+                                title={
+                                  r.mine
+                                    ? t("Remove {emoji} reaction", { emoji: r.emoji })
+                                    : t("React with {emoji}", { emoji: r.emoji })
+                                }
                                 className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10.5px] tabular-nums transition-colors ${
                                   r.mine
                                     ? "bg-ink/15 text-ink"
@@ -643,6 +652,7 @@ export function DmThread({
                                   onClick={() => startEdit(message)}
                                   className="grid h-5 w-5 place-items-center rounded-full hover:bg-elevated hover:text-ink"
                                   aria-label={t("Edit message")}
+                                  title={t("Edit message")}
                                 >
                                   <Pencil size={11} aria-hidden />
                                 </button>
@@ -652,6 +662,7 @@ export function DmThread({
                                   disabled={busyId === message.id}
                                   className="grid h-5 w-5 place-items-center rounded-full hover:bg-elevated hover:text-danger disabled:opacity-50"
                                   aria-label={t("Delete message")}
+                                  title={t("Delete message")}
                                 >
                                   {busyId === message.id ? (
                                     <Loader2 size={11} className="animate-spin" aria-hidden />
@@ -699,6 +710,7 @@ export function DmThread({
             onClick={() => void send()}
             disabled={!draft.trim() || sending}
             aria-label={t("Send message")}
+            title={t("Send message")}
             className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-accent text-canvas transition-opacity disabled:opacity-40"
           >
             {sending ? (

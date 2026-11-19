@@ -182,6 +182,7 @@ export function DmNewMessage({
           type="button"
           onClick={onCancel}
           aria-label={t("Back")}
+          title={t("Back to conversations")}
           className="grid h-8 w-8 place-items-center rounded-full text-ink-muted transition-colors hover:bg-elevated hover:text-ink"
         >
           <ArrowLeft size={17} aria-hidden />
@@ -238,6 +239,7 @@ export function DmNewMessage({
                     type="button"
                     disabled={!!picking}
                     onClick={() => void pick(c)}
+                    title={t("Message {name}", { name: c.displayName })}
                     className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-start transition-colors hover:bg-elevated disabled:opacity-60"
                   >
                     <DmAvatar

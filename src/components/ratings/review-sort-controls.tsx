@@ -16,7 +16,7 @@ export function ReviewSortControls({
   const labels: Record<RatingSort, string> = {
     recent: t("Most recent"),
     liked: t("Most liked"),
-    commented: t("Most commented"),
+    commented: t("Most comments"),
     highest: t("Highest rated"),
     lowest: t("Lowest rated"),
   };

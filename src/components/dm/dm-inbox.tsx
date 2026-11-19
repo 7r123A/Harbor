@@ -53,6 +53,7 @@ export function DmInbox({
             <button
               type="button"
               onClick={onRetry}
+              title={t("Try again")}
               className="mt-2 rounded-md bg-surface px-2.5 py-1 text-[12px] font-semibold text-ink ring-1 ring-edge-soft hover:bg-elevated"
             >
               {t("Try again")}
@@ -89,6 +90,7 @@ export function DmInbox({
               <button
                 type="button"
                 onClick={onCompose}
+                title={t("New message")}
                 className="inline-flex items-center gap-1.5 rounded-full bg-accent px-3.5 py-1.5 text-[12.5px] font-semibold text-canvas"
               >
                 <SquarePen size={14} aria-hidden />
@@ -109,6 +111,7 @@ export function DmInbox({
                   <button
                     type="button"
                     onClick={() => onOpen(c.id)}
+                    title={t("Open conversation")}
                     className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-start transition-colors hover:bg-elevated focus-visible:outline-2 focus-visible:outline-accent"
                   >
                     <DmAvatar user={other} showPresence />
