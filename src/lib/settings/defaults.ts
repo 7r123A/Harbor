@@ -9,6 +9,8 @@ import type { Settings, SecondaryProfilePrivileges } from "./types";
 
 export const STORAGE_KEY = "harbor.settings";
 
+export const HARBOR_CURSOR_SCALE = { min: 0.75, max: 2, step: 0.05 };
+
 export const DEFAULT_SECONDARY_PRIVILEGES: SecondaryProfilePrivileges = {
   canAddProfiles: false,
   canManageStartup: false,
@@ -129,6 +131,8 @@ export const DEFAULT: Settings = {
   playerTitleSeriesFirst: false,
   playerTitleLogo: false,
   uiScale: 1,
+  harborCursor: false,
+  harborCursorScale: 1,
   serveWebUi: false,
   remoteControlEnabled: false,
   controllerSupportEnabled: true,
@@ -372,7 +376,7 @@ export const DEFAULT: Settings = {
   autoSkipOutro: false,
   autoSkipAd: false,
   showSkipButton: true,
-  skipButtonHideSec: 0,
+  skipButtonHideSec: 10,
   trackBlockWords: ["commentary"],
   forcedSubsWhenNativeAudio: false,
   tmdbLanguage: "",
