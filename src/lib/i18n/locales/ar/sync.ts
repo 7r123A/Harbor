@@ -25,6 +25,7 @@ const sync: Record<string, string> = {
   Message: "رسالة",
   Send: "إرسال",
   "Guests pick their own source": "يختار الضيوف مصدرهم الخاص",
+  "Chat history": "سجل الدردشة",
   "Keep chat history open": "إبقاء سجل الدردشة مفتوحًا",
   "Shows earlier messages over the video": "يعرض الرسائل السابقة فوق الفيديو",
   "Prompts guests to choose instead of auto-matching":

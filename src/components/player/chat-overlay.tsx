@@ -7,7 +7,7 @@ import type { ChatMessage } from "@/lib/together/provider";
 import type { Participant } from "@/lib/together/protocol";
 import { useSelfIdentity } from "@/lib/together/use-self-identity";
 import { useT } from "@/lib/i18n";
-import { pushBackHandler } from "@/lib/back-intercept";
+import { registerChatHistoryDismiss } from "@/lib/together/chat-history-dismiss";
 import { useSettings } from "@/lib/settings";
 
 const COMPOSE_TIMEOUT_MS = 4500;
@@ -75,31 +75,13 @@ export function ChatOverlay({
     return () => window.removeEventListener("keydown", onKey);
   }, [composing]);
 
-  // Escape that closes the history must not reach the player's close binding,
-  // so it is taken in the capture phase like other player overlays.
-  useEffect(() => {
-    if (!historyOpen || keepHistoryOpen || composing) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      if (document.querySelector('[data-harbor-context-layer][data-menu-phase="open"]')) return;
-      e.preventDefault();
-      e.stopPropagation();
-      setHistoryOpen(false);
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, [historyOpen, keepHistoryOpen, composing]);
-
   useEffect(() => {
     setHistoryOpen(keepHistoryOpen);
   }, [keepHistoryOpen]);
 
   useEffect(() => {
     if (!historyOpen || keepHistoryOpen) return;
-    return pushBackHandler(() => {
-      setHistoryOpen(false);
-      return true;
-    });
+    return registerChatHistoryDismiss(() => setHistoryOpen(false));
   }, [historyOpen, keepHistoryOpen]);
 
   useEffect(() => {
@@ -110,11 +92,15 @@ export function ChatOverlay({
   }, [historyOpen]);
 
   // New messages follow the bottom only when the reader was already there.
+  // Keyed on the newest message: the stored chat is capped, so its length stops
+  // changing once the cap is reached.
+  const newest = messages.at(-1);
+  const newestKey = newest ? `${newest.from}-${newest.at}` : "";
   useEffect(() => {
     const el = listRef.current;
     if (!historyOpen || !el || !stickToBottom.current) return;
     el.scrollTop = el.scrollHeight;
-  }, [historyOpen, messages.length]);
+  }, [historyOpen, newestKey]);
 
   useEffect(() => {
     if (!composing) return;
@@ -135,7 +121,7 @@ export function ChatOverlay({
     [messages, tickNow, historyOpen],
   );
   const grouped = useMemo(() => groupOverlayMessages(visible), [visible]);
-  const showStream = visible.length > 0 || forceVisible || composing || historyOpen;
+  const showStream = visible.length > 0 || forceVisible || composing;
   const align = corner.endsWith("right") ? "items-end" : "items-start";
 
   const submit = () => {
@@ -222,8 +208,8 @@ export function ChatOverlay({
             <button
               onClick={() => setHistoryOpen((open) => !open)}
               aria-pressed={historyOpen}
-              aria-label={t("History")}
-              title={t("History")}
+              aria-label={t("Chat history")}
+              title={t("Chat history")}
               className={`flex h-[30px] w-[30px] items-center justify-center rounded-full border border-white/12 backdrop-blur-md transition-colors hover:bg-black/65 hover:text-white ${
                 historyOpen ? "bg-white/20 text-white" : "bg-black/45 text-white/65"
               }`}

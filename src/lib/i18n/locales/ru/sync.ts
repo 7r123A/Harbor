@@ -25,6 +25,7 @@ const sync: Record<string, string> = {
   Message: "Сообщение",
   Send: "Отправить",
   "Guests pick their own source": "Гости выбирают источник сами",
+  "Chat history": "История чата",
   "Keep chat history open": "Не закрывать историю чата",
   "Shows earlier messages over the video": "Показывает предыдущие сообщения поверх видео",
   "Prompts guests to choose instead of auto-matching":

@@ -23,6 +23,7 @@ const sync: Record<string, string> = {
   "Say hi.": "Gửi lời chào.",
   Message: "Tin nhắn",
   "Guests pick their own source": "Khách tự chọn nguồn",
+  "Chat history": "Lịch sử trò chuyện",
   "Keep chat history open": "Giữ lịch sử trò chuyện luôn mở",
   "Shows earlier messages over the video": "Hiển thị các tin nhắn trước trên video",
   "Prompts guests to choose instead of auto-matching":
