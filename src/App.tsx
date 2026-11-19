@@ -300,6 +300,9 @@ const PeopleView = lazy(() => importPeople().then((m) => ({ default: m.PeopleVie
 const ProfileView = lazy(() =>
   import("@/views/profile/profile").then((m) => ({ default: m.ProfileView })),
 );
+const UserDiscoveryView = lazy(() =>
+  import("@/views/user-discovery").then((m) => ({ default: m.UserDiscoveryView })),
+);
 const SharedListView = lazy(() =>
   import("@/views/shared-list").then((m) => ({ default: m.SharedListView })),
 );
@@ -1538,6 +1541,7 @@ function Shell({ onReady }: { onReady?: () => void }) {
   const profileTop = topKind === "profile";
   const feedTop = topKind === "feed";
   const groupsTop = topKind === "groups";
+  const userDiscoveryTop = topKind === "user-discovery";
   const groupTop = topKind === "group";
   const listTop = topKind === "list";
   const collectionTop = topKind === "collection";
@@ -1713,6 +1717,7 @@ function Shell({ onReady }: { onReady?: () => void }) {
   const profileAlive = useKeepAlive(profileTop, profileHandle !== null);
   const feedAlive = useKeepAlive(feedTop, feedOpen, stackKinds.includes("feed"));
   const groupsAlive = useKeepAlive(groupsTop, groupsOpen, stackKinds.includes("groups"));
+  const userDiscoveryAlive = useKeepAlive(userDiscoveryTop, stackKinds.includes("user-discovery"));
   const groupAlive = useKeepAlive(groupTop, groupId !== null);
   const listAlive = useKeepAlive(listTop, listHandle !== null);
   const addonCollectionAlive = useKeepAlive(
@@ -2179,6 +2184,13 @@ function Shell({ onReady }: { onReady?: () => void }) {
               <div {...layerProps(groupsTop)}>
                 <Suspense fallback={null}>
                   <GroupsView />
+                </Suspense>
+              </div>
+            )}
+            {userDiscoveryAlive && (
+              <div {...layerProps(userDiscoveryTop)}>
+                <Suspense fallback={null}>
+                  <UserDiscoveryView />
                 </Suspense>
               </div>
             )}

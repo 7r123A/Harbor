@@ -84,11 +84,18 @@ export function FriendReviewBadges({
     return (
       <HoverTooltip
         label=""
-        mark={<img src={harborMarkUrl} alt="Harbor" className="h-5 w-5 brightness-0 invert" />}
         details={
-          <span className="mt-1 block font-normal text-ink-muted">
-            {t("No available ratings yet.")}
-          </span>
+          <div className="text-center">
+            <span
+              role="img"
+              aria-label="Harbor"
+              className="mx-auto mb-2 block h-6 w-6 bg-[#d5b77a]"
+              style={{ mask: `url(${harborMarkUrl}) center / contain no-repeat` }}
+            />
+            <span className="block font-normal text-ink-muted">
+              {t("No available ratings yet.")}
+            </span>
+          </div>
         }
         side="top"
         align="end"

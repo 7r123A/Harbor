@@ -3,8 +3,12 @@ import { captureSessionScope, currentAuthor, subscribeAuthor } from "@/lib/theme
 import {
   listDmConversations,
   openDmConversation as openConversation,
+  sendDmMessage as sendMessage,
+  hideDmConversation as hideConversation,
   type DmConversation,
   type DmLastMessage,
+  type DmMessage,
+  type DmShare,
 } from "./dm";
 
 export type DmState = {
@@ -34,6 +38,7 @@ const incomingListeners = new Set<(event: DmIncoming) => void>();
 const previewListeners = new Set<() => void>();
 
 let inFlight: Promise<void> | null = null;
+let inboxVersion = 0;
 let initialLoaded = false;
 const lastSeenMessage = new Map<string, string>();
 // An opened thread can be absent from an older server's hidden inbox response.
@@ -105,6 +110,49 @@ export async function openDmConversation(userId: string): Promise<DmConversation
   return conversation;
 }
 
+export async function sendDmMessage(
+  conversationId: string,
+  body: string,
+  share?: DmShare,
+): Promise<DmMessage> {
+  const isCurrent = captureSessionScope();
+  const message = await sendMessage(conversationId, body, share);
+  if (!isCurrent()) return message;
+  inboxVersion++;
+  const conversation = dmConversationById(conversationId);
+  if (conversation) {
+    const next = {
+      ...conversation,
+      at: message.at,
+      lastMessage: { id: message.id, body: message.body, at: message.at, mine: true },
+    };
+    openedConversations.set(conversationId, next);
+    const conversations = [
+      next,
+      ...state.conversations.filter((row) => row.id !== conversationId),
+    ].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+    setState({ conversations });
+  }
+  void refreshDm({ silent: true, afterMutation: true });
+  return message;
+}
+
+export async function hideDmConversation(conversationId: string): Promise<{ ok: boolean }> {
+  const isCurrent = captureSessionScope();
+  const result = await hideConversation(conversationId);
+  if (isCurrent()) {
+    inboxVersion++;
+    openedConversations.delete(conversationId);
+    const conversations = state.conversations.filter((row) => row.id !== conversationId);
+    setState({
+      conversations,
+      unread: conversations.reduce((total, row) => total + row.unread, 0),
+    });
+    await refreshDm({ silent: true, afterMutation: true });
+  }
+  return result;
+}
+
 function notifyIncoming(event: DmIncoming): void {
   for (const fn of incomingListeners) fn(event);
 }
@@ -128,7 +176,7 @@ function detectIncoming(rows: DmConversation[]): void {
 }
 
 export async function refreshDm(
-  opts: { silent?: boolean; signal?: AbortSignal } = {},
+  opts: { silent?: boolean; signal?: AbortSignal; afterMutation?: boolean } = {},
 ): Promise<void> {
   if (!currentAuthor()) {
     openedConversations.clear();
@@ -137,10 +185,17 @@ export async function refreshDm(
     setState({ authed: false, conversations: [], unread: 0, loading: false, error: null });
     return;
   }
-  if (inFlight) return inFlight;
+  if (inFlight) {
+    if (opts.afterMutation)
+      return inFlight.then(() => refreshDm({ ...opts, afterMutation: false }));
+    return inFlight;
+  }
+  const version = inboxVersion;
+  const isCurrent = captureSessionScope();
   if (!opts.silent) setState({ loading: true, error: null });
   inFlight = listDmConversations(opts.signal)
     .then((res) => {
+      if (!isCurrent() || version !== inboxVersion) return;
       if (!currentAuthor()) {
         initialLoaded = false;
         lastSeenMessage.clear();
@@ -158,6 +213,7 @@ export async function refreshDm(
       setState({ authed: true, conversations, unread, loading: false, error: null });
     })
     .catch((err: unknown) => {
+      if (!isCurrent() || version !== inboxVersion) return;
       if ((err as { name?: string }).name === "AbortError") return;
       setState({
         loading: false,

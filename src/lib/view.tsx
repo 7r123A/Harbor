@@ -242,6 +242,7 @@ export type Frame =
   | { kind: "profile"; handle: string; isMyProfile?: boolean }
   | { kind: "feed" }
   | { kind: "groups" }
+  | { kind: "user-discovery" }
   | { kind: "group"; id: string }
   | { kind: "list"; handle: string; listId: string }
   | { kind: "collection"; id: number }
@@ -339,6 +340,7 @@ type ViewValue = {
   openFeed: () => void;
   groupsOpen: boolean;
   openGroups: () => void;
+  openUserDiscovery: () => void;
   groupId: string | null;
   openGroup: (id: string) => void;
   listHandle: string | null;
@@ -519,6 +521,8 @@ function frameKey(f: Frame): string {
       return "feed";
     case "groups":
       return "groups";
+    case "user-discovery":
+      return "user-discovery";
     case "group":
       return `group:${f.id}`;
     case "list":
@@ -1188,6 +1192,14 @@ export function ViewProvider({ children }: { children: ReactNode }) {
     });
   }, [setNavStack]);
 
+  const openUserDiscovery = useCallback(() => {
+    setNavStack((cur) =>
+      cur[cur.length - 1].kind === "user-discovery"
+        ? cur
+        : pushFrame(cur, { kind: "user-discovery" }),
+    );
+  }, [setNavStack]);
+
   const openGroup = useCallback(
     (id: string) => {
       const g = id.trim();
@@ -1567,6 +1579,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
       openFeed,
       groupsOpen,
       openGroups,
+      openUserDiscovery,
       groupId,
       openGroup,
       listHandle,
@@ -1650,6 +1663,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
       openFeed,
       groupsOpen,
       openGroups,
+      openUserDiscovery,
       groupId,
       openGroup,
       listHandle,

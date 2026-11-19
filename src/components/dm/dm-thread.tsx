@@ -15,10 +15,8 @@ import { useT } from "@/lib/i18n";
 import {
   deleteDmMessage,
   editDmMessage,
-  hideDmConversation,
   listDmMessages,
   markDmRead,
-  sendDmMessage,
   reactToDmMessage,
   setDmMuted,
   unreactToDmMessage,
@@ -26,12 +24,19 @@ import {
   type DmMessage,
   type DmShare,
 } from "@/lib/social/dm";
-import { dmConversationById, refreshDm, useDmState } from "@/lib/social/dm-store";
+import {
+  dmConversationById,
+  refreshDm,
+  useDmState,
+  sendDmMessage,
+  hideDmConversation,
+} from "@/lib/social/dm-store";
 import { dmClock, dmDay } from "@/lib/social/dm-format";
 import { PRESENCE_META, presenceStatusLabel } from "@/lib/social/presence";
 import { requestOpenProfile } from "@/lib/social/open-profile";
 import { UserHoverCard } from "@/views/profile/user-hover-card";
 import { DmAvatar } from "./dm-avatar";
+import { DmReactionPicker } from "./dm-reaction-picker";
 
 const PAGE = 30;
 const POLL_MS = 6_000;
@@ -65,58 +70,6 @@ const SHARE_ICON: Record<DmShare["type"], string> = {
   review: "★",
   list: "≡",
 };
-
-const REACTION_CHOICES = [
-  "\u{1F44D}",
-  "\u2764\uFE0F",
-  "\u{1F602}",
-  "\u{1F62E}",
-  "\u{1F622}",
-  "\u{1F389}",
-];
-
-/** The picker is a row of buttons, not a text field: the allowed set is the server's. */
-function ReactionPicker({ onPick }: { onPick: (emoji: string) => void }) {
-  const t = useT();
-  const [open, setOpen] = useState(false);
-  return (
-    <span className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-label={t("React")}
-        title={t("React")}
-        className="grid h-5 w-5 place-items-center rounded-full text-[11px] leading-none hover:bg-elevated hover:text-ink"
-      >
-        <span aria-hidden>+</span>
-      </button>
-      {open && (
-        <span
-          role="menu"
-          className="absolute bottom-6 z-10 flex items-center gap-0.5 rounded-full bg-elevated p-1 shadow-lg ring-1 ring-edge-soft"
-        >
-          {REACTION_CHOICES.map((emoji) => (
-            <button
-              key={emoji}
-              type="button"
-              role="menuitem"
-              aria-label={t("React with {emoji}", { emoji })}
-              title={t("React with {emoji}", { emoji })}
-              onClick={() => {
-                setOpen(false);
-                onPick(emoji);
-              }}
-              className="grid h-6 w-6 place-items-center rounded-full text-[13px] hover:bg-canvas/70"
-            >
-              <span aria-hidden>{emoji}</span>
-            </button>
-          ))}
-        </span>
-      )}
-    </span>
-  );
-}
 
 /** Renders a validated Harbor reference. It is a link, never remote HTML. */
 function ShareCard({ share }: { share: DmShare }) {
@@ -294,7 +247,6 @@ export function DmThread({
       setDraft("");
       atBottom.current = true;
       requestAnimationFrame(() => scrollToBottom(true));
-      void refreshDm({ silent: true });
     } catch (err) {
       setActionError(friendlyError(err));
     } finally {
@@ -380,7 +332,6 @@ export function DmThread({
     setActionError(null);
     try {
       await hideDmConversation(conversationId);
-      await refreshDm({ silent: true });
       onBack();
     } catch (err) {
       setActionError(friendlyError(err));
@@ -466,7 +417,7 @@ export function DmThread({
       <div
         ref={listRef}
         onScroll={onScroll}
-        className="min-h-0 flex-1 overflow-y-auto px-3 py-3"
+        className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-3 py-3"
         aria-live="polite"
       >
         {loading ? (
@@ -542,7 +493,7 @@ export function DmThread({
                       />
                     )}
                     <div
-                      className={`flex max-w-[80%] flex-col ${mine ? "items-end" : "items-start"}`}
+                      className={`flex min-w-0 max-w-[80%] flex-col ${mine ? "items-end" : "items-start"}`}
                     >
                       <div
                         className={`rounded-2xl px-3 py-2 text-[13px] leading-relaxed ${
@@ -552,7 +503,7 @@ export function DmThread({
                         }`}
                       >
                         {editing ? (
-                          <div className="w-[min(280px,60vw)]">
+                          <div className="w-full min-w-0">
                             <textarea
                               autoFocus
                               value={editDraft}
@@ -607,7 +558,9 @@ export function DmThread({
                           <>
                             {message.share && <ShareCard share={message.share} />}
                             {message.body && (
-                              <p className="whitespace-pre-wrap break-words">{message.body}</p>
+                              <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                                {message.body}
+                              </p>
                             )}
                           </>
                         )}
@@ -641,7 +594,7 @@ export function DmThread({
                         )}
                       </div>
                       <div
-                        className={`mt-0.5 flex items-center gap-1.5 text-[10px] text-ink-subtle ${mine ? "flex-row-reverse" : ""}`}
+                        className={`mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] text-ink-subtle ${mine ? "flex-row-reverse" : ""}`}
                       >
                         <span className="tabular-nums">{dmClock(message.at)}</span>
                         {message.edited && !message.deleted && <span>{t("edited")}</span>}
@@ -674,7 +627,7 @@ export function DmThread({
                                 </button>
                               </>
                             )}
-                            <ReactionPicker
+                            <DmReactionPicker
                               onPick={(emoji) => void toggleReaction(message, emoji)}
                             />
                           </span>
@@ -705,7 +658,7 @@ export function DmThread({
             onKeyDown={onComposerKey}
             placeholder={t("Message {name}", { name })}
             aria-label={t("Message {name}", { name })}
-            className="max-h-32 min-h-9 flex-1 resize-none rounded-2xl bg-elevated px-3 py-2 text-[13px] text-ink outline-none ring-1 ring-edge-soft placeholder:text-ink-subtle focus:ring-edge"
+            className="max-h-32 min-h-9 min-w-0 flex-1 resize-none rounded-2xl bg-elevated px-3 py-2 text-[13px] text-ink outline-none ring-1 ring-edge-soft placeholder:text-ink-subtle focus:ring-edge"
           />
           <button
             type="button"
