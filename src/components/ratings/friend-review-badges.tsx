@@ -100,12 +100,19 @@ export function FriendReviewBadges({
           ref={badgeRef}
           role="img"
           aria-label={t("No ratings yet. Be the first to rate!")}
-          className="inline-flex items-center justify-center rounded-full px-2 py-1 text-ink-muted transition-colors hover:text-ink"
+          className="inline-flex shrink-0 items-center rounded-full p-0.5 text-ink-muted transition-colors hover:text-ink"
           style={{
             backgroundColor: "color-mix(in srgb, var(--color-ink) 20%, var(--color-canvas))",
           }}
         >
-          <UnratedReviewIcon />
+          <UnratedReviewIcon size={avatarSize} />
+          <span
+            className="inline-flex shrink-0 items-center ps-1.5 pe-2 text-[12px] font-semibold leading-none tabular-nums text-ink"
+            style={{ height: avatarSize }}
+            aria-hidden="true"
+          >
+            —
+          </span>
         </span>
       </HoverTooltip>
     );
