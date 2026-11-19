@@ -106,7 +106,7 @@ export function FriendReviewBadges({
                 style={{
                   width: avatarSize,
                   height: avatarSize,
-                  marginInlineStart: i === 0 ? 0 : -Math.round(avatarSize / 3),
+                  marginInlineStart: i === 0 ? 0 : -Math.round(avatarSize / 2),
                 }}
               >
                 <span className="inline-flex overflow-hidden rounded-full">
