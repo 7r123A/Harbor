@@ -5,6 +5,7 @@ import { ensureMarksForTitle, useTitleHoverSummary } from "@/lib/social/friend-r
 import { UnratedReviewIcon } from "@/components/icons/unrated-review-icon";
 import { HoverTooltip } from "@/components/hover-tooltip";
 import { Avatar } from "@/views/profile/profile-bits";
+import harborMarkUrl from "@/assets/harbor-logo-test.svg";
 import type { FriendReviewMark } from "@/lib/social/friend-review-index";
 
 /** The same media-type inference used when a title is rated. */
@@ -82,7 +83,13 @@ export function FriendReviewBadges({
   if (marks.length === 0 && averageScore === null) {
     return (
       <HoverTooltip
-        label={t("No ratings yet. Be the first to rate!")}
+        label=""
+        mark={<img src={harborMarkUrl} alt="Harbor" className="h-5 w-5 brightness-0 invert" />}
+        details={
+          <span className="mt-1 block font-normal text-ink-muted">
+            {t("No available ratings yet.")}
+          </span>
+        }
         side="top"
         align="end"
         className={`pointer-events-auto z-10 ${className}`}
@@ -90,24 +97,14 @@ export function FriendReviewBadges({
         <span
           ref={badgeRef}
           role="img"
-          aria-label={t("No ratings yet. Be the first to rate!")}
+          aria-label={t("No available ratings yet.")}
           className="inline-flex shrink-0 items-center gap-0.5 text-ink-muted transition-colors hover:text-ink"
         >
           <span
             className="inline-flex shrink-0 items-center justify-center text-ink-muted"
-            style={{ width: avatarSize + 4, height: avatarSize + 4 }}
+            style={{ width: avatarSize, height: avatarSize }}
           >
-            <UnratedReviewIcon size={avatarSize + 4} />
-          </span>
-          <span
-            className="inline-flex shrink-0 items-center rounded-full px-2 text-[12px] font-semibold leading-none tabular-nums text-ink"
-            style={{
-              height: avatarSize,
-              backgroundColor: "color-mix(in srgb, var(--color-ink) 20%, var(--color-canvas))",
-            }}
-            aria-hidden="true"
-          >
-            —
+            <UnratedReviewIcon size={avatarSize} />
           </span>
         </span>
       </HoverTooltip>
@@ -115,57 +112,71 @@ export function FriendReviewBadges({
   }
 
   return (
-    <div
-      role="img"
-      aria-label={[
-        totalCount > 0 ? label : "",
-        averageScore !== null
-          ? `${t("Harbor users average score")} ${averageScore.toFixed(1)}/10`
-          : "",
-      ]
-        .filter(Boolean)
-        .join(" · ")}
-      title={totalCount > 0 ? label : undefined}
-      className={`pointer-events-none z-10 flex items-center ${className}`}
+    <HoverTooltip
+      label=""
+      mark={<img src={harborMarkUrl} alt="Harbor" className="h-5 w-5 brightness-0 invert" />}
+      details={
+        <span className="mt-1 block font-normal text-ink-muted">
+          {t("Harbor users average score")}
+          {averageScore !== null ? ` · ${averageScore.toFixed(1)}/10` : ""}
+          <br />
+          {label}
+        </span>
+      }
+      side="top"
+      align="end"
+      className={`pointer-events-auto z-10 ${className}`}
     >
-      <span ref={badgeRef} className="inline-flex shrink-0 items-center gap-0.5">
-        {shown.length > 0 && (
-          <span className="relative z-10 inline-flex shrink-0 items-center">
-            {shown.map((mark, i) => (
-              <span
-                key={mark.handle}
-                className="relative inline-flex shrink-0 rounded-full bg-canvas ring-1 ring-canvas"
-                style={{
-                  width: avatarSize,
-                  height: avatarSize,
-                  marginInlineStart: i === 0 ? 0 : -Math.round(avatarSize / 2),
-                }}
-              >
-                <span className="inline-flex overflow-hidden rounded-full">
-                  <Avatar src={mark.avatarUrl} size={avatarSize} alias={mark.alias} />
-                </span>
-                {i === shown.length - 1 && extra > 0 && (
-                  <span className="absolute -right-0.5 -top-0.5 z-10 inline-flex h-3 min-w-3 items-center justify-center rounded-full bg-elevated px-0.5 text-[8px] font-medium leading-none tabular-nums text-ink ring-1 ring-edge-soft">
-                    +{extra}
+      <div
+        role="img"
+        aria-label={[
+          totalCount > 0 ? label : "",
+          averageScore !== null
+            ? `${t("Harbor users average score")} ${averageScore.toFixed(1)}/10`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" · ")}
+        className="flex items-center"
+      >
+        <span ref={badgeRef} className="inline-flex shrink-0 items-center">
+          {shown.length > 0 && (
+            <span className="relative z-10 inline-flex shrink-0 items-center">
+              {shown.map((mark, i) => (
+                <span
+                  key={mark.handle}
+                  className="relative inline-flex shrink-0 rounded-full bg-canvas ring-1 ring-canvas"
+                  style={{
+                    width: avatarSize,
+                    height: avatarSize,
+                    marginInlineStart: i === 0 ? 0 : -Math.round(avatarSize / 2),
+                  }}
+                >
+                  <span className="inline-flex overflow-hidden rounded-full">
+                    <Avatar src={mark.avatarUrl} size={avatarSize} alias={mark.alias} />
                   </span>
-                )}
-              </span>
-            ))}
-          </span>
-        )}
-        {averageScore !== null && (
-          <span
-            title={t("Harbor users average score")}
-            className="inline-flex shrink-0 items-center rounded-full px-2 text-[12px] font-semibold leading-none tabular-nums text-ink"
-            style={{
-              height: avatarSize,
-              backgroundColor: "color-mix(in srgb, var(--color-ink) 20%, var(--color-canvas))",
-            }}
-          >
-            <span>{averageScore.toFixed(1)}</span>
-          </span>
-        )}
-      </span>
-    </div>
+                  {i === shown.length - 1 && extra > 0 && (
+                    <span className="absolute -right-0.5 -top-0.5 z-10 inline-flex h-3 min-w-3 items-center justify-center rounded-full bg-elevated px-0.5 text-[8px] font-medium leading-none tabular-nums text-ink ring-1 ring-edge-soft">
+                      +{extra}
+                    </span>
+                  )}
+                </span>
+              ))}
+            </span>
+          )}
+          {averageScore !== null && (
+            <span
+              className="inline-flex shrink-0 items-center rounded-full px-2 text-[12px] font-semibold leading-none tabular-nums text-ink"
+              style={{
+                height: avatarSize,
+                backgroundColor: "color-mix(in srgb, var(--color-ink) 20%, var(--color-canvas))",
+              }}
+            >
+              <span>{averageScore.toFixed(1)}</span>
+            </span>
+          )}
+        </span>
+      </div>
+    </HoverTooltip>
   );
 }

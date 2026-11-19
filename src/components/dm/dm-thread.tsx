@@ -5,7 +5,6 @@ import {
   Bell,
   BellOff,
   Check,
-  ExternalLink,
   Loader2,
   Pencil,
   Send,
@@ -31,6 +30,7 @@ import { dmConversationById, refreshDm, useDmState } from "@/lib/social/dm-store
 import { dmClock, dmDay } from "@/lib/social/dm-format";
 import { PRESENCE_META, presenceStatusLabel } from "@/lib/social/presence";
 import { requestOpenProfile } from "@/lib/social/open-profile";
+import { UserHoverCard } from "@/views/profile/user-hover-card";
 import { DmAvatar } from "./dm-avatar";
 
 const PAGE = 30;
@@ -405,7 +405,23 @@ export function DmThread({
         </button>
         <DmAvatar user={other} size="sm" showPresence />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[13.5px] font-semibold text-ink">{name}</p>
+          {other?.handle ? (
+            <UserHoverCard handle={other.handle} presence={presence}>
+              <button
+                type="button"
+                onClick={() => {
+                  requestOpenProfile(other.handle);
+                  onClose();
+                }}
+                aria-label={t("Open profile")}
+                className="block max-w-full truncate text-start text-[13.5px] font-semibold text-ink hover:underline"
+              >
+                {name}
+              </button>
+            </UserHoverCard>
+          ) : (
+            <p className="truncate text-[13.5px] font-semibold text-ink">{name}</p>
+          )}
           <p className="flex items-center gap-1 truncate text-[11px] text-ink-subtle">
             <span
               className={`h-1.5 w-1.5 shrink-0 rounded-full ${PRESENCE_META[presence].dot}`}
@@ -415,20 +431,6 @@ export function DmThread({
             {other?.handle ? <span className="truncate">@{other.handle}</span> : null}
           </p>
         </div>
-        {other?.handle && (
-          <button
-            type="button"
-            onClick={() => {
-              requestOpenProfile(other.handle);
-              onClose();
-            }}
-            aria-label={t("Open profile")}
-            title={t("Open profile")}
-            className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-muted transition-colors hover:bg-elevated hover:text-ink"
-          >
-            <ExternalLink size={15} aria-hidden />
-          </button>
-        )}
         <button
           type="button"
           onClick={() => void toggleMute()}

@@ -1,6 +1,11 @@
 import { useSyncExternalStore } from "react";
-import { currentAuthor, subscribeAuthor } from "@/lib/theme-auth";
-import { listDmConversations, type DmConversation, type DmLastMessage } from "./dm";
+import { captureSessionScope, currentAuthor, subscribeAuthor } from "@/lib/theme-auth";
+import {
+  listDmConversations,
+  openDmConversation as openConversation,
+  type DmConversation,
+  type DmLastMessage,
+} from "./dm";
 
 export type DmState = {
   authed: boolean;
@@ -31,6 +36,8 @@ const previewListeners = new Set<() => void>();
 let inFlight: Promise<void> | null = null;
 let initialLoaded = false;
 const lastSeenMessage = new Map<string, string>();
+// An opened thread can be absent from an older server's hidden inbox response.
+const openedConversations = new Map<string, DmConversation>();
 let stopPolling: (() => void) | null = null;
 
 function emit(): void {
@@ -85,7 +92,17 @@ export function requestDmToastPreview(): void {
 
 export function dmConversationById(id: string | null): DmConversation | null {
   if (!id) return null;
-  return state.conversations.find((c) => c.id === id) ?? null;
+  return state.conversations.find((c) => c.id === id) ?? openedConversations.get(id) ?? null;
+}
+
+export async function openDmConversation(userId: string): Promise<DmConversation> {
+  const isCurrent = captureSessionScope();
+  const conversation = await openConversation(userId);
+  if (isCurrent()) {
+    openedConversations.set(conversation.id, conversation);
+    emit();
+  }
+  return conversation;
 }
 
 function notifyIncoming(event: DmIncoming): void {
@@ -114,6 +131,7 @@ export async function refreshDm(
   opts: { silent?: boolean; signal?: AbortSignal } = {},
 ): Promise<void> {
   if (!currentAuthor()) {
+    openedConversations.clear();
     initialLoaded = false;
     lastSeenMessage.clear();
     setState({ authed: false, conversations: [], unread: 0, loading: false, error: null });
@@ -130,6 +148,10 @@ export async function refreshDm(
         return;
       }
       const conversations = Array.isArray(res.conversations) ? res.conversations : [];
+      for (const conversation of conversations) {
+        if (openedConversations.has(conversation.id))
+          openedConversations.set(conversation.id, conversation);
+      }
       const unread = Number(res.unread) || 0;
       detectIncoming(conversations);
       initialLoaded = true;
@@ -162,6 +184,7 @@ export function startDmPolling(): () => void {
     if (!document.hidden) void refreshDm({ silent: true });
   };
   const unsubAuthor = subscribeAuthor(() => {
+    openedConversations.clear();
     initialLoaded = false;
     lastSeenMessage.clear();
     void refreshDm();

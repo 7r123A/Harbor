@@ -29,6 +29,7 @@ import { observe } from "@/lib/visibility";
 import { LocalDot } from "@/components/local-badge";
 import { Poster, useLocalizedPoster } from "./poster";
 import { FriendReviewBadges } from "@/components/ratings/friend-review-badges";
+import { useHoverRatingPrefetch } from "@/lib/social/hover-rating-prefetch";
 import { useProfiledEffect } from "./profiled";
 import { ListingBadgeStrip } from "./listing-badge-strip";
 import {
@@ -123,6 +124,7 @@ const PosterCard = memo(function PosterCard({
   });
   const cardStyle: CardHoverStyle =
     kids || !settings.hoverPreviewEnabled ? "none" : settings.cardHoverStyle;
+  useHoverRatingPrefetch(ref, meta.id, meta.type, !kids && settings.hoverPreviewEnabled);
   const activeCustom = cardStyle === "custom" ? getCustomHover(settings.customHoverId) : null;
   const [hasPeeked, setHasPeeked] = useState(false);
   const inCardHover: CardHoverStyle =

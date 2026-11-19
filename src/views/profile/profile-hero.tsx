@@ -17,7 +17,9 @@ import { ConfirmableAction } from "@/components/context-menu/action-items";
 import { ShareModal } from "./share-modal";
 import { countryFlagSrc } from "@/components/flag";
 import { acceptFriend, removeFriend, sendFriendRequest } from "@/lib/social/friends";
-import { openDmConversation, searchDmUsers, type DmError } from "@/lib/social/dm";
+import { type DmError } from "@/lib/social/dm";
+import { socialGet } from "@/lib/social/client";
+import { openDmConversation } from "@/lib/social/dm-store";
 import { requestOpenDm, useDmState } from "@/lib/social/dm-store";
 import { PRESENCE_META, useMyPresence } from "@/lib/social/presence";
 import { useT } from "@/lib/i18n";
@@ -401,8 +403,7 @@ function MessageButton({ p, signedIn }: { p: ProfileSummary; signedIn: boolean }
       }
       let id = p.id;
       if (!id) {
-        const found = await searchDmUsers(p.handle);
-        id = found.find((u) => u.handle.toLowerCase() === p.handle.toLowerCase())?.id;
+        id = (await socialGet<{ id: string }>(`/social/u/${encodeURIComponent(p.handle)}`)).id;
       }
       if (!id) throw new Error(t("This person could not be found."));
       const conversation = await openDmConversation(id);

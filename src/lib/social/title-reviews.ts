@@ -12,7 +12,7 @@ import {
   type TitleRef,
 } from "./review-rank";
 import { loadUserDirectory } from "./user-directory";
-import { getMutualMatch } from "./mutual-ratings";
+import { getMutualMatch, rememberMutualMatch } from "./mutual-ratings";
 import type { MutualMatch } from "./mutual-score";
 import {
   tmdbImdbId,
@@ -98,7 +98,35 @@ async function loadHubTitleRatings(
   signedOut: boolean,
   includeMatch: boolean,
 ): Promise<TitleRatingsSnapshot | null> {
+  const key = JSON.stringify([
+    currentAuthor()?.id,
+    target.mediaType,
+    target.itemKey,
+    scope,
+    includeMatch,
+  ]);
+  const hit = hubCache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL) return hit.promise;
+  const promise = readHubTitleRatings(target, scope, selfHandle, signedOut, includeMatch).catch(
+    (error) => {
+      if (hubCache.get(key)?.promise === promise) hubCache.delete(key);
+      throw error;
+    },
+  );
+  hubCache.set(key, { at: Date.now(), promise });
+  return promise;
+}
+
+async function readHubTitleRatings(
+  target: TitleRef,
+  scope: "friends" | "all",
+  selfHandle: string | undefined,
+  signedOut: boolean,
+  includeMatch: boolean,
+): Promise<TitleRatingsSnapshot | null> {
   if (Date.now() < hubRetryAt) return null;
+  const isCurrent = captureSessionScope();
+  const viewer = currentAuthor()?.id;
   await resolveTitleIdentity(target);
   const ratings: TitleRating[] = [];
   const contentIds = new Set([target.itemKey]);
@@ -134,7 +162,11 @@ async function loadHubTitleRatings(
       }
       for (const item of data.items ?? []) {
         const rating = ratingFromHub(item);
-        if (rating) ratings.push(rating);
+        if (rating) {
+          ratings.push(rating);
+          if (viewer && isCurrent() && rating.match !== undefined)
+            rememberMutualMatch(viewer, rating.handle, rating.match);
+        }
       }
       if (!data.nextCursor) break;
       if (seen.has(data.nextCursor)) throw new Error("Repeated title reviews cursor");
@@ -165,6 +197,7 @@ const COMMUNITY_CAP = 40;
 const PAGE_CAP = 3;
 const CONCURRENCY = 4;
 const CACHE_TTL = 10_000;
+const hubCache = new Map<string, { at: number; promise: Promise<TitleRatingsSnapshot | null> }>();
 
 type AuthorMeta = {
   handle: string;
@@ -386,15 +419,15 @@ export type TitleRatingSummary = {
 
 const summaryCache = new Map<string, { at: number; promise: Promise<TitleRatingSummary> }>();
 
-/** The same visible rating pool as Everyone, without fetching reviewer match scores. */
+/** Shares the visible rating pool and bundled match scores with Social Reviews. */
 export function loadTitleRatingSummary(target: TitleRef): Promise<TitleRatingSummary> {
   const key = `${currentAuthor()?.id ?? "anon"}|${target.mediaType}|${target.itemKey}`;
   const hit = summaryCache.get(key);
   if (hit && Date.now() - hit.at < CACHE_TTL) return hit.promise;
   const isCurrent = captureSessionScope();
   const promise = Promise.all([
-    loadCommunityTitleRatings(target, false),
-    loadFriendTitleRatings(target),
+    loadCommunityTitleRatings(target),
+    loadFriendTitleRatings(target, true),
   ])
     .then(([snapshot, friends]) => {
       if (!isCurrent()) throw new Error("Account changed");
@@ -454,6 +487,7 @@ export async function loadTitleReviewsWithMatches(
 
 /** Drops every cached history, so the next open reflects ratings changed elsewhere. */
 export function invalidateTitleReviewCaches(): void {
+  hubCache.clear();
   historyCache.clear();
   summaryCache.clear();
 }

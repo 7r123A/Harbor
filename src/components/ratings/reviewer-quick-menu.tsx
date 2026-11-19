@@ -22,7 +22,7 @@ import {
 } from "@/lib/social/quick-reviews";
 import { UserHoverCard } from "@/views/profile/user-hover-card";
 import { socialGet } from "@/lib/social/client";
-import { openDmConversation } from "@/lib/social/dm";
+import { openDmConversation } from "@/lib/social/dm-store";
 import { requestOpenDm } from "@/lib/social/dm-store";
 import { requestOpenProfile } from "@/lib/social/open-profile";
 import { profileMediaMeta } from "@/lib/social/profile-media-meta";

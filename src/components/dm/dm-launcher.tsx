@@ -5,7 +5,7 @@ import { Minus, SquarePen, X } from "lucide-react";
 import harborMarkUrl from "@/assets/harbor-logo-test.svg";
 import { useT } from "@/lib/i18n";
 import { subscribeAuthor } from "@/lib/theme-auth";
-import { openDmConversation } from "@/lib/social/dm";
+import { openDmConversation } from "@/lib/social/dm-store";
 import {
   refreshDm,
   startDmPolling,

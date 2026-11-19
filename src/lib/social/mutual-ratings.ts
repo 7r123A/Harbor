@@ -158,6 +158,14 @@ let activeMatches = 0;
 const waiters: Array<() => void> = [];
 let missingRouteUntil = 0;
 
+/** Reuse comparisons already bundled with the title's review response. */
+export function rememberMutualMatch(viewer: string, handle: string, match: MutualMatch): void {
+  matches.set(JSON.stringify([viewer, handle.toLowerCase()]), {
+    at: Date.now(),
+    result: Promise.resolve(match),
+  });
+}
+
 function getViewerRatings(): Promise<MyRating[]> {
   const viewer = currentAuthor()?.id;
   if (!viewer) return Promise.reject(new Error("Sign in required"));
