@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import ts from "typescript";
 import { JSDOM } from "jsdom";
 import * as React from "react";
@@ -14,7 +14,15 @@ import * as dismiss from "../src/lib/together/chat-history-dismiss.ts";
 
 type Msg = { from: string; name: string; text: string; at: number };
 
+// Always unmount, even when an assertion fails: the overlay runs an interval
+// that would otherwise keep the test process alive.
+const mounted: Array<() => void> = [];
+afterEach(() => {
+  while (mounted.length) mounted.pop()!();
+});
+
 function setup(keepHistoryOpen: boolean, messages: Msg[], forceVisible = false) {
+  let props: Record<string, unknown> = {};
   const dom = new JSDOM('<div id="root"></div>', {
     url: "https://fixture.invalid",
     pretendToBeVisual: true,
@@ -65,23 +73,27 @@ function setup(keepHistoryOpen: boolean, messages: Msg[], forceVisible = false) 
   );
   const ChatOverlay = module.exports.ChatOverlay;
   const root = createRoot(dom.window.document.getElementById("root")!);
-  act(() => {
-    root.render(
-      React.createElement(ChatOverlay, {
-        messages,
-        onSend: () => {},
-        selfId: "me",
-        participants: [],
-        forceVisible,
-      }),
-    );
-  });
+  const render = (extra: Record<string, unknown> = {}) => {
+    props = { messages, onSend: () => {}, selfId: "me", participants: [], forceVisible, ...extra };
+    act(() => {
+      root.render(React.createElement(ChatOverlay, props));
+    });
+  };
+  render();
+  let done = false;
+  const unmount = () => {
+    if (done) return;
+    done = true;
+    act(() => root.unmount());
+  };
+  mounted.push(unmount);
   const doc = dom.window.document;
   return {
     doc,
     historyButton: () => doc.querySelector<HTMLButtonElement>('[aria-label="Chat history"]'),
     overlay: () => doc.getElementById("root")!.firstElementChild as HTMLElement,
-    unmount: () => act(() => root.unmount()),
+    rerender: (extra: Record<string, unknown>) => render({ ...props, ...extra }),
+    unmount,
   };
 }
 
@@ -128,5 +140,19 @@ test("unmounting with the history open leaves nothing registered", () => {
 test("keeping the history open does not pin an empty overlay over the video", () => {
   const ui = setup(true, []);
   assert.ok(ui.overlay().className.includes("opacity-0"));
+  ui.unmount();
+});
+
+test("a hidden overlay does not take the player's Escape/Back step", () => {
+  const ui = setup(false, older);
+  act(() => ui.historyButton()!.click());
+  ui.rerender({ hidden: true });
+  assert.equal(dismiss.dismissChatHistory(), false, "Escape/Back goes to the player");
+  ui.rerender({ hidden: false });
+  let handled = false;
+  act(() => {
+    handled = dismiss.dismissChatHistory();
+  });
+  assert.equal(handled, true, "showing the overlay again restores the step");
   ui.unmount();
 });

@@ -79,10 +79,11 @@ export function ChatOverlay({
     setHistoryOpen(keepHistoryOpen);
   }, [keepHistoryOpen]);
 
+  // A hidden overlay draws nothing, so it must not take an Escape/Back step.
   useEffect(() => {
-    if (!historyOpen || keepHistoryOpen) return;
+    if (!historyOpen || keepHistoryOpen || hidden) return;
     return registerChatHistoryDismiss(() => setHistoryOpen(false));
-  }, [historyOpen, keepHistoryOpen]);
+  }, [historyOpen, keepHistoryOpen, hidden]);
 
   useEffect(() => {
     const el = listRef.current;
