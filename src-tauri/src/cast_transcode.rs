@@ -126,6 +126,9 @@ pub struct VideoInfo {
     /// H.264: the SPS's profile_idc, constraint flags and level_idc, read from the stream's
     /// parameter sets by [`probe`]; `None` when they could not be read.
     pub avc_header: Option<[u8; 3]>,
+    /// H.265: the general profile_tier_level the stream declares (profile space, tier and
+    /// profile_idc; 32 compatibility flags; 6 constraint bytes; level_idc), read like `avc_header`.
+    pub hevc_ptl: Option<[u8; 12]>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -139,6 +142,8 @@ pub struct AudioInfo {
     pub bitrate: u64,
     /// Samples per second; 0 when the probe does not say.
     pub sample_rate: u32,
+    /// The profile as FFmpeg names it ("LC", "HE-AAC", "HE-AACv2").
+    pub profile: Option<String>,
 }
 
 impl AudioInfo {
@@ -360,8 +365,9 @@ pub(crate) fn parse_probe(json: &str) -> Result<MediaProbe, String> {
                     max_bitrate: s.max_bit_rate.as_deref().and_then(|b| b.trim().parse().ok()).unwrap_or(0),
                     sar: parse_sar(s.sample_aspect_ratio.as_deref()),
                     level: s.level.and_then(|l| u32::try_from(l).ok()).filter(|l| *l > 0),
-                    profile: s.profile.filter(|p| !p.is_empty() && p != "unknown"),
+                    profile: s.profile.clone().filter(|p| !p.is_empty() && p != "unknown"),
                     avc_header: None,
+                    hevc_ptl: None,
                 });
             }
             "audio" => probe.audio.push(AudioInfo {
@@ -371,6 +377,7 @@ pub(crate) fn parse_probe(json: &str) -> Result<MediaProbe, String> {
                 language: s.tags.get("language").cloned().filter(|l| l != "und"),
                 bitrate: stream_bitrate(s.bit_rate.as_deref(), &s.tags),
                 sample_rate: s.sample_rate.as_deref().and_then(|r| r.parse().ok()).unwrap_or(0),
+                profile: s.profile.clone().filter(|p| !p.is_empty() && p != "unknown"),
             }),
             "subtitle" => probe.subtitles.push(SubtitleInfo {
                 index: s.index,
@@ -408,16 +415,19 @@ pub async fn probe(url: &str, headers: &HashMap<String, String>) -> Result<Media
         .await
         .map_err(|e| format!("ffprobe: {e}"))?;
     let mut probe = parse_probe(&String::from_utf8_lossy(&output.stdout))?;
-    if let Some(video) = probe.video.as_mut().filter(|v| v.codec == "h264") {
-        video.avc_header = probe_avc_header(&ffprobe, url, headers).await;
+    if let Some(video) = probe.video.as_mut().filter(|v| matches!(v.codec.as_str(), "h264" | "hevc")) {
+        if let Some(config) = probe_video_config(&ffprobe, url, headers).await {
+            video.avc_header = (video.codec == "h264").then(|| avc_header(&config)).flatten();
+            video.hevc_ptl = (video.codec == "hevc").then(|| hevc_ptl(&config)).flatten();
+        }
     }
     Ok(probe)
 }
 
-/// The SPS header of the first video stream, from its parameter sets. A second, short probe of
-/// that one stream: `-show_data` on the full probe would also hex-dump every attachment, such as
-/// the fonts a Matroska file carries.
-async fn probe_avc_header(ffprobe: &std::path::Path, url: &str, headers: &HashMap<String, String>) -> Option<[u8; 3]> {
+/// The first video stream's parameter sets (its extradata). A second, short probe of that one
+/// stream: `-show_data` on the full probe would also hex-dump every attachment, such as the fonts a
+/// Matroska file carries.
+async fn probe_video_config(ffprobe: &std::path::Path, url: &str, headers: &HashMap<String, String>) -> Option<Vec<u8>> {
     let mut cmd = quiet_command(ffprobe);
     cmd.arg("-v").arg("error");
     cmd.args(http_input_args(url, headers, false));
@@ -428,7 +438,7 @@ async fn probe_avc_header(ffprobe: &std::path::Path, url: &str, headers: &HashMa
     let output = crate::process_output::output(cmd, Duration::from_secs(10)).await.ok()?;
     let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
     let dump = parsed.get("streams")?.get(0)?.get("extradata")?.as_str()?;
-    avc_header(&parse_hex_dump(dump)?)
+    parse_hex_dump(dump)
 }
 
 /// ffprobe's `-show_data` hex dump back to bytes. Each line is an 8-digit offset, ": ", then up to
@@ -468,6 +478,37 @@ fn avc_header(extradata: &[u8]) -> Option<[u8; 3]> {
         })?
     };
     (header[0] != 0 && header[2] != 0).then_some(header)
+}
+
+/// The general profile_tier_level from H.265 parameter sets: an hvcC record (MP4, Matroska) holds
+/// it right after its version byte; in Annex B (MPEG-TS) it follows the SPS's NAL header and first
+/// byte, with emulation prevention bytes (00 00 03) removed, since its zero-heavy flags often carry
+/// them.
+fn hevc_ptl(config: &[u8]) -> Option<[u8; 12]> {
+    let ptl: [u8; 12] = if config.first() == Some(&1) {
+        config.get(1..13)?.try_into().ok()?
+    } else {
+        let start = config.windows(3).enumerate().filter(|(_, start)| *start == [0, 0, 1]).find_map(|(at, _)| {
+            let nal = *config.get(at + 3)?;
+            (nal & 0x80 == 0 && (nal >> 1) & 0x3F == 33).then_some(at + 5)
+        })?;
+        let mut rbsp = Vec::with_capacity(13);
+        let mut zeros = 0;
+        for &byte in config.get(start..)? {
+            if zeros >= 2 && byte == 3 {
+                zeros = 0;
+                continue;
+            }
+            zeros = if byte == 0 { zeros + 1 } else { 0 };
+            rbsp.push(byte);
+            if rbsp.len() == 13 {
+                break;
+            }
+        }
+        // The SPS's first byte (VPS id, sub-layer count) precedes the profile_tier_level.
+        rbsp.get(1..13)?.try_into().ok()?
+    };
+    (ptl[0] & 0x1F != 0 && ptl[11] != 0).then_some(ptl)
 }
 
 /// What the local FFmpeg build can do. Hardware encoders are listed by most builds whether or not
@@ -778,6 +819,40 @@ fn h264_profile_bytes(name: Option<&str>) -> (u8, u8) {
     }
 }
 
+/// The CODECS name for a copied H.265 picture at `level_idc` (ISO/IEC 14496-15 E.3): its own
+/// profile space, profile, compatibility flags (in reverse bit order), tier and constraint bytes
+/// (trailing zero bytes left out), or the guess below when they could not be read.
+fn copied_hevc_codec_string(video: &VideoInfo, level_idc: u32) -> String {
+    let Some(ptl) = video.hevc_ptl else {
+        return hevc_codec_string(video, level_idc);
+    };
+    let space = ["", "A", "B", "C"][usize::from(ptl[0] >> 6)];
+    let tier = if ptl[0] & 0x20 != 0 { 'H' } else { 'L' };
+    let compatibility = u32::from_be_bytes([ptl[1], ptl[2], ptl[3], ptl[4]]).reverse_bits();
+    let mut name = format!("hvc1.{space}{}.{compatibility:X}.{tier}{level_idc}", ptl[0] & 0x1F);
+    let constraints = &ptl[5..11];
+    let used = constraints.iter().rposition(|b| *b != 0).map_or(0, |last| last + 1);
+    for byte in &constraints[..used] {
+        name.push_str(&format!(".{byte:X}"));
+    }
+    name
+}
+
+/// The CODECS name for copied AAC: its audio object type, which receivers check before loading
+/// (HE-AAC is 5, HE-AACv2 29; LC, 2, is also what Harbor's own encoder writes).
+fn aac_codec_string(profile: Option<&str>) -> &'static str {
+    match profile.unwrap_or("") {
+        "HE-AACv2" => "mp4a.40.29",
+        "HE-AAC" | "MPEG-2 AAC HE" => "mp4a.40.5",
+        "Main" => "mp4a.40.1",
+        "SSR" => "mp4a.40.3",
+        "LTP" => "mp4a.40.4",
+        "LD" => "mp4a.40.23",
+        "ELD" => "mp4a.40.39",
+        _ => "mp4a.40.2",
+    }
+}
+
 /// Main 10 for 10-bit (HDR) sources, Main for 8-bit ones, at `level_idc` (Main tier).
 fn hevc_codec_string(video: &VideoInfo, level_idc: u32) -> String {
     let profile = if video.pix_fmt.contains("10") || video.pix_fmt.contains("12") || video.hdr { "2.4" } else { "1.6" };
@@ -808,7 +883,14 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
     let device_kbps = limits.max_video_kbps.filter(|k| *k > 0);
     let target_kbps = device_kbps.map_or(quality_kbps, |k| k.min(quality_kbps));
     let video = input.probe.and_then(|p| p.video.as_ref());
-    let audio = input.probe.and_then(|p| p.audio.get(input.audio_ordinal as usize));
+    // A track number past the source's tracks would send silence: the first track is sent instead.
+    let audio_ordinal = match input.probe {
+        Some(p) if input.audio_ordinal as usize >= p.audio.len() => 0,
+        _ => input.audio_ordinal,
+    };
+    let audio = input.probe.and_then(|p| p.audio.get(audio_ordinal as usize));
+    // The probe found no sound at all (a silent clip): nothing is mapped, encoded or announced.
+    let no_audio = input.probe.is_some() && audio.is_none();
     let mut reasons: Vec<String> = Vec::new();
     let mut pre_input: Vec<String> = Vec::new();
     let mut output: Vec<String> = Vec::new();
@@ -875,7 +957,8 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
             encode_video = true;
         }
         if v.codec == "h264" && !eight_bit && !v.pix_fmt.is_empty() {
-            reasons.push("10-bit H.264".into());
+            // 10-bit or 4:2:2/4:4:4 H.264: receivers decode 8-bit 4:2:0 only.
+            reasons.push(format!("H.264 {}", v.pix_fmt));
             encode_video = true;
         }
     } else if input.probe.is_none() {
@@ -896,7 +979,7 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         None => Some("0:v:0?".to_string()),
     };
     // The video map is decided below: an overlaid picture subtitle maps a filter graph output.
-    let audio_map = format!("0:a:{}?", input.audio_ordinal);
+    let audio_map = format!("0:a:{audio_ordinal}?");
 
     let mut src_w = video.map(|v| v.width).unwrap_or(0);
     let mut src_h = video.map(|v| v.height).unwrap_or(0);
@@ -1082,7 +1165,7 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
             // length-prefixed (ISO/IEC 14496-15 8.3.2). The MPEG-TS muxer (the continuous DLNA
             // stream) inserts the Annex B conversion it needs by itself.
             let needed = hevc_level(v.width, v.height, fps);
-            hls_video_codec = hevc_codec_string(v, needed.max(v.level.unwrap_or(0)));
+            hls_video_codec = copied_hevc_codec_string(v, needed.max(v.level.unwrap_or(0)));
             hls_fmp4 = true;
         }
     }
@@ -1102,14 +1185,19 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         };
     let hls_audio_codec;
     let audio_bps: u64;
-    if copy_audio {
+    if no_audio {
+        output.push("-an".into());
+        audio_bps = 0;
+        hls_audio_codec = "";
+        summary.audio = "none".into();
+    } else if copy_audio {
         audio_bps = audio.map_or(192_000, AudioInfo::copied_bitrate);
         output.extend(["-c:a".into(), "copy".into()]);
         hls_audio_codec = match codec {
             "ac3" => "ac-3",
             "eac3" => "ec-3",
             "mp3" => "mp4a.40.34",
-            _ => "mp4a.40.2",
+            _ => aac_codec_string(audio.and_then(|a| a.profile.as_deref())),
         };
         summary.audio = format!("{} (original)", codec.to_uppercase());
     } else {
@@ -1135,7 +1223,9 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
     if let Some(map) = video_out_map.or(video_map) {
         output.extend(["-map".into(), map]);
     }
-    output.extend(["-map".into(), audio_map]);
+    if !no_audio {
+        output.extend(["-map".into(), audio_map]);
+    }
     output.extend(["-map_metadata", "-1", "-map_chapters", "-1", "-sn", "-dn"].map(String::from));
 
     // BANDWIDTH is the peak rate of the variant: the video's (the encoder's maxrate, or what a
@@ -1156,7 +1246,13 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         pre_input,
         output,
         summary,
-        hls_codecs: if audio_only { hls_audio_codec.to_string() } else { format!("{hls_video_codec},{hls_audio_codec}") },
+        hls_codecs: if audio_only {
+            hls_audio_codec.to_string()
+        } else if no_audio {
+            hls_video_codec
+        } else {
+            format!("{hls_video_codec},{hls_audio_codec}")
+        },
         hls_fmp4,
         // No picture, no size: the master playlist then leaves RESOLUTION and FRAME-RATE out.
         width: if audio_only { 0 } else if encode_video { out_w } else { src_w.max(2) },
@@ -1563,6 +1659,119 @@ mod tests {
         );
         assert!(p.output.join(" ").contains("-profile:v high"), "{:?}", p.output);
         assert!(p.hls_codecs.starts_with("avc1.6400"), "{}", p.hls_codecs);
+    }
+
+    #[test]
+    fn a_copied_hevc_stream_announces_its_own_profile_tier_and_constraints() {
+        // ffprobe's dumps of x265 output: Main in Matroska and Main 10 High tier in MP4 (hvcC
+        // records, cut after their first line), Main 10 in MPEG-TS (Annex B, whose SPS carries
+        // emulation prevention bytes inside the flags).
+        let main_mkv = "\n00000000: 0101 6000 0000 9000 0000 0000 3ff0 00fc  ..`.........?...\n";
+        let main10_high_mp4 = "\n00000000: 0122 2000 0000 9000 0000 0000 99f0 00fc  .\" .............\n";
+        let main10_ts = "\n00000000: 0000 0001 4001 0c01 ffff 0220 0000 0300  ....@...... ....\n00000010: 9000 0003 0000 0300 3f95 9809 0000 0000  ........?.......\n00000020: 0142 0101 0220 0000 0300 9000 0003 0000  .B... ..........\n00000030: 0300 3fa0 0502 0169 3659 59a4 932b c05a  ..?....i6YY..+.Z\n00000040: 0200 0003 0002 0000 0300 3010 0000 0000  ..........0.....\n00000050: 0144 01c1 72b4 6240                      .D..r.b@\n";
+        let cases = [
+            (main_mkv, "yuv420p", 63, "hvc1.1.6.L63.90"),
+            (main10_high_mp4, "yuv420p10le", 153, "hvc1.2.4.H153.90"),
+            (main10_ts, "yuv420p10le", 63, "hvc1.2.4.L63.90"),
+        ];
+        let options = CastOptions { hevc_native: true, ..Default::default() };
+        for (dump, pix_fmt, level, codecs) in cases {
+            let ptl = hevc_ptl(&parse_hex_dump(dump).unwrap());
+            assert!(ptl.is_some(), "{codecs}");
+            let mut probe = copy_probe("hevc", 640, 360, "24/1", Some(level));
+            let video = probe.video.as_mut().unwrap();
+            video.pix_fmt = pix_fmt.into();
+            video.hevc_ptl = ptl;
+            let p = plan_with(&probe, &options, DeviceLimits::default());
+            assert_eq!(p.summary.video, "copy", "{codecs}");
+            assert!(p.hls_fmp4);
+            assert_eq!(p.hls_codecs, format!("{codecs},mp4a.40.2"));
+            // Without the parameter sets, the profile still follows the bit depth.
+            probe.video.as_mut().unwrap().hevc_ptl = None;
+            let guess = plan_with(&probe, &options, DeviceLimits::default()).hls_codecs;
+            assert_eq!(&guess[..9], &codecs[..9], "{guess}");
+        }
+        // A profile space letter, and no constraint field when every constraint byte is zero.
+        let mut probe = copy_probe("hevc", 640, 360, "24/1", Some(93));
+        probe.video.as_mut().unwrap().hevc_ptl = Some([0x41, 0x60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 93]);
+        assert!(plan_with(&probe, &options, DeviceLimits::default()).hls_codecs.starts_with("hvc1.A1.6.L93,"));
+        // The level is never announced below what the picture needs: 4K60 needs 5.1 (L153).
+        let mut probe = copy_probe("hevc", 3840, 2160, "60/1", Some(150));
+        probe.video.as_mut().unwrap().hevc_ptl = Some([0x02, 0x20, 0, 0, 0, 0x90, 0, 0, 0, 0, 0, 150]);
+        let options_4k = CastOptions { hevc_native: true, quality: "4k".into(), ..Default::default() };
+        assert!(plan_with(&probe, &options_4k, DeviceLimits::default()).hls_codecs.starts_with("hvc1.2.4.L153.90,"));
+        // Malformed parameter sets give nothing rather than a guess.
+        assert_eq!(hevc_ptl(&[1, 0x01, 0x60]), None);
+        assert_eq!(hevc_ptl(&[0, 0, 1, 0x40, 0x01, 0x0C]), None, "a VPS is not an SPS");
+        assert_eq!(hevc_ptl(&[]), None);
+    }
+
+    #[test]
+    fn copied_aac_announces_its_object_type() {
+        let probe_with = |profile: &str| {
+            parse_probe(&format!(
+                r#"{{"streams":[{{"index":0,"codec_type":"video","codec_name":"h264","pix_fmt":"yuv420p","width":1280,"height":720,"avg_frame_rate":"24/1"}},
+                   {{"index":1,"codec_type":"audio","codec_name":"aac","profile":"{profile}","channels":2,"sample_rate":"48000"}}],"format":{{"duration":"100"}}}}"#
+            ))
+            .unwrap()
+        };
+        for (profile, codec) in [("LC", "mp4a.40.2"), ("HE-AAC", "mp4a.40.5"), ("HE-AACv2", "mp4a.40.29"), ("", "mp4a.40.2")] {
+            let p = plan_with(&probe_with(profile), &CastOptions::default(), DeviceLimits::default());
+            assert_eq!(p.summary.audio, "AAC (original)", "{profile}");
+            assert!(p.hls_codecs.ends_with(&format!(",{codec}")), "{profile}: {}", p.hls_codecs);
+        }
+        // Re-encoded, it is Harbor's own AAC-LC whatever the source was.
+        let boosted = CastOptions { volume_boost: 25, ..Default::default() };
+        let p = plan_with(&probe_with("HE-AAC"), &boosted, DeviceLimits::default());
+        assert!(p.hls_codecs.ends_with(",mp4a.40.2"), "{}", p.hls_codecs);
+    }
+
+    #[test]
+    fn a_silent_source_announces_and_maps_no_audio() {
+        let silent = parse_probe(
+            r#"{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","pix_fmt":"yuv420p","width":1280,"height":720,"avg_frame_rate":"24/1","max_bit_rate":"3000000"}],"format":{"duration":"10"}}"#,
+        )
+        .unwrap();
+        for options in [CastOptions::default(), CastOptions { force_conversion: true, volume_boost: 50, ..Default::default() }] {
+            let p = plan_with(&silent, &options, DeviceLimits::default());
+            let args = p.output.join(" ");
+            assert!(args.contains("-an") && !args.contains("0:a:") && !args.contains("-c:a"), "{args}");
+            assert!(!p.hls_codecs.contains(','), "only the picture is announced: {}", p.hls_codecs);
+            assert_eq!(p.summary.audio, "none");
+        }
+        // Copied, BANDWIDTH counts the picture's declared peak and the container, no audio.
+        assert_eq!(plan_with(&silent, &CastOptions::default(), DeviceLimits::default()).bandwidth, 3_300_000);
+        // Without a probe nothing is known, so the first audio track is still taken if there is one.
+        let unknown = build_plan(
+            &PlanInput { probe: None, options: &CastOptions::default(), audio_ordinal: 0, burn_sub: None, burn_bitmap: None, force_video_encode: false, limits: DeviceLimits::default() },
+            &FfmpegCaps::default(),
+        );
+        assert!(unknown.output.join(" ").contains("-map 0:a:0?"));
+    }
+
+    #[test]
+    fn a_track_number_past_the_sources_tracks_sends_the_first_track() {
+        let probe = copy_probe("h264", 1280, 720, "24/1", Some(31));
+        let p = build_plan(
+            &PlanInput { probe: Some(&probe), options: &CastOptions::default(), audio_ordinal: 3, burn_sub: None, burn_bitmap: None, force_video_encode: false, limits: DeviceLimits::default() },
+            &FfmpegCaps::default(),
+        );
+        let args = p.output.join(" ");
+        assert!(args.contains("-map 0:a:0?") && !args.contains("0:a:3"), "{args}");
+        assert!(p.hls_codecs.ends_with(",mp4a.40.2"));
+    }
+
+    #[test]
+    fn h264_beyond_8_bit_420_is_converted_and_named() {
+        for pix_fmt in ["yuv420p10le", "yuv422p", "yuv444p"] {
+            let mut probe = copy_probe("h264", 1280, 720, "24/1", Some(31));
+            probe.video.as_mut().unwrap().pix_fmt = pix_fmt.into();
+            let p = plan_with(&probe, &CastOptions::default(), DeviceLimits::default());
+            assert_ne!(p.summary.video, "copy", "{pix_fmt}");
+            assert!(p.summary.reasons.contains(&format!("H.264 {pix_fmt}")), "{:?}", p.summary.reasons);
+        }
+        let probe = copy_probe("h264", 1280, 720, "24/1", Some(31));
+        assert_eq!(plan_with(&probe, &CastOptions::default(), DeviceLimits::default()).summary.video, "copy");
     }
 
     fn plan_with(probe: &MediaProbe, options: &CastOptions, limits: DeviceLimits) -> CastPlan {
