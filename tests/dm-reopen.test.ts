@@ -1,3 +1,4 @@
+import "./_localstorage-stub";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { applyAuthResult } from "@/lib/theme-auth";

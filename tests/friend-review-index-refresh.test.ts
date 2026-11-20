@@ -1,3 +1,4 @@
+import "./_localstorage-stub";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { applyAuthResult, reloadSession } from "@/lib/theme-auth";
@@ -92,6 +93,7 @@ test("hover uses the paginated Social Reviews API for averages and reviewers wit
     fail = false;
     assert.equal((await ensureMarksForTitle(target.mediaType, target.itemKey))?.averageScore, 7.6);
   } finally {
+    localStorage.removeItem("harbor.theme-session");
     reloadSession(true);
     invalidateTitleReviewCaches();
   }

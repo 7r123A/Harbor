@@ -166,3 +166,26 @@ test("logout invalidates a pending inbox and late errors cannot affect a new log
     f.close();
   }
 });
+
+test("account changes clear the shared store even while polling is stopped", async () => {
+  const f = fixture();
+  try {
+    f.requests[0].resolve({ conversations: [conversation("account-a-private")], unread: 3 });
+    await flush();
+    await f.store.openDmConversation("friend");
+    f.store.startDmPolling()();
+    f.switchAccount("account-b");
+    assert.deepEqual(f.store.getDmState().conversations, []);
+    assert.equal(f.store.getDmState().unread, 0);
+    assert.equal(f.store.dmConversationById("opened-private-thread"), null);
+    assert.equal(f.requests.length, 1, "stopped polling does not start background requests");
+    f.store.startDmPolling();
+    assert.equal(f.requests[1].account, "account-b");
+    const fresh = f.store.refreshDm();
+    f.requests[1].resolve({ conversations: [], unread: 0 });
+    await fresh;
+  } finally {
+    f.store.startDmPolling()();
+    f.close();
+  }
+});

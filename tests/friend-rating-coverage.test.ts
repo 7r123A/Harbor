@@ -87,6 +87,7 @@ test("fresh Cinemeta mappings find a new rating by the sixtieth friend without a
     configurable: true,
     value: {
       location: { hostname: "fixture.invalid" },
+      addEventListener: () => {},
       setTimeout,
       clearTimeout,
     },
