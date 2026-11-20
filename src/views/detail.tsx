@@ -221,6 +221,7 @@ import { useAnimeAnilistDetails } from "./detail/use-anime-anilist-details";
 import { useAnimeCharacters } from "./detail/use-anime-characters";
 import { TraktComments } from "./detail/trakt-comments";
 import { LetterboxdPanel } from "./detail/letterboxd-panel";
+import { ParentsGuidePanel } from "./detail/parents-guide-panel";
 import { RateButton } from "@/components/ratings/rate-button";
 import {
   chainedPrimaryRating,
@@ -3257,6 +3258,20 @@ function DetailContent({
               node: <DetailCharacterRail characters={animeCharacters} />,
             });
           }
+
+          // Always register this rail so a hidden section remains restorable even when
+          // the title has no IMDb ID yet. ContentRails only mounts visible rails.
+          railSections.push({
+            key: "parentsGuide",
+            label: t("Content Advisory"),
+            minHeight: 60,
+            node: (
+              <ParentsGuidePanel
+                meta={meta}
+                imdbId={(meta.id.startsWith("tt") ? meta.id : null) ?? detail?.imdbId ?? null}
+              />
+            ),
+          });
           if (detail?.collection) {
             railSections.push({
               key: "collection",
@@ -3466,6 +3481,7 @@ function DetailContent({
               ),
             });
           }
+
           if (railSections.length === 0) return null;
           return <DetailLayoutEditor sections={railSections} />;
         })()}
