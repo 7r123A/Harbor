@@ -119,13 +119,17 @@ test("Refract appears in Licenses attribution under trackers with its existing l
     new URL("../src/views/settings/licenses-panel.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(panel, /import refractLogo from "@\\/assets\\/refract\\.svg"/);
-  const trackers = panel.slice(panel.indexOf("const TRACKERS: Credit[] = ["));
-  assert.match(
-    trackers,
-    /name: "Refract",[\\s\\S]*?url: "https:\\/\\/getrefract\\.app",[\\s\\S]*?logo: refractLogo/,
+  assert.ok(panel.includes('import refractLogo from "@/assets/refract.svg";'));
+  const trackers = panel.slice(
+    panel.indexOf("const TRACKERS: Credit[] = ["),
+    panel.indexOf("const SUBTITLES: Credit[] = ["),
   );
-  assert.match(panel, /title="Trackers and lists"[\\s\\S]*?items={TRACKERS}/);
+  const refract = trackers.split('name: "Refract"')[1]?.split("},")[0];
+  assert.ok(refract, "Refract must be included among trackers");
+  assert.ok(refract.includes('url: "https://getrefract.app"'));
+  assert.ok(refract.includes("logo: refractLogo"));
+  assert.ok(panel.includes('title="Trackers and lists"'));
+  assert.ok(panel.includes("items={TRACKERS}"));
 });
 
 test("automatic Refract playback threshold defaults to 70 percent and is configurable", () => {
