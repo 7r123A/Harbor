@@ -132,11 +132,12 @@ export function usePublicMetaDbScrobble({
     if (snap.durationSec >= STUB_MAX_SEC) durationRef.current = snap.durationSec;
   }, [key, snap.durationSec]);
 
-  // Resolve target whenever media identity changes. Cleanup flushes the
-  // previous item from refs (still holding prev values at cleanup time).
+  // Replacing a resolved target discards its refs even when the displayed
+  // episode key stays the same. Flush the outgoing eligible owner *before*
+  // clearing it: the next Stage 1 lookup can temporarily disable new writes.
   useEffect(() => {
     const prevKey = lastKeyRef.current;
-    if (prevKey && prevKey !== key) {
+    if (prevKey) {
       clearPendingSeek();
       if (previousEligibilityRef.current.key === prevKey &&
           previousEligibilityRef.current.enabled) {

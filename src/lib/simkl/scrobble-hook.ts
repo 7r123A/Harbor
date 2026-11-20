@@ -88,7 +88,15 @@ export function useSimklScrobble({
   const metaId = src.meta.id;
   const season = src.episode?.season;
   const episode = src.episode?.episode;
-  const key = `${metaId}|${season ?? ""}|${episode ?? ""}`;
+  const episodeKey = `${metaId}|${season ?? ""}|${episode ?? ""}`;
+  // The native proof is a session dimension even when catalog coordinates
+  // stay unchanged. Close the previous owner before opening another one.
+  const proofKey = liveScrobble.phase === "resolving" ? "resolving"
+    : liveScrobble.proof
+      ? `${liveScrobble.proof.work.entryId}:${liveScrobble.proof.work.entryEpisode}`
+      : liveScrobble.phase;
+  const key = `${episodeKey}|${proofKey}`;
+  const prevEpisodeKeyRef = useRef(episodeKey);
 
   const stopArgsRef = useRef({ metaId, episode: src.episode, snap, info: infoRef.current, verifiedOnly });
   stopArgsRef.current = { metaId, episode: src.episode, snap, info: infoRef.current, verifiedOnly };
@@ -126,17 +134,20 @@ export function useSimklScrobble({
           ).then((ok) => {
             if (!ok) queueWatch(prev.metaId, prev.episode, prev.info, prev.verifiedOnly);
           });
-        } else if (prevProgress > 0) {
+        } else if (prevProgress > 0 || lastActionRef.current === "start" ||
+                   lastActionRef.current === "pause") {
           void simklScrobble("pause", prev.metaId, prev.episode, prevProgress, prev.info, prev.verifiedOnly);
         }
       }
       lastActionRef.current = null;
       progressRef.current = 0;
-      loadResetSeenRef.current = false;
+      // Re-verifying the same episode does not trigger a player load event.
+      loadResetSeenRef.current = prevEpisodeKeyRef.current === episodeKey;
     }
     lastKeyRef.current = key;
+    prevEpisodeKeyRef.current = episodeKey;
     prevIdentityRef.current = { metaId, episode: src.episode, info: infoRef.current, verifiedOnly, enabled };
-  }, [enabled, key, metaId, src.episode]);
+  }, [enabled, key, episodeKey, metaId, src.episode]);
 
   useEffect(() => {
     if (!enabled) return;

@@ -40,7 +40,17 @@ export function useTraktScrobble({
   const metaId = src.meta.id;
   const season = src.episode?.season;
   const episode = src.episode?.episode;
-  const key = `${metaId}|${season ?? ""}|${episode ?? ""}`;
+  const episodeKey = `${metaId}|${season ?? ""}|${episode ?? ""}`;
+  // Re-verification can change the native owner without changing the visible
+  // episode. That starts a different tracker session, not a continuation of
+  // the old target. Include the pending state so A is closed before B resolves.
+  const proofKey = liveScrobble.phase === "resolving" ? "resolving"
+    : liveScrobble.proof
+      ? [liveScrobble.proof.work.entryId, liveScrobble.proof.work.entryEpisode,
+          JSON.stringify(liveScrobble.proof.traktTarget)].join(":")
+      : liveScrobble.phase;
+  const key = `${episodeKey}|${proofKey}`;
+  const prevEpisodeKeyRef = useRef(episodeKey);
 
   const stopArgsRef = useRef({ metaId, episode: src.episode, snap, verifiedTarget });
   stopArgsRef.current = { metaId, episode: src.episode, snap, verifiedTarget };
@@ -71,19 +81,25 @@ export function useTraktScrobble({
       const prev = prevIdentityRef.current;
       const prevProgress = progressRef.current;
       if (lastActionRef.current !== "stop") {
+        // Call the provider with the *outgoing* proof. The current render's
+        // scrobbleVerified callback may already point to the incoming owner.
         if (prevProgress >= WATCHED_MARK_PCT) {
-          scrobbleVerified("stop", { metaId: prev.metaId, episode: prev.episode, verifiedTarget: prev.verifiedTarget, progress: 100 });
-        } else if (prevProgress > 0) {
-          scrobbleVerified("pause", { metaId: prev.metaId, episode: prev.episode, verifiedTarget: prev.verifiedTarget, progress: prevProgress });
+          void scrobble("stop", { metaId: prev.metaId, episode: prev.episode, verifiedTarget: prev.verifiedTarget, progress: 100 });
+        } else if (prevProgress > 0 || lastActionRef.current === "start" ||
+                   lastActionRef.current === "pause") {
+          void scrobble("pause", { metaId: prev.metaId, episode: prev.episode, verifiedTarget: prev.verifiedTarget, progress: prevProgress });
         }
       }
       lastActionRef.current = null;
       progressRef.current = 0;
-      loadResetSeenRef.current = false;
+      // Same displayed episode, new proof: no player loading reset is expected.
+      // An actual episode switch must still wait for its own loading transition.
+      loadResetSeenRef.current = prevEpisodeKeyRef.current === episodeKey;
     }
     lastKeyRef.current = key;
+    prevEpisodeKeyRef.current = episodeKey;
     prevIdentityRef.current = { metaId, episode: src.episode, verifiedTarget };
-  }, [key, metaId, src.episode, scrobbleVerified]);
+  }, [key, episodeKey, metaId, src.episode, scrobble]);
 
   useEffect(() => {
     if (!isConnected) return;
