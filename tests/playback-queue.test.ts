@@ -344,3 +344,173 @@ test("clearing the queue also clears its saved resume position", () => {
   restored.queue.queueAdd(movie("tt200"));
   assert.equal(restored.queue.getQueueStartItem(true)?.meta.id, "tt200");
 });
+
+test("archiving preserves episode metadata and removes the queue item only once", () => {
+  const { queue } = harness();
+  const series: Meta = {
+    id: "series-history",
+    type: "series",
+    name: "History series",
+  };
+  const episode = { season: 2, episode: 3, name: "Selected episode" };
+
+  queue.queueAdd(series, episode);
+  queue.queueAdd(movie("next"));
+  queue.setQueuePlaying(series, episode);
+
+  const current = queue.getQueueStartItem(true);
+  assert.ok(current);
+
+  assert.equal(queue.queueArchive(current.id, "skipped"), true);
+  assert.equal(queue.queueIndexOf(series, episode), -1);
+  assert.equal(queue.getQueueStartItem(true)?.meta.id, "next");
+
+  const history = queue.getQueueHistory();
+  assert.equal(history.length, 1);
+  assert.deepEqual(history[0].meta, series);
+  assert.deepEqual(history[0].episode, episode);
+  assert.equal(history[0].reason, "skipped");
+  assert.equal(history[0].addedAt, current.addedAt);
+  assert.notEqual(history[0].id, current.id);
+  assert.ok(Number.isFinite(history[0].recordedAt));
+
+  assert.equal(queue.queueArchive(current.id, "completed"), false);
+  assert.equal(queue.getQueueHistory().length, 1);
+  assert.equal(queue.getQueueHistory()[0].reason, "skipped");
+});
+
+test("history retains the latest twenty entries across reloads", () => {
+  const { queue, storage } = harness();
+
+  for (let index = 0; index < 25; index++) {
+    queue.queueAdd(movie(`history-${index}`));
+    const item = queue.getQueueStartItem();
+    assert.ok(item);
+    assert.equal(queue.queueArchive(item.id, "completed"), true);
+  }
+
+  const expected = Array.from({ length: 20 }, (_, index) => `history-${24 - index}`);
+
+  assert.deepEqual(
+    queue.getQueueHistory().map((item) => item.meta.id),
+    expected,
+  );
+
+  const restored = harness(storage).queue;
+  assert.deepEqual(restored.getQueueHistory(), JSON.parse(JSON.stringify(queue.getQueueHistory())));
+  assert.equal(restored.getQueueStartItem(), null);
+});
+
+test("queue clearing and history clearing are independent and persisted", () => {
+  const { queue, storage } = harness();
+
+  queue.queueAdd(movie("completed"));
+  const completed = queue.getQueueStartItem();
+  assert.ok(completed);
+  queue.queueArchive(completed.id, "completed");
+
+  queue.queueAdd(movie("discarded"));
+  queue.queueClear();
+
+  const restored = harness(storage).queue;
+  assert.equal(restored.getQueueStartItem(), null);
+  assert.equal(restored.getQueueHistory().length, 1);
+  assert.equal(restored.getQueueHistory()[0].meta.id, "completed");
+
+  restored.queueAdd(movie("remaining"));
+  restored.setQueuePlaying(movie("remaining"));
+  restored.queueHistoryClear();
+
+  const reloaded = harness(storage).queue;
+  assert.deepEqual(reloaded.getQueueHistory(), []);
+  assert.equal(reloaded.getQueueStartItem(true)?.meta.id, "remaining");
+});
+
+test("history stays isolated between local profiles", () => {
+  const h = harness();
+
+  h.queue.queueAdd(movie("primary-history"));
+  const primaryItem = h.queue.getQueueStartItem();
+  assert.ok(primaryItem);
+  h.queue.queueArchive(primaryItem.id, "completed");
+
+  h.switchProfile("child");
+  assert.deepEqual(h.queue.getQueueHistory(), []);
+
+  h.queue.queueAdd(movie("child-history"));
+  const childItem = h.queue.getQueueStartItem();
+  assert.ok(childItem);
+  h.queue.queueArchive(childItem.id, "skipped");
+
+  h.switchProfile("primary");
+  assert.deepEqual(
+    h.queue.getQueueHistory().map((item) => item.meta.id),
+    ["primary-history"],
+  );
+
+  h.queue.queueHistoryClear();
+  h.switchProfile("child");
+
+  assert.deepEqual(
+    h.queue.getQueueHistory().map((item) => item.meta.id),
+    ["child-history"],
+  );
+});
+
+test("history stays isolated between Nuvio accounts and slots", () => {
+  const h = harness();
+
+  h.switchNuvio("account-a", 1);
+  h.queue.queueAdd(movie("a1-history"));
+  const item = h.queue.getQueueStartItem();
+  assert.ok(item);
+  h.queue.queueArchive(item.id, "skipped");
+
+  h.switchNuvio("account-a", 2);
+  assert.deepEqual(h.queue.getQueueHistory(), []);
+
+  h.switchNuvio("account-b", 1);
+  assert.deepEqual(h.queue.getQueueHistory(), []);
+
+  h.switchNuvio("", 1);
+  assert.deepEqual(h.queue.getQueueHistory(), []);
+  h.queue.queueHistoryClear();
+
+  h.switchNuvio("account-a", 1);
+  assert.equal(h.queue.getQueueHistory()[0]?.meta.id, "a1-history");
+});
+
+test("manual removal does not add history entries", () => {
+  const { queue } = harness();
+
+  queue.queueAdd(movie("removed"));
+  const item = queue.getQueueStartItem();
+  assert.ok(item);
+
+  queue.queueRemove(item.id);
+
+  assert.equal(queue.getQueueStartItem(), null);
+  assert.deepEqual(queue.getQueueHistory(), []);
+});
+
+test("existing scoped queues without history remain readable", () => {
+  const storage = new Map([
+    [
+      "harbor.queue.v2.profile.primary",
+      JSON.stringify({
+        items: [{ id: "existing", meta: movie("existing"), addedAt: 1 }],
+        resumeItemId: "existing",
+        sleepAtEnd: true,
+      }),
+    ],
+  ]);
+
+  const { queue } = harness(storage);
+
+  assert.deepEqual(queue.getQueueHistory(), []);
+  assert.equal(queue.getQueueStartItem(true)?.id, "existing");
+  assert.equal(queue.getSleepAtEnd(), true);
+
+  queue.queueArchive("existing", "completed");
+  assert.equal(harness(storage).queue.getQueueHistory().length, 1);
+});

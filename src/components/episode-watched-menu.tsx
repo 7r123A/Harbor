@@ -179,7 +179,7 @@ export function EpisodeWatchedMenu({
       result.push({
         id: "episode:add-to-queue",
         icon: queued ? <Check size={14} /> : <ListPlus size={14} />,
-        label: queued ? t("In your queue") : t("Add to queue"),
+        label: queued ? t("In your watching queue") : t("Add to watching queue"),
         disabled: queued,
         group: "queue",
         run: () => {

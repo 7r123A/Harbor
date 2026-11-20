@@ -592,7 +592,7 @@ export function ContextMenu() {
           icon={
             queued ? <Check size={14} strokeWidth={2} /> : <ListPlus size={14} strokeWidth={2} />
           }
-          label={queued ? t("In your queue") : t("Add to queue")}
+          label={queued ? t("In your watching queue") : t("Add to watching queue")}
           accent={queued}
           disabled={queued}
           onClick={async () => {

@@ -269,7 +269,13 @@ function PlayOnPanel({ request, themeId }: { request: PlayOnRequest; themeId: st
             state="self"
             onActivate={playHere}
             activateLabel={t("Play here")}
-            actions={<QueueButton onClick={queueHere} disabled={false} label={t("Add to queue")} />}
+            actions={
+              <QueueButton
+                onClick={queueHere}
+                disabled={false}
+                label={t("Add to watching queue")}
+              />
+            }
           />
 
           {roster.map((entry) => {
@@ -302,7 +308,7 @@ function PlayOnPanel({ request, themeId }: { request: PlayOnRequest; themeId: st
                     <QueueButton
                       onClick={() => void runRemote(peer, "queueMeta")}
                       disabled={locked}
-                      label={t("Add to queue")}
+                      label={t("Add to watching queue")}
                     />
                   ) : (
                     <TrustAction
