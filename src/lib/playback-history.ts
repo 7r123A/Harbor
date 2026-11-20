@@ -722,14 +722,8 @@ export function readActualPlaybackForTarget(
   season?: number,
   episode?: number,
 ): ActualPlayback | null {
-  const entry = readAll()[entryKey(metaId, season, episode)]?.actual;
   const actor = capturePlaybackActor();
-  return entry &&
-    validActualPlayback(entry) &&
-    entry.actor.storageProfileId === actor.storageProfileId &&
-    entry.actor.accountId === actor.accountId
-    ? entry
-    : null;
+  return selectedActualState(readAll()[entryKey(metaId, season, episode)], actor).actual ?? null;
 }
 
 export function playbackSourceKey(

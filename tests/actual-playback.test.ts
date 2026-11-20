@@ -344,6 +344,7 @@ test("private CW keeps same-title actual playback independent and ignores old fl
   const two = actor("two", "account-one", "one");
   assert.equal(history.readLastActualPlayback(), null);
   assert.equal(history.readActualPlaybackFor(first.src), null);
+  assert.equal(history.readActualPlaybackForTarget(first.src.meta.id), null);
   assert.equal(history.readPlayback(first.src.meta.id)?.addonId, "shared-addon");
   const second = fixture("private-two", "C:/fixture/two.mp4", first.playedAt + 1, two);
   assert.equal(history.recordActualPlayback(second), true);
@@ -351,6 +352,7 @@ test("private CW keeps same-title actual playback independent and ignores old fl
   assert.equal(history.readLastActualPlayback()?.id, second.id);
   actor("one", "account-one", "one");
   assert.equal(history.readLastActualPlayback()?.id, first.id);
+  assert.equal(history.readActualPlaybackForTarget(first.src.meta.id)?.id, first.id);
   history.savePlayback(first.src.meta.id, { title: "Metadata only" });
   history.clearPlayback(first.src.meta.id);
   assert.equal(history.readLastActualPlayback()?.id, first.id);

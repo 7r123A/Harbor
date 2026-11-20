@@ -20,6 +20,7 @@ import { FilterBuilder } from "./filter-builder";
 
 export function StremioLayout({
   streams,
+  lastPlayedStream,
   addons,
   pipelineDone,
   loadingAddonCount,
@@ -32,6 +33,7 @@ export function StremioLayout({
   isAnime = false,
 }: {
   streams: ScoredStream[];
+  lastPlayedStream?: ScoredStream | null;
   addons: Addon[] | null;
   pipelineDone: boolean;
   loadingAddonCount: number;
@@ -205,6 +207,7 @@ export function StremioLayout({
           <StremioRow
             key={`${s.url ?? s.infoHash ?? s.title}-${i}`}
             stream={s}
+            playedLast={s === lastPlayedStream}
             failed={failedStreams.has(s)}
             addonLogo={addonLogoMap.get(s.addonUrl ?? "") ?? addonLogoMap.get(s.addonId) ?? null}
             match={matchFor ? matchFor(s) : null}

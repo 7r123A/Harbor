@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   ArrowDownToLine,
   ArrowUp,
@@ -31,8 +31,12 @@ import { consumeRecentStubEvent } from "@/lib/dead-streams";
 import { peekCachedLogo, resolveLogo } from "@/lib/logo";
 import {
   readPlayback,
+  readActualPlaybackForTarget,
+  getPlaybackRevision,
+  subscribePlayback,
   isPlaybackActorCurrent,
   readLastSeriesPlayback,
+  streamMatchesEntry,
   streamMatchesPreferredSource,
   streamMatchesRememberedSource,
   streamMatchesSource,
@@ -507,6 +511,27 @@ export function PlayPicker({
         : null),
     [meta.id, episode?.season, episode?.episode, settings.rememberLastStream, continuation],
   );
+  const playbackRevision = useSyncExternalStore(subscribePlayback, getPlaybackRevision);
+  const lastPlayedMatch = useMemo(() => {
+    if (isDownload) return null;
+    const playback = readActualPlaybackForTarget(meta.id, episode?.season, episode?.episode);
+    const source = playback?.src.streamRef;
+    if (!playback || !source) return null;
+    const saved = {
+      ...source,
+      url: playback.src.historyUrl || playback.src.url,
+      urlFingerprint: playback.sourceFingerprint,
+      savedAt: playback.playedAt,
+    };
+    return (
+      displayStreams.find(
+        (stream) =>
+          (!source.addonId || streamOfferedByAddon(stream, source.addonId)) &&
+          (!source.infoHash || !!stream.infoHash) &&
+          streamMatchesEntry(stream, saved),
+      ) ?? null
+    );
+  }, [isDownload, meta.id, episode?.season, episode?.episode, playbackRevision, displayStreams]);
 
   // The same episode's exact source is more specific than the series lineage,
   // but an explicit season lock stays in charge.
@@ -1326,6 +1351,7 @@ export function PlayPicker({
         filteredPicker.all.length > 0 ? (
           <StremioLayout
             streams={displayStreams}
+            lastPlayedStream={lastPlayedMatch}
             addons={addons}
             pipelineDone={pipelineDone}
             loadingAddonCount={Math.max(0, (addons?.length ?? 0) - addonCount)}
@@ -1361,6 +1387,7 @@ export function PlayPicker({
                 queued={currentPick.infoHash != null && queuedHash === currentPick.infoHash}
                 inSession={inSession}
                 isPreviouslyPlayed={previousMatch === currentPick}
+                playedLast={lastPlayedMatch === currentPick}
                 match={matchFor(currentPick)}
               />
             )}
@@ -1416,6 +1443,7 @@ export function PlayPicker({
                   addonCount={addonCount}
                   usedAddons={usedAddons}
                   streams={displayStreams}
+                  lastPlayedStream={lastPlayedMatch}
                   debrids={debrids}
                   getAddonLogo={lookupLogo}
                   matchFor={hostMatch ? matchFor : undefined}

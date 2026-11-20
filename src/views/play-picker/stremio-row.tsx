@@ -1,3 +1,4 @@
+import { PlayedLastBadge } from "./played-last-badge";
 import { Check, Download } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { Play } from "@/components/icons/play-filled";
@@ -18,6 +19,7 @@ export function StremioRow({
   failed,
   addonLogo,
   match = null,
+  playedLast = false,
   onPlay,
   onIntent,
   onIntentCancel,
@@ -28,6 +30,7 @@ export function StremioRow({
   stream: ScoredStream;
   failed: boolean;
   addonLogo: string | null;
+  playedLast?: boolean;
   match?: "same" | "close" | null;
   onPlay: () => void;
   /** Fired once a source is deliberately focused or hovered long enough to count as intent. */
@@ -89,7 +92,7 @@ export function StremioRow({
       onPointerLeave={onIntent ? cancelIntent : undefined}
       onFocus={onIntent ? intentSoon : undefined}
       className={`flex items-stretch gap-5 rounded-2xl bg-elevated/40 p-5 ring-1 transition-colors ${
-        failed ? "ring-danger/40 bg-danger/5" : "ring-edge-soft/50"
+        failed ? "ring-danger/40 bg-danger/5" : playedLast ? "ring-accent/70" : "ring-edge-soft/50"
       }`}
     >
       <div className="flex w-[68px] shrink-0 flex-col items-center justify-center">
@@ -101,6 +104,7 @@ export function StremioRow({
         />
       </div>
       <div className="flex min-w-0 flex-1 flex-col justify-center gap-1.5">
+        {playedLast && <PlayedLastBadge />}
         <p className="whitespace-pre-line text-[16px] font-semibold leading-snug text-ink [overflow-wrap:anywhere]">
           {bidiLines(headline)}
         </p>
