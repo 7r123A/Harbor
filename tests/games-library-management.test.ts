@@ -61,6 +61,14 @@ test("browser menu offers no native actions or accidental install deletion", () 
     manage: ["hide"],
   });
   assert.ok(!libraryMenuActions(steam, true, true).manage.includes("remove"));
+  assert.ok(libraryMenuActions(steam, true, true).main.includes("browse"));
+  assert.ok(libraryMenuActions(custom, true, true).main.includes("browse"));
+  assert.ok(!libraryMenuActions(custom, true, true).manage.includes("browse"));
+  assert.ok(
+    !libraryMenuActions({ ...steam, source: "saved" } as QuickGame, true, true).main.includes(
+      "browse",
+    ),
+  );
   assert.ok(libraryMenuActions(custom, true, true).manage.includes("remove"));
   assert.ok(libraryMenuActions(custom, true, true).manage.includes("desktop"));
   assert.ok(

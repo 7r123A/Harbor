@@ -5,7 +5,7 @@ export default {
   "games.manage.pin": "Pin to sidebar",
   "games.manage.unpin": "Unpin from sidebar",
   "games.manage.details": "View game",
-  "games.manage.browse": "Browse local files",
+  "games.manage.browse": "Open game folder",
   "games.manage.properties": "Properties",
   "games.manage.desktop": "Create desktop shortcut",
   "games.manage.hide": "Hide from sidebar",
