@@ -19,12 +19,13 @@ const SEGMENT_POLL_INTERVAL: Duration = Duration::from_millis(150);
 const SEGMENTS_KEPT_BEHIND: u32 = 30;
 /// Length FFmpeg aims for. Segments end on a keyframe at or after it.
 const SEGMENT_SEC: u32 = 4;
-/// EXT-X-TARGETDURATION of a converted stream: it has a keyframe every 2 s, so its segments are
-/// 4 s; the rest is margin for timestamp rounding.
+/// Starting EXT-X-TARGETDURATION of a converted stream: it has a keyframe every 2 s, so its
+/// segments are 4 s; the rest is margin for timestamp rounding.
 const CONVERTED_TARGET_SEC: u32 = 6;
-/// EXT-X-TARGETDURATION of a stream whose video is copied: the source's keyframes decide where its
-/// segments end. x264, x265 and NVENC place one at least every 250 frames (10.4 s at 23.976 fps);
-/// this is three times that.
+/// Starting EXT-X-TARGETDURATION of a stream whose video is copied: the source's keyframes decide
+/// where its segments end. x264, x265 and NVENC place one at least every 250 frames (10.4 s at
+/// 23.976 fps); this is three times that, so the value holds for nearly every source. A source
+/// with keyframes further apart raises it (see [`settle_target_duration`]).
 const COPIED_TARGET_SEC: u32 = 30;
 /// How far (in segments, 5 minutes) the conversion may run ahead of the newest segment a receiver
 /// asked for before FFmpeg is suspended, and where it resumes. Together with the
@@ -53,12 +54,11 @@ struct HlsSession {
     newest_requested: AtomicU32,
     /// Segments below this number were deleted; the playlist stops listing them.
     pruned_below: AtomicU32,
-    /// EXT-X-TARGETDURATION, fixed when the session starts: RFC 8216 6.2.1 forbids changing it.
-    target_duration: u32,
+    /// EXT-X-TARGETDURATION: the starting value for the kind of stream, raised only when a segment
+    /// longer than it is listed, and never lowered.
+    target_duration: AtomicU32,
     /// FFmpeg is suspended because it ran too far ahead of the receiver.
     held: AtomicBool,
-    /// A segment longer than the target was already reported in the log.
-    overlong_noted: AtomicBool,
 }
 
 fn touch(session: &HlsSession) {
@@ -125,9 +125,12 @@ impl HlsState {
             process: Mutex::new(Some(child)),
             newest_requested: AtomicU32::new(0),
             pruned_below: AtomicU32::new(0),
-            target_duration: if job.plan.summary.video == "copy" { COPIED_TARGET_SEC } else { CONVERTED_TARGET_SEC },
+            target_duration: AtomicU32::new(if job.plan.summary.video == "copy" {
+                COPIED_TARGET_SEC
+            } else {
+                CONVERTED_TARGET_SEC
+            }),
             held: AtomicBool::new(false),
-            overlong_noted: AtomicBool::new(false),
         });
         spawn_lead_guard(Arc::downgrade(&session));
         self.sessions.write().await.insert(id.clone(), session);
@@ -290,12 +293,16 @@ fn is_carried_tag(line: &str) -> bool {
     line.starts_with("#EXT-X-MAP") || line.starts_with("#EXT-X-KEY")
 }
 
-/// FFmpeg's target duration, or 0 when the playlist has none yet.
-fn playlist_target_duration(playlist: &str) -> u32 {
+/// The longest segment the playlist lists, in whole seconds rounded to the nearest one, as RFC 8216
+/// 4.3.3.1 compares it with the target duration. 0 when it lists none.
+fn longest_segment(playlist: &str) -> u32 {
     playlist
         .lines()
-        .find_map(|line| line.trim().strip_prefix("#EXT-X-TARGETDURATION:"))
-        .and_then(|value| value.trim().parse().ok())
+        .filter_map(|line| line.trim().strip_prefix("#EXTINF:"))
+        .filter_map(|value| value.split(',').next()?.trim().parse::<f64>().ok())
+        .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+        .map(|seconds| seconds.round() as u32)
+        .max()
         .unwrap_or(0)
 }
 
@@ -307,7 +314,7 @@ fn playlist_target_duration(playlist: &str) -> u32 {
 /// error or a reset, so the playlist is always served the same way:
 /// - as a live playlist with no EXT-X-PLAYLIST-TYPE, from the first response on;
 /// - with EXT-X-MEDIA-SEQUENCE naming the first segment still listed;
-/// - with the session's fixed EXT-X-TARGETDURATION (RFC 8216 6.2.1: it must not change);
+/// - with the session's EXT-X-TARGETDURATION (see [`settle_target_duration`]);
 /// - with EXT-X-START at offset 0, so receivers begin at the oldest listed segment instead of
 ///   joining near the live edge, which skips the film's start and, with a conversion running
 ///   faster than real time, keeps skipping ahead;
@@ -410,8 +417,8 @@ async fn handle_variant(State(state): State<HlsState>, Path(id): Path<String>) -
         if let Ok(content) = tokio::fs::read_to_string(&playlist_path).await {
             if content.contains("#EXTINF") {
                 let pruned = session.pruned_below.load(Ordering::SeqCst);
-                note_overlong_segments(&session, &content);
-                return playlist_response(served_playlist(&content, pruned, session.target_duration));
+                let target = settle_target_duration(&session, &content);
+                return playlist_response(served_playlist(&content, pruned, target));
             }
         }
         if std::time::Instant::now() >= deadline {
@@ -424,16 +431,20 @@ async fn handle_variant(State(state): State<HlsState>, Path(id): Path<String>) -
     }
 }
 
-/// The target duration never changes once served. A copied source whose keyframes are further
-/// apart than its bound is reported once in the log instead.
-fn note_overlong_segments(session: &HlsSession, playlist: &str) {
-    let reported = playlist_target_duration(playlist);
-    if reported > session.target_duration && !session.overlong_noted.swap(true, Ordering::SeqCst) {
-        eprintln!(
-            "[cast-hls] FFmpeg wrote a {reported}s segment, longer than the session's {}s target duration",
-            session.target_duration
-        );
+/// The target duration to serve with `playlist`: never below any segment it lists.
+///
+/// RFC 8216 asks for both a target no segment exceeds (4.3.3.1) and a target that never changes
+/// (6.2.1). A copied picture can only be cut at the source's keyframes, which are not known before
+/// FFmpeg reaches them, so the session starts from a value that holds for nearly every source and
+/// raises it only when a longer segment appears: in the same response that first lists it, so no
+/// playlist ever announces less than one of its own segments. The target is never lowered.
+fn settle_target_duration(session: &HlsSession, playlist: &str) -> u32 {
+    let longest = longest_segment(playlist);
+    let before = session.target_duration.fetch_max(longest, Ordering::SeqCst);
+    if longest > before {
+        eprintln!("[cast-hls] a {longest}s segment raises the target duration from {before}s");
     }
+    before.max(longest)
 }
 
 /// The last segment FFmpeg finished, from its playlist.
@@ -835,10 +846,18 @@ mod tests {
             process: tokio::sync::Mutex::new(None),
             newest_requested: AtomicU32::new(0),
             pruned_below: AtomicU32::new(0),
-            target_duration: CONVERTED_TARGET_SEC,
+            target_duration: AtomicU32::new(CONVERTED_TARGET_SEC),
             held: AtomicBool::new(false),
-            overlong_noted: AtomicBool::new(false),
         })
+    }
+
+    /// The target duration a served playlist announces, or 0 when it has none.
+    fn playlist_target_duration(playlist: &str) -> u32 {
+        playlist
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("#EXT-X-TARGETDURATION:"))
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0)
     }
 
     fn first_segment(playlist: &str) -> &str {
@@ -990,23 +1009,46 @@ mod tests {
     }
 
     #[test]
-    fn the_target_duration_never_changes_once_served() {
-        // Whatever FFmpeg reports later, every response carries the value chosen at the start.
+    fn the_target_duration_covers_every_listed_segment() {
+        // Converted segments stay within the starting value: every response carries it unchanged.
         let s = session(std::env::temp_dir());
-        let early = ffmpeg_playlist(3, "ts", "");
-        let late = ffmpeg_playlist(40, "ts", "").replace("#EXT-X-TARGETDURATION:4", "#EXT-X-TARGETDURATION:13");
-        for playlist in [&early, &late, &early] {
-            note_overlong_segments(&s, playlist);
-            let out = served_playlist(playlist, 0, s.target_duration);
+        for playlist in [ffmpeg_playlist(3, "ts", ""), ffmpeg_playlist(40, "ts", "")] {
+            let out = served_playlist(&playlist, 0, settle_target_duration(&s, &playlist));
             assert_eq!(playlist_target_duration(&out), CONVERTED_TARGET_SEC, "{out}");
             assert_eq!(out.matches("#EXT-X-TARGETDURATION").count(), 1, "{out}");
         }
-        assert!(s.overlong_noted.load(Ordering::SeqCst), "the longer segment is reported");
         // The bounds cover what each kind of stream produces: 4 s converted segments, and copied
         // segments up to x264/x265's default 250-frame keyframe interval at 23.976 fps.
         assert!(CONVERTED_TARGET_SEC >= SEGMENT_SEC + 1);
         assert!(f64::from(COPIED_TARGET_SEC) >= (250.0 / 23.976_f64).round() * 2.0);
-        assert_eq!(playlist_target_duration("#EXTM3U\n"), 0);
+    }
+
+    #[test]
+    fn a_copied_stream_with_keyframes_40_seconds_apart_announces_40_seconds() {
+        // FFmpeg's own playlist for a copied 24 fps H.264 MPEG-TS source with a 40 s GOP: it can only
+        // cut at keyframes, so the segments are 40 s whatever -hls_time asks for.
+        let ffmpeg = "#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-TARGETDURATION:40\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-INDEPENDENT-SEGMENTS\n";
+        let first = format!("{ffmpeg}#EXTINF:40.000000,\nseg00000.ts\n");
+        let later = format!("{first}#EXTINF:40.000000,\nseg00001.ts\n#EXTINF:10.000000,\nseg00002.ts\n#EXT-X-ENDLIST\n");
+        let s = session(std::env::temp_dir());
+        s.target_duration.store(COPIED_TARGET_SEC, Ordering::SeqCst);
+        // Until a longer segment appears, the copied stream's starting value is served.
+        let short = ffmpeg.to_string() + "#EXTINF:10.427083,\nseg00000.ts\n";
+        assert_eq!(settle_target_duration(&s, &short), COPIED_TARGET_SEC);
+        for playlist in [&first, &later] {
+            let out = served_playlist(playlist, 0, settle_target_duration(&s, playlist));
+            assert_eq!(playlist_target_duration(&out), 40, "{out}");
+            assert_eq!(out.matches("#EXT-X-TARGETDURATION").count(), 1, "{out}");
+            // RFC 8216 4.3.3.1: no listed segment, rounded, exceeds the target.
+            assert!(longest_segment(&out) <= playlist_target_duration(&out), "{out}");
+        }
+        // Once raised it is never lowered, even after the long segments are pruned.
+        let pruned = served_playlist(&later, 2, settle_target_duration(&s, &short));
+        assert_eq!(playlist_target_duration(&pruned), 40, "{pruned}");
+        // Durations round to the nearest second, as the RFC compares them.
+        assert_eq!(longest_segment("#EXTINF:30.4,\na.ts\n#EXTINF:12,\nb.ts\n"), 30);
+        assert_eq!(longest_segment("#EXTINF:30.5,title\na.ts\n"), 31);
+        assert_eq!(longest_segment("#EXTM3U\n#EXTINF:nan,\na.ts\n"), 0);
     }
 
     #[test]
