@@ -136,6 +136,32 @@ test("full playback recognition accepts same-language lexical evidence, even for
   }
   assert.equal(calls.length, 6);
 
+  // The manual override represents the real speech language when a file tags
+  // its English audio as Japanese. Its same-language text anchors remain valid.
+  const overrideDiagnostics: unknown[] = [];
+  const overridden = await matchPlaybackSpeech(
+    {
+      path: "private prepared audio",
+      durationSec: 45,
+      cues: cues.map((cue) => [cue.start, cue.end]),
+      textCues: cues,
+      audioLanguage: "jpn",
+      subtitleLanguage: "en",
+      modelLanguage: "en",
+      enabled: true,
+      crossLanguage: true,
+      sessionId: "manual-override",
+    },
+    invoke,
+    () => {},
+    () => true,
+    undefined,
+    undefined,
+    (diagnostic) => overrideDiagnostics.push(diagnostic),
+  );
+  assert.ok(Math.abs(overridden.offsetSec - 1.35) < 0.02);
+  assert.equal(overrideDiagnostics.length, 1);
+
   // Known different-language subtitles never use word matching, even if words
   // happen to be identical in the synthetic test fixture.
   await assert.rejects(

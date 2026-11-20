@@ -102,11 +102,20 @@ export async function matchPlaybackSpeech(
       "disabled",
       "Moonshine was not used. Enable Smart resync with speech recognition in Auto sync settings.",
     );
+  const modelLanguage = resolveMoonshineLanguage(
+    input.modelLanguage,
+    input.audioLanguage,
+    input.audioTrackTitle,
+  );
   const taggedAudio = normalizeLang(input.audioLanguage ?? "");
+  // A manual override corrects an incorrectly tagged audio track for both
+  // recognition and matching eligibility. Auto mode still trusts audio metadata.
   const audio =
-    taggedAudio && !["und", "mul", "zxx", "mis"].includes(taggedAudio)
-      ? taggedAudio
-      : (resolveMoonshineLanguage("auto", input.audioLanguage, input.audioTrackTitle) ?? "");
+    input.modelLanguage && input.modelLanguage !== "auto"
+      ? (modelLanguage ?? "")
+      : taggedAudio && !["und", "mul", "zxx", "mis"].includes(taggedAudio)
+        ? taggedAudio
+        : (modelLanguage ?? "");
   const subtitle = normalizeLang(input.subtitleLanguage ?? "");
   if (
     audio &&
@@ -121,11 +130,6 @@ export async function matchPlaybackSpeech(
       "Cross-language matching is off. Enable Match subtitles across languages in Auto sync settings.",
     );
   }
-  const modelLanguage = resolveMoonshineLanguage(
-    input.modelLanguage,
-    input.audioLanguage,
-    input.audioTrackTitle,
-  );
   if (!modelLanguage) {
     throw new PlaybackSpeechError(
       "language-unsupported",

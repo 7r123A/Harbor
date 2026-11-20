@@ -170,6 +170,43 @@ test("explicit Moonshine language overrides the audio metadata for testing", asy
   );
 });
 
+test("manual language override controls matching eligibility despite incorrect audio tags", async () => {
+  const bridge = native();
+  const result = await matchPlaybackSpeech(
+    {
+      ...base,
+      audioLanguage: "jpn",
+      subtitleLanguage: "en",
+      modelLanguage: "en",
+      crossLanguage: false,
+    },
+    bridge.invoke,
+    () => {},
+    () => true,
+  );
+  assert.ok(Math.abs(result.offsetSec - 2) < 0.15);
+  assert.equal(
+    bridge.calls.find((call) => call.command === "moonshine_transcribe_windows")?.args?.subLang,
+    "en",
+  );
+
+  await assert.rejects(
+    matchPlaybackSpeech(
+      {
+        ...base,
+        audioLanguage: "jpn",
+        subtitleLanguage: "de",
+        modelLanguage: "en",
+        crossLanguage: false,
+      },
+      native().invoke,
+      () => {},
+      () => true,
+    ),
+    /Cross-language matching is off/,
+  );
+});
+
 test("disabled recognition, missing runtime and missing models explain why Moonshine did not run", async () => {
   for (const [input, options, error] of [
     [{ ...base, enabled: false }, {}, /Enable Smart resync/],
