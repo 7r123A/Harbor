@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Loader2, Palette, Star, UserCheck, UserPlus } from "lucide-react";
+import { Loader2, Palette, Star, UserCheck, UserPlus, UserX } from "lucide-react";
 import { useT } from "@/lib/i18n";
-import { sendFriendRequest } from "@/lib/social/friends";
-import { captureSessionScope } from "@/lib/theme-auth";
+import { sendFriendRequest, removeFriend, acceptFriend } from "@/lib/social/friends";
+import { captureSessionScope, currentAuthor } from "@/lib/theme-auth";
 import { publishFriendStatus, subscribeFriendStatus } from "@/views/profile/context-targets";
 import { ProfileCardPanel } from "@/views/profile/profile-card-panel";
 import { useProfileCardSummary } from "@/lib/social/profile-card-summary";
+import type { FriendStatus } from "@/lib/social/friend-command";
+import { MutualMatchLabel } from "@/components/ratings/mutual-match-badge";
 import type { DiscoveredUser } from "@/lib/social/user-discovery";
 
 export function DiscoveryUserCard({
@@ -22,36 +24,54 @@ export function DiscoveryUserCard({
   const t = useT();
   const cardRef = useRef<HTMLElement>(null);
   const { summary, failed } = useProfileCardSummary(user.handle, cardRef);
-  const [state, setState] = useState<"idle" | "sending" | "requested" | "friends">(
-    friend ? "friends" : "idle",
+  const [relationship, setRelationship] = useState<FriendStatus>(
+    friend ? "friends" : (user.friendStatus ?? "none"),
   );
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    if (friend) setState("friends");
-  }, [friend]);
+    setRelationship(summary?.friendStatus ?? (friend ? "friends" : (user.friendStatus ?? "none")));
+  }, [summary?.friendStatus, friend, user.friendStatus]);
   useEffect(
     () =>
       subscribeFriendStatus((handle, status) => {
-        if (handle.toLowerCase() === user.handle.toLowerCase())
-          setState(status === "friends" ? "friends" : status === "outgoing" ? "requested" : "idle");
+        if (handle.toLowerCase() === user.handle.toLowerCase()) setRelationship(status);
       }),
     [user.handle],
   );
-  const add = async () => {
-    if (state !== "idle" || !signedIn) return;
+  const act = async () => {
+    if (busy || !signedIn || relationship === "friends" || relationship === "blocked") return;
     const isCurrent = captureSessionScope();
-    setState("sending");
+    setBusy(true);
     setError(null);
     try {
-      const { edge } = await sendFriendRequest(user.handle);
+      let next: FriendStatus;
+      if (relationship === "outgoing") {
+        const result = await removeFriend(user.handle);
+        if (!result.ok) throw new Error(t("Could not cancel request."));
+        next = "none";
+      } else if (relationship === "incoming") {
+        const edgeId = summary?.friendEdgeId ?? user.friendEdgeId;
+        if (!edgeId) throw new Error(t("Open the profile to accept this request."));
+        await acceptFriend(edgeId);
+        next = "friends";
+      } else {
+        const { edge } = await sendFriendRequest(user.handle);
+        next =
+          edge.status === "accepted"
+            ? "friends"
+            : edge.requesterId && edge.requesterId !== currentAuthor()?.id
+              ? "incoming"
+              : "outgoing";
+      }
       if (!isCurrent()) return;
-      const accepted = edge.status === "accepted" || edge.status === "friends";
-      setState(accepted ? "friends" : "requested");
-      publishFriendStatus(user.handle, accepted ? "friends" : "outgoing");
+      setRelationship(next);
+      publishFriendStatus(user.handle, next);
     } catch (reason) {
-      if (!isCurrent()) return;
-      setState("idle");
-      setError(reason instanceof Error ? reason.message : t("Could not send request."));
+      if (isCurrent())
+        setError(reason instanceof Error ? reason.message : t("Could not update friendship."));
+    } finally {
+      if (isCurrent()) setBusy(false);
     }
   };
   return (
@@ -79,31 +99,51 @@ export function DiscoveryUserCard({
               </span>
               <button
                 type="button"
-                onClick={() => void add()}
-                disabled={!signedIn || state !== "idle"}
-                title={!signedIn ? t("Sign in to add friends") : undefined}
-                className={`inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors disabled:cursor-default ${state === "friends" ? "bg-success/10 text-success" : state === "requested" ? "bg-elevated text-ink-muted" : "bg-elevated text-ink hover:bg-raised"}`}
+                onClick={() => void act()}
+                disabled={
+                  !signedIn || busy || relationship === "friends" || relationship === "blocked"
+                }
+                title={
+                  !signedIn
+                    ? t("Sign in to add friends")
+                    : relationship === "outgoing"
+                      ? t("Cancel request")
+                      : undefined
+                }
+                className={`inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors disabled:cursor-default ${relationship === "friends" ? "bg-success/10 text-success" : relationship === "outgoing" ? "bg-elevated text-ink-muted" : "bg-elevated text-ink hover:bg-raised"}`}
               >
-                {state === "sending" ? (
+                {busy ? (
                   <Loader2 size={14} className="animate-spin" />
-                ) : state === "friends" ? (
+                ) : relationship === "friends" ? (
                   <UserCheck size={14} />
-                ) : state === "requested" ? (
-                  <Check size={14} />
+                ) : relationship === "outgoing" ? (
+                  <UserX size={14} />
                 ) : (
                   <UserPlus size={14} />
                 )}
-                {state === "friends"
+                {relationship === "friends"
                   ? t("Friends")
-                  : state === "requested"
+                  : relationship === "outgoing"
                     ? t("Requested")
-                    : state === "sending"
+                    : busy
                       ? t("Sending...")
-                      : t("Add")}
+                      : relationship === "incoming"
+                        ? t("Accept request")
+                        : t("Add")}
               </button>
             </div>
+            {user.match?.score != null && (
+              <div className="mt-2">
+                <MutualMatchLabel match={user.match} />
+              </div>
+            )}
             {user.hasCanvas && (
-              <span className="mt-2 inline-flex items-center gap-1.5 text-xs text-ink-subtle">
+              <span
+                title={t(
+                  "Profiles with a custom HTML/CSS layout enabled or saved. Choosing a theme alone does not count.",
+                )}
+                className="mt-2 inline-flex items-center gap-1.5 text-xs text-ink-subtle"
+              >
                 <Palette size={13} />
                 {t("Custom profile")}
               </span>

@@ -7,6 +7,10 @@ export type ProfileCardAppearance = {
   from: string | null;
   to: string | null;
   accent: string | null;
+  nameColor?: string | null;
+  handleColor?: string | null;
+  bioColor?: string | null;
+  textColor?: string | null;
   bgUrl: string | null;
   bgKind: "image" | "gif" | null;
   customised: boolean;

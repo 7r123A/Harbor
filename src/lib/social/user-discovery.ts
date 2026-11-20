@@ -1,6 +1,8 @@
+import type { FriendStatus } from "./friend-command";
+import type { MutualMatch } from "./mutual-score";
 import { socialGet } from "./client";
 
-export type DiscoverySort = "newest" | "oldest" | "username" | "relevance";
+export type DiscoverySort = "newest" | "oldest" | "username";
 export type DiscoveredUser = {
   id: string;
   handle: string;
@@ -10,13 +12,25 @@ export type DiscoveredUser = {
   memberSince: string;
   ratingCount: number;
   hasCanvas: boolean;
+  match?: MutualMatch;
+  friendStatus?: FriendStatus;
+  friendEdgeId?: string;
 };
-export type UserDiscoveryPage = { users: DiscoveredUser[]; total: number; nextCursor?: string };
+export type UserDiscoveryPage = {
+  filterVersion?: number;
+  users: DiscoveredUser[];
+  total: number;
+  nextCursor?: string;
+};
 export type UserDiscoveryFilters = {
   query: string;
   sort: DiscoverySort;
   rated: boolean;
   canvas: boolean;
+  minRatings?: number;
+  match?: boolean;
+  minMatch?: number;
+  minShared?: number;
 };
 
 export function fetchDiscoveredUsers(
@@ -26,12 +40,24 @@ export function fetchDiscoveredUsers(
 ): Promise<UserDiscoveryPage> {
   const query = filters.query.trim().replace(/^@+/, "");
   const params = new URLSearchParams({
-    sort: filters.sort === "relevance" && !query ? "newest" : filters.sort,
+    sort: filters.sort,
     limit: "24",
   });
   if (query) params.set("q", query);
   if (filters.rated) params.set("rated", "1");
+  if (filters.rated) params.set("minRatings", String(filters.minRatings ?? 1));
+  if (filters.match) {
+    params.set("minMatch", String(filters.minMatch ?? 50));
+    params.set("minShared", String(filters.minShared ?? 10));
+  }
   if (filters.canvas) params.set("canvas", "1");
   if (cursor) params.set("cursor", cursor);
-  return socialGet(`/social/users?${params.toString()}`, signal);
+  return socialGet<UserDiscoveryPage>(`/social/users?${params.toString()}`, signal).then((page) => {
+    if (
+      (filters.match || (filters.rated && (filters.minRatings ?? 1) > 1)) &&
+      page.filterVersion !== 2
+    )
+      throw new Error("These discovery filters require the latest backend deployment.");
+    return page;
+  });
 }

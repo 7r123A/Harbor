@@ -7,11 +7,7 @@ import {
   resolvePresence,
   type PresenceStatus,
 } from "@/lib/social/presence";
-import {
-  cardBackground,
-  profileCardStyle,
-  profileBackgroundUrl,
-} from "@/lib/social/profile-card-appearance";
+import { profileCardStyle, profileBackgroundUrl } from "@/lib/social/profile-card-appearance";
 import { Avatar, VerifiedCheck } from "./profile-bits";
 import { countryName } from "./flags";
 import { ProfileJoinedAt } from "./profile-joined-at";
@@ -52,13 +48,19 @@ export function ProfileCardPanel({
   const content = (
     <>
       <div
-        className="relative h-[88px] w-full overflow-hidden bg-gradient-to-br from-accent/25 via-raised to-surface"
-        style={cardBackground(profile.profileCard)}
+        className="relative h-[88px] w-full overflow-hidden"
+        style={
+          banner
+            ? undefined
+            : {
+                backgroundImage:
+                  "radial-gradient(ellipse at top left, var(--color-accent-soft), transparent 75%)",
+              }
+        }
       >
         {banner && (
           <img src={banner} alt="" draggable={false} className="h-full w-full object-cover" />
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-elevated to-transparent" />
       </div>
       <div className="relative px-4 pb-4">
         <span className="-mt-8 mb-3 inline-flex rounded-full bg-elevated p-[3px]">
@@ -70,12 +72,20 @@ export function ProfileCardPanel({
           />
         </span>
         <div className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate font-display text-[17px] font-semibold text-ink">
+          <span
+            style={{ color: "var(--profile-card-name)" }}
+            className="truncate font-display text-[17px] font-semibold text-ink"
+          >
             {profile.alias}
           </span>
           {profile.verified && <VerifiedCheck size={16} />}
         </div>
-        <div className="mt-0.5 truncate text-[12.5px] text-ink-subtle">@{profile.handle}</div>
+        <div
+          style={{ color: "var(--profile-card-handle)" }}
+          className="mt-0.5 truncate text-[12.5px] text-ink-subtle"
+        >
+          @{profile.handle}
+        </div>
         {loading ? (
           <div aria-label={t("Loading profile")} className="mt-3 space-y-2">
             <div className="h-3 w-24 animate-pulse rounded bg-raised" />
@@ -99,7 +109,10 @@ export function ProfileCardPanel({
               )}
             </div>
             {bio && (
-              <p className="mt-3 line-clamp-3 border-t border-edge-soft/60 pt-3 text-[12.5px] leading-relaxed text-ink-muted">
+              <p
+                style={{ color: "var(--profile-card-bio)" }}
+                className="mt-3 line-clamp-3 border-t border-edge-soft/60 pt-3 text-[12.5px] leading-relaxed text-ink-muted"
+              >
                 {bio}
               </p>
             )}

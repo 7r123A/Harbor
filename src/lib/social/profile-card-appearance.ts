@@ -23,6 +23,10 @@ export type CardThemeId =
 export type CardAppearancePatch = {
   cardTheme?: CardThemeId | null;
   cardAccent?: string | null;
+  cardNameColor?: string | null;
+  cardHandleColor?: string | null;
+  cardBioColor?: string | null;
+  cardTextColor?: string | null;
   cardFrom?: string;
   cardTo?: string;
 };
@@ -103,8 +107,17 @@ export function profileCardStyle(look?: ProfileCardAppearance): CSSProperties {
       ? { from: look.from!, to: look.to!, accent: "#7b5cff" }
       : cardThemeById(look?.theme);
   const accent = /^#[0-9a-f]{6}$/i.test(look?.accent ?? "") ? look!.accent : preset?.accent;
-  if (!preset && !accent) return {};
+  if (
+    !preset &&
+    !accent &&
+    !look?.nameColor &&
+    !look?.handleColor &&
+    !look?.bioColor &&
+    !look?.textColor
+  )
+    return {};
   return {
+    ...(preset ? { backgroundImage: `linear-gradient(135deg, ${preset.from}, ${preset.to})` } : {}),
     ...(preset
       ? {
           "--color-canvas": preset.to,
@@ -119,6 +132,16 @@ export function profileCardStyle(look?: ProfileCardAppearance): CSSProperties {
           colorScheme: "dark",
         }
       : {}),
+    ...(look?.textColor
+      ? {
+          "--color-ink": look.textColor,
+          "--color-ink-muted": look.textColor,
+          "--color-ink-subtle": look.textColor,
+        }
+      : {}),
+    "--profile-card-name": look?.nameColor ?? "var(--color-ink)",
+    "--profile-card-handle": look?.handleColor ?? "var(--color-ink-subtle)",
+    "--profile-card-bio": look?.bioColor ?? "var(--color-ink-muted)",
     ...(accent
       ? {
           "--color-accent": accent,
@@ -134,10 +157,42 @@ export function saveCardAppearance(input: CardAppearancePatch): Promise<ProfileS
   if (input.cardAccent !== undefined) body.cardAccent = input.cardAccent;
   if (input.cardFrom !== undefined) body.cardFrom = input.cardFrom;
   if (input.cardTo !== undefined) body.cardTo = input.cardTo;
-  return socialPatch<ProfileSummary>("/social/me/profile", body).then((summary) => {
-    publishProfileCardSummary(summary);
-    return summary;
-  });
+  for (const key of ["cardNameColor", "cardHandleColor", "cardBioColor", "cardTextColor"] as const)
+    if (input[key] !== undefined) body[key] = input[key];
+  return socialPatch<ProfileSummary>("/social/me/profile", body)
+    .then((summary) => {
+      const look = summary.profileCard;
+      const expected = {
+        theme: input.cardTheme,
+        from: input.cardFrom,
+        to: input.cardTo,
+        nameColor: input.cardNameColor,
+        handleColor: input.cardHandleColor,
+        bioColor: input.cardBioColor,
+        textColor: input.cardTextColor,
+      };
+      if (
+        Object.entries(expected).some(
+          ([key, value]) =>
+            value !== undefined && (look?.[key as keyof ProfileCardAppearance] ?? null) !== value,
+        )
+      )
+        throw new Error(
+          "Card appearance requires the latest backend deployment. Your changes have not been saved.",
+        );
+      publishProfileCardSummary(summary);
+      return summary;
+    })
+    .catch((error: unknown) => {
+      if (
+        error instanceof Error &&
+        /invalid_card_|applyCardFields|Request failed \(500\)/.test(error.message)
+      )
+        throw new Error(
+          "Card appearance requires the latest backend deployment. Your changes have not been saved.",
+        );
+      throw error;
+    });
 }
 
 function unwrap(r: Response, isCurrent: () => boolean): Promise<ProfileSummary> {

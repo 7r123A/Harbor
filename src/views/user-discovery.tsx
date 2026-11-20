@@ -17,9 +17,16 @@ export function UserDiscoveryView({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<DiscoverySort>("newest");
   const [rated, setRated] = useState(false);
+  const [match, setMatch] = useState(false);
+  const [minMatch, setMinMatch] = useState(50);
+  const [minShared, setMinShared] = useState(10);
+  const [minRatings, setMinRatings] = useState(1);
   const [canvas, setCanvas] = useState(false);
   const [friends, setFriends] = useState<Set<string>>(new Set());
-  const d = useUserDiscovery({ query, sort, rated, canvas }, viewer?.id);
+  const d = useUserDiscovery(
+    { query, sort, rated, canvas, minRatings, match, minMatch, minShared },
+    viewer?.id,
+  );
   useEffect(() => {
     const controller = new AbortController();
     setFriends(new Set());
@@ -37,6 +44,10 @@ export function UserDiscoveryView({ onClose }: { onClose: () => void }) {
     setSort("newest");
     setRated(false);
     setCanvas(false);
+    setMatch(false);
+    setMinMatch(50);
+    setMinShared(10);
+    setMinRatings(1);
   };
   return (
     <ModalShell closing={closing} onDismiss={close} width={960} labelledBy="user-discovery-title">
@@ -92,24 +103,40 @@ export function UserDiscoveryView({ onClose }: { onClose: () => void }) {
                 >
                   <option value="newest">{t("Newest members")}</option>
                   <option value="oldest">{t("Oldest members")}</option>
-                  <option value="username">{t("Username A–Z")}</option>
-                  <option
-                    value="relevance"
-                    disabled={[...query.trim().replace(/^@+/, "")].length < 2}
-                  >
-                    {t("Search relevance")}
-                  </option>
+                  <option value="username">{t("Alphabetical")}</option>
                 </select>
               </label>
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-2">
               {[
-                { label: t("Has ratings"), active: rated, toggle: () => setRated(!rated) },
-                { label: t("Custom profile"), active: canvas, toggle: () => setCanvas(!canvas) },
+                {
+                  label: t("Has ratings"),
+                  active: rated,
+                  toggle: () => setRated(!rated),
+                  description: undefined,
+                },
+                {
+                  label: t("Match score"),
+                  active: match,
+                  toggle: () => setMatch(!match),
+                  description: !viewer
+                    ? t("Sign in to compare your ratings.")
+                    : t("Compare scores on titles you both rated."),
+                },
+                {
+                  label: t("Custom profile"),
+                  active: canvas,
+                  toggle: () => setCanvas(!canvas),
+                  description: t(
+                    "Profiles with a custom HTML/CSS layout enabled or saved. Choosing a theme alone does not count.",
+                  ),
+                },
               ].map((filter) => (
                 <button
                   key={filter.label}
                   type="button"
+                  title={filter.description}
+                  disabled={filter.label === t("Match score") && !viewer}
                   aria-pressed={filter.active}
                   onClick={filter.toggle}
                   className={`min-h-9 rounded-full px-4 text-xs font-medium ring-1 transition-colors ${filter.active ? "bg-accent/15 text-accent ring-accent/50" : "bg-canvas text-ink-muted ring-edge-soft hover:bg-elevated"}`}
@@ -117,7 +144,7 @@ export function UserDiscoveryView({ onClose }: { onClose: () => void }) {
                   {filter.label}
                 </button>
               ))}
-              {(query || rated || canvas || sort !== "newest") && (
+              {(query || rated || canvas || match || sort !== "newest") && (
                 <button
                   type="button"
                   onClick={clear}
@@ -127,6 +154,41 @@ export function UserDiscoveryView({ onClose }: { onClose: () => void }) {
                 </button>
               )}
             </div>
+            {(rated || match) && (
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                {rated && (
+                  <DiscoverySlider
+                    label={t("Minimum ratings")}
+                    value={minRatings}
+                    min={1}
+                    max={1000}
+                    onChange={setMinRatings}
+                  />
+                )}
+                {match && (
+                  <>
+                    <DiscoverySlider
+                      label={t("Minimum match")}
+                      value={minMatch}
+                      min={0}
+                      max={100}
+                      suffix="%"
+                      onChange={setMinMatch}
+                    />
+                    <DiscoverySlider
+                      label={t("Minimum shared titles")}
+                      value={minShared}
+                      min={1}
+                      max={500}
+                      onChange={setMinShared}
+                    />
+                    <p className="text-xs text-ink-subtle">
+                      {t("Only show matches based on at least this many titles you both rated.")}
+                    </p>
+                  </>
+                )}
+              </div>
+            )}
           </section>
           {d.shortQuery ? (
             <p className="py-14 text-center text-sm text-ink-muted">
@@ -144,7 +206,11 @@ export function UserDiscoveryView({ onClose }: { onClose: () => void }) {
                   role="alert"
                   className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-danger/10 p-4 text-sm text-danger"
                 >
-                  <span>{t("Could not load people. Please try again.")}</span>
+                  <span>
+                    {d.error === "These discovery filters require the latest backend deployment."
+                      ? t(d.error)
+                      : t("Could not load people. Please try again.")}
+                  </span>
                   <button
                     type="button"
                     onClick={() => (d.users.length ? void d.loadMore() : d.reload())}
@@ -200,5 +266,42 @@ export function UserDiscoveryView({ onClose }: { onClose: () => void }) {
         </main>
       </div>
     </ModalShell>
+  );
+}
+
+function DiscoverySlider({
+  label,
+  value,
+  min,
+  max,
+  suffix = "",
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  suffix?: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="grid gap-2 text-xs text-ink-muted">
+      <span className="flex justify-between gap-3">
+        <span>{label}</span>
+        <span className="tabular-nums text-ink">
+          {value}
+          {suffix}
+        </span>
+      </span>
+      <input
+        type="range"
+        aria-label={label}
+        min={min}
+        max={max}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="w-full accent-accent"
+      />
+    </label>
   );
 }

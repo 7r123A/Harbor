@@ -23,6 +23,14 @@ export function publishProfileCardSummary(summary: ProfileSummary): void {
   for (const listener of listeners) listener();
 }
 
+export function updateProfileCardFriendStatus(
+  handle: string,
+  friendStatus: ProfileSummary["friendStatus"],
+): void {
+  const entry = cache.get(keyFor(handle));
+  if (entry) publishProfileCardSummary({ ...entry.summary, friendStatus });
+}
+
 /** Visible discovery cards and hover previews share one bounded profile-summary loader. */
 export function loadProfileCardSummary(handle: string): Promise<ProfileSummary> {
   const key = keyFor(handle);

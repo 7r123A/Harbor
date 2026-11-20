@@ -16,8 +16,11 @@ import {
   isSocialActorCurrent,
 } from "@/lib/social/action-actor";
 
+import { updateProfileCardFriendStatus } from "@/lib/social/profile-card-summary";
+
 const relationshipListeners = new Set<(handle: string, status: FriendStatus) => void>();
 export function publishFriendStatus(handle: string, status: FriendStatus) {
+  updateProfileCardFriendStatus(handle, status);
   for (const listener of relationshipListeners) listener(handle, status);
 }
 export function subscribeFriendStatus(listener: (handle: string, status: FriendStatus) => void) {

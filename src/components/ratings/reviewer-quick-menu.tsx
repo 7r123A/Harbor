@@ -23,7 +23,6 @@ import {
 import { UserHoverCard } from "@/views/profile/user-hover-card";
 import { ProfileJoinedAt } from "@/views/profile/profile-joined-at";
 import {
-  cardBackground,
   profileCardStyle,
   profileBackgroundUrl,
   type ProfileCardLook,
@@ -441,8 +440,15 @@ export function ReviewerQuickMenu({
       >
         <div className="relative flex min-h-0 flex-1 flex-col">
           <div
-            className="relative h-24 w-full shrink-0 overflow-hidden bg-elevated"
-            style={cardBackground(profile?.profileCard)}
+            className="relative h-24 w-full shrink-0 overflow-hidden"
+            style={
+              profileBackgroundUrl(profile ?? undefined)
+                ? undefined
+                : {
+                    backgroundImage:
+                      "radial-gradient(ellipse at top left, var(--color-accent-soft), transparent 75%)",
+                  }
+            }
           >
             {profile?.profileCard?.bgUrl || profile?.bannerUrl ? (
               <img
@@ -451,12 +457,7 @@ export function ReviewerQuickMenu({
                 className="h-full w-full object-cover"
                 draggable={false}
               />
-            ) : (
-              <div
-                className="h-full w-full bg-gradient-to-r from-elevated to-canvas"
-                style={cardBackground(profile?.profileCard)}
-              />
-            )}
+            ) : null}
             <button
               type="button"
               onClick={close}
@@ -491,7 +492,7 @@ export function ReviewerQuickMenu({
                       onClick={openFullProfile}
                       className="min-w-0 truncate text-start text-[17.5px] font-semibold text-ink transition-colors hover:text-accent"
                     >
-                      <span id="reviewer-quick-title">
+                      <span id="reviewer-quick-title" style={{ color: "var(--profile-card-name)" }}>
                         {profile?.alias || fallback?.alias || handle}
                       </span>
                     </button>
@@ -502,7 +503,9 @@ export function ReviewerQuickMenu({
                   <span
                     className={`h-2 w-2 rounded-full ${PRESENCE_DOT[profile?.status || "offline"] || PRESENCE_DOT.offline}`}
                   />
-                  <span className="truncate">@{profile?.handle || handle}</span>
+                  <span className="truncate" style={{ color: "var(--profile-card-handle)" }}>
+                    @{profile?.handle || handle}
+                  </span>
                   <MutualMatchBadge
                     handle={mine || visibleFriendship === "blocked" ? undefined : profileHandle}
                   />
@@ -566,7 +569,12 @@ export function ReviewerQuickMenu({
               </div>
             </div>
             {profile?.slogan && (
-              <p className="mt-2 line-clamp-1 text-[12.5px] text-ink-muted">{profile.slogan}</p>
+              <p
+                style={{ color: "var(--profile-card-bio)" }}
+                className="mt-2 line-clamp-1 text-[12.5px] text-ink-muted"
+              >
+                {profile.slogan}
+              </p>
             )}
             {messageError && <p className="mt-1 text-[11.5px] text-ink-muted">{messageError}</p>}
           </div>

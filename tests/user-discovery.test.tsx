@@ -61,7 +61,7 @@ test("changing discovery filters cancels pagination and keeps late results out o
   const filters = { query: "", sort: "newest", rated: false, canvas: false } as const;
   const flush = async () => {
     await React.act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 15));
+      await new Promise((resolve) => setTimeout(resolve, 330));
     });
   };
   try {
@@ -90,4 +90,27 @@ test("changing discovery filters cancels pagination and keeps late results out o
     await React.act(() => root.unmount());
     dom.window.close();
   }
+});
+
+test("match and rating sample filters reach the server and cannot silently use an older backend", async (t) => {
+  t.mock.method(globalThis, "fetch", async (input) => {
+    const url = new URL(String(input));
+    assert.equal(url.searchParams.get("minRatings"), "400");
+    assert.equal(url.searchParams.get("minMatch"), "75");
+    assert.equal(url.searchParams.get("minShared"), "50");
+    return Response.json({ filterVersion: 2, users: [], total: 0 });
+  });
+  const filters = {
+    query: "",
+    sort: "username",
+    rated: true,
+    canvas: false,
+    minRatings: 400,
+    match: true,
+    minMatch: 75,
+    minShared: 50,
+  } as const;
+  await fetchDiscoveredUsers(filters);
+  t.mock.method(globalThis, "fetch", async () => Response.json({ users: [], total: 0 }));
+  await assert.rejects(fetchDiscoveredUsers(filters), /latest backend deployment/);
 });

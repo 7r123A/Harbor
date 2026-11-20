@@ -3342,6 +3342,50 @@ const uiFallback: Record<string, string> = {
   "Choose your card colors and the shared background used on your profile and cards.":
     "Choose your card colors and the shared background used on your profile and cards.",
   "Friend request accepted": "Friend request accepted",
+  Close: "Close",
+  Alphabetical: "Alphabetical",
+  "Match score": "Match score",
+  "Sign in to compare your ratings.": "Sign in to compare your ratings.",
+  "Compare scores on titles you both rated.": "Compare scores on titles you both rated.",
+  "Minimum ratings": "Minimum ratings",
+  "Minimum match": "Minimum match",
+  "Minimum shared titles": "Minimum shared titles",
+  "Only show matches based on at least this many titles you both rated.":
+    "Only show matches based on at least this many titles you both rated.",
+  "Could not cancel request.": "Could not cancel request.",
+  "Open the profile to accept this request.": "Open the profile to accept this request.",
+  "Could not update friendship.": "Could not update friendship.",
+  "Cancel request": "Cancel request",
+  "Accept request": "Accept request",
+  "Profiles with a custom HTML/CSS layout enabled or saved. Choosing a theme alone does not count.":
+    "Profiles with a custom HTML/CSS layout enabled or saved. Choosing a theme alone does not count.",
+  "Card theme": "Card theme",
+  "Customize theme": "Customize theme",
+  "Solid color": "Solid color",
+  "Theme color 1": "Theme color 1",
+  "Theme color": "Theme color",
+  "Theme color 2": "Theme color 2",
+  "Changes the card background behind your profile details.":
+    "Changes the card background behind your profile details.",
+  "Text colors": "Text colors",
+  "Saving...": "Saving...",
+  "Apply appearance": "Apply appearance",
+  "Reset colors": "Reset colors",
+  Name: "Name",
+  Handle: "Handle",
+  Bio: "Bio",
+  "Other text": "Other text",
+  Default: "Default",
+  Aurora: "Aurora",
+  Midnight: "Midnight",
+  Ember: "Ember",
+  Forest: "Forest",
+  Rose: "Rose",
+  Mono: "Mono",
+  "These discovery filters require the latest backend deployment.":
+    "These discovery filters require the latest backend deployment.",
+  "Card appearance requires the latest backend deployment. Your changes have not been saved.":
+    "Card appearance requires the latest backend deployment. Your changes have not been saved.",
 };
 
 export default uiFallback;

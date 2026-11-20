@@ -1,7 +1,7 @@
 import { socialGet, socialPost } from "./client";
 import type { PresenceStatus } from "./presence";
 
-export type FriendEdge = { id: string; status: string };
+export type FriendEdge = { id: string; status: string; requesterId?: string; addresseeId?: string };
 export type Friend = {
   id?: string;
   handle: string;

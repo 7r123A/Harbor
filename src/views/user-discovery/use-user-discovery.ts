@@ -14,7 +14,7 @@ export function useUserDiscovery(filters: UserDiscoveryFilters, viewer: string |
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const request = useRef<AbortController | null>(null);
-  const { query, sort, rated, canvas } = filters;
+  const { query, sort, rated, canvas, minRatings, match, minMatch, minShared } = filters;
   const shortQuery = [...query.trim().replace(/^@+/, "")].length === 1;
 
   useEffect(() => {
@@ -26,31 +26,43 @@ export function useUserDiscovery(filters: UserDiscoveryFilters, viewer: string |
     setError(null);
     setLoadingMore(false);
     setLoading(!shortQuery);
-    const timer = window.setTimeout(
-      () => {
-        if (shortQuery) return;
-        fetchDiscoveredUsers({ query, sort, rated, canvas }, controller.signal)
-          .then((page) => {
-            if (controller.signal.aborted) return;
-            setUsers(page.users);
-            setTotal(page.total);
-            setCursor(page.nextCursor);
-          })
-          .catch((reason: unknown) => {
-            if (!controller.signal.aborted)
-              setError(reason instanceof Error ? reason.message : "Could not load people.");
-          })
-          .finally(() => {
-            if (!controller.signal.aborted) setLoading(false);
-          });
-      },
-      query ? 280 : 0,
-    );
+    const timer = window.setTimeout(() => {
+      if (shortQuery) return;
+      fetchDiscoveredUsers(
+        { query, sort, rated, canvas, minRatings, match, minMatch, minShared },
+        controller.signal,
+      )
+        .then((page) => {
+          if (controller.signal.aborted) return;
+          setUsers(page.users);
+          setTotal(page.total);
+          setCursor(page.nextCursor);
+        })
+        .catch((reason: unknown) => {
+          if (!controller.signal.aborted)
+            setError(reason instanceof Error ? reason.message : "Could not load people.");
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLoading(false);
+        });
+    }, 280);
     return () => {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [query, sort, rated, canvas, shortQuery, retry, viewer]);
+  }, [
+    query,
+    sort,
+    rated,
+    canvas,
+    minRatings,
+    match,
+    minMatch,
+    minShared,
+    shortQuery,
+    retry,
+    viewer,
+  ]);
 
   const loadMore = async () => {
     const controller = request.current;

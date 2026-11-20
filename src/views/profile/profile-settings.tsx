@@ -14,9 +14,7 @@ import {
 } from "lucide-react";
 import { socialPatch } from "@/lib/social/client";
 import {
-  CARD_THEMES,
   CARD_MAX_BYTES,
-  cardThemeById,
   removeCardBackground,
   saveCardAppearance,
   uploadCardBackground,
@@ -48,7 +46,6 @@ import { ProfileMedia } from "./profile-media";
 import { LocationSelect } from "./location-select";
 import { CustomizationPanel } from "./customization/customization-panel";
 import { ProfileThemePicker } from "./profile-theme-picker";
-import { ProfileCardPanel } from "./profile-card-panel";
 import { ProfileCardColors } from "./profile-card-colors";
 import { AboutEditor } from "./customization/about-editor";
 import { useCustomUrlAvailability, type UrlStatus } from "./use-customurl-availability";
@@ -397,8 +394,10 @@ export function ProfileSettings({
     try {
       const next = await saveCardAppearance(patch);
       onSaved(next);
-    } catch {
-      setCardError(t("Could not update the card. Try again."));
+    } catch (error) {
+      setCardError(
+        error instanceof Error ? error.message : t("Could not update the card. Try again."),
+      );
     } finally {
       setCardBusy(null);
     }
@@ -706,76 +705,12 @@ export function ProfileSettings({
                         )}
                       </div>
 
-                      <ProfileCardPanel profile={summary} className="mx-auto mt-3 max-w-[320px]" />
                       <ProfileCardColors
-                        appearance={summary.profileCard}
+                        profile={summary}
                         busy={!!cardBusy}
                         onApply={(patch) => applyCard(patch, "theme")}
                       />
-
-                      <div className="mt-3 grid grid-cols-4 gap-2">
-                        <button
-                          type="button"
-                          disabled={!!cardBusy}
-                          onClick={() => void applyCard({ cardTheme: null }, "theme")}
-                          aria-pressed={!summary.profileCard?.theme}
-                          className={`flex h-12 items-center justify-center rounded-md border text-[11px] font-medium transition-colors disabled:opacity-60 ${
-                            !summary.profileCard?.theme
-                              ? "border-ink bg-surface text-ink"
-                              : "border-edge-soft bg-surface/40 text-ink-muted hover:border-edge"
-                          }`}
-                        >
-                          {t("Default")}
-                        </button>
-                        {CARD_THEMES.map((theme) => {
-                          const on = summary.profileCard?.theme === theme.id;
-                          return (
-                            <button
-                              key={theme.id}
-                              type="button"
-                              disabled={!!cardBusy}
-                              onClick={() => void applyCard({ cardTheme: theme.id }, "theme")}
-                              aria-pressed={on}
-                              title={theme.label}
-                              className={`h-12 rounded-md border transition-transform disabled:opacity-60 ${
-                                on
-                                  ? "border-ink ring-2 ring-inset ring-ink"
-                                  : "border-edge-soft hover:scale-[1.02]"
-                              }`}
-                              style={{
-                                backgroundImage:
-                                  "linear-gradient(135deg, " +
-                                  theme.from +
-                                  " 0%, " +
-                                  theme.to +
-                                  " 100%)",
-                              }}
-                            >
-                              <span className="rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                                {theme.label}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-
                       <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <label className="flex h-9 items-center gap-2 rounded-md border border-edge-soft bg-surface/40 px-2.5 text-[12px] text-ink-muted">
-                          {t("Accent")}
-                          <input
-                            type="color"
-                            value={
-                              summary.profileCard?.accent ??
-                              cardThemeById(summary.profileCard?.theme)?.accent ??
-                              "#7b5cff"
-                            }
-                            disabled={!!cardBusy}
-                            onChange={(e) =>
-                              void applyCard({ cardAccent: e.target.value }, "accent")
-                            }
-                            className="h-6 w-8 cursor-pointer rounded border-0 bg-transparent p-0"
-                          />
-                        </label>
                         <button
                           type="button"
                           disabled={!!cardBusy}
