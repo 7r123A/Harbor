@@ -2182,6 +2182,7 @@ pub fn run() {
             download::download_cancel,
             download_files::download_file_info,
             download_files::download_delete_file,
+            download_files::download_remove_empty_folder,
             download_files::harbor_download_dir,
             stream_proxy::proxy_register,
             streams::resolve_playback_redirect,
