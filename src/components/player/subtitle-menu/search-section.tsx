@@ -1,3 +1,4 @@
+import { subtitleSearchLabel } from "@/lib/subtitles/search-query";
 import { Loader2, Search as SearchIcon, SlidersHorizontal, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth";
@@ -38,10 +39,6 @@ type TitleTarget = {
   season?: number;
   episode?: number;
 };
-
-function labelOf(t: TitleTarget): string {
-  return t.year ? `${t.title} (${t.year})` : t.title;
-}
 
 function isPlayingTarget(a: TitleTarget, b: TitleTarget): boolean {
   return (
@@ -119,14 +116,7 @@ export function SearchSection(
 
   const [target, setTarget] = useState<TitleTarget>(restorable?.target ?? playingTarget);
   const [isOverride, setIsOverride] = useState(restorable?.isOverride ?? false);
-  const [query, setQuery] = useState(
-    restorable?.query ??
-      (metaTitle && playingTarget.season != null && playingTarget.episode != null
-        ? `${metaTitle} S${String(playingTarget.season).padStart(2, "0")}E${String(
-            playingTarget.episode,
-          ).padStart(2, "0")}`
-        : (metaTitle ?? "")),
-  );
+  const [query, setQuery] = useState(restorable?.query ?? subtitleSearchLabel(playingTarget));
   const [suggestions, setSuggestions] = useState<TitleCandidate[]>([]);
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [suggestOpen, setSuggestOpen] = useState(false);
@@ -234,6 +224,7 @@ export function SearchSection(
   }, [authKey]);
 
   const run = async (tgt: TitleTarget) => {
+    const seq = ++searchSeq.current;
     setLoading(true);
     setResults(null);
     try {
@@ -269,7 +260,6 @@ export function SearchSection(
           enabled: { subdl: enabled.subdl === true, subsource: enabled.subsource === true },
         },
       };
-      const seq = ++searchSeq.current;
       searchOpts.onPartial = (partial, stillFetching) => {
         if (seq !== searchSeq.current) return;
         setResults(partial);
@@ -287,7 +277,7 @@ export function SearchSection(
       }
       setPendingSources(0);
     } finally {
-      setLoading(false);
+      if (seq === searchSeq.current) setLoading(false);
     }
   };
 
@@ -304,6 +294,9 @@ export function SearchSection(
       episode: e,
     };
     setTarget(next);
+    setQuery((draft) =>
+      draft === subtitleSearchLabel(target) ? subtitleSearchLabel(next) : draft,
+    );
   }, [playbackContext, isOverride, target]);
 
   useEffect(() => {
@@ -318,6 +311,9 @@ export function SearchSection(
       ? null
       : readSubtitleSearchCacheEntry(searchCache.get(key));
     if (cached) {
+      ++searchSeq.current;
+      setLoading(false);
+      setPendingSources(0);
       setResults(cached);
       return;
     }
@@ -354,13 +350,14 @@ export function SearchSection(
     };
     setTarget(next);
     setIsOverride(true);
-    setQuery(labelOf(next));
+    setQuery(subtitleSearchLabel(next));
     setSuggestOpen(false);
     void run(next);
   };
 
   const runFromQuery = async () => {
     setSuggestOpen(false);
+    if (query.trim() === subtitleSearchLabel(target)) return run(target);
     const parsed = parseTitleQuery(query);
     if (parsed.title.length < 2) {
       void run(target);
@@ -395,20 +392,16 @@ export function SearchSection(
     coordsTouchedRef.current = true;
     const next = { ...target, ...patch };
     setTarget(next);
-    void run(next);
+    setQuery(subtitleSearchLabel(next));
+    setIsOverride(!isPlayingTarget(next, playingTarget));
+    setSuggestOpen(false);
   };
 
   const clearOverride = () => {
     setTarget(playingTarget);
     setIsOverride(false);
     coordsTouchedRef.current = false;
-    setQuery(
-      metaTitle && playingTarget.season != null && playingTarget.episode != null
-        ? `${metaTitle} S${String(playingTarget.season).padStart(2, "0")}E${String(
-            playingTarget.episode,
-          ).padStart(2, "0")}`
-        : (metaTitle ?? ""),
-    );
+    setQuery(subtitleSearchLabel(playingTarget));
     setSuggestOpen(false);
     void run(playingTarget);
   };
