@@ -141,12 +141,6 @@ pub fn with_conn<T>(
     f(conn)
 }
 
-pub fn invalidate(state: &crate::identity::IdentityState) {
-    if let Ok(mut guard) = state.conn.lock() {
-        *guard = None;
-    }
-}
-
 /// Swap the freshly imported DB into place, keeping the previous file for rollback.
 pub fn install_new_db(app: &AppHandle, tmp: &Path) -> Result<(), String> {
     let db = db_path(app)?;

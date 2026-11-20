@@ -515,7 +515,7 @@ async fn browser_navigation_fetch(
 pub async fn cf_browser_fetch(
     app: &AppHandle,
     args: &crate::http_fetch::HarborFetchArgs,
-    request_id: uuid::Uuid,
+    _request_id: uuid::Uuid,
 ) -> Result<Option<BrowserTextResponse>, String> {
     let Some(request) = crate::http_fetch::browser_request(args) else {
         return Ok(None);
@@ -754,6 +754,7 @@ fn image_response(url: &str, content_type: String, body: String) -> crate::http_
         status: 200,
         ok: true,
         body,
+        asset_path: None,
         content_type: Some(content_type.clone()),
         headers: HashMap::from([("content-type".to_string(), content_type)]),
         url: Some(url.to_string()),
@@ -799,7 +800,7 @@ async fn read_navigated_image(
     window: &WebviewWindow,
     target: &Url,
     cap: u64,
-    request_id: uuid::Uuid,
+    _request_id: uuid::Uuid,
 ) -> Result<Option<crate::http_fetch::HarborFetchResponse>, String> {
     if window.url().ok().is_none_or(|address| address != *target) {
         return Ok(None);
@@ -863,7 +864,7 @@ async fn navigate_image_from_source(
     window: &WebviewWindow,
     target: &Url,
     source: &Url,
-    request_id: uuid::Uuid,
+    _request_id: uuid::Uuid,
 ) -> Result<bool, String> {
     // Returning to the original page is necessary for a valid Referer:
     // document-to-document navigation on the image CDN is not equivalent.

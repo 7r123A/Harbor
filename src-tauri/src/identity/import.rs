@@ -189,7 +189,7 @@ pub fn import_jsonl<R: BufRead>(
     let license = license_to_string(meta.license).unwrap_or_default();
 
     let mut summary = ImportSummary::default();
-    let mut tx = conn
+    let tx = conn
         .transaction()
         .map_err(|error| format!("identity import: begin: {error}"))?;
     {
@@ -362,7 +362,7 @@ pub fn import_windows(conn: &mut Connection, xml: &[u8]) -> Result<usize, String
     let mut buffer = Vec::new();
 
     let mut found = 0usize;
-    let mut tx = conn
+    let tx = conn
         .transaction()
         .map_err(|error| format!("identity windows: begin: {error}"))?;
     {

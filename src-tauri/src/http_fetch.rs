@@ -708,8 +708,6 @@ async fn harbor_fetch_inner(
     };
     let mut redirect_count = 0usize;
 
-    let mut guard_redirect = false;
-    let mut session_attached = had_clearance;
     let mut res = loop {
         let pinned_client = if public_network_only {
             Some(public_http_client(&current_url).await?)
@@ -777,11 +775,8 @@ async fn harbor_fetch_inner(
         let next_url = current_url
             .join(&location)
             .map_err(|e| format!("redirect url: {}", e))?;
-        if is_dle_guard_redirect(&current_url, &next_url) {
-            guard_redirect = true;
-            // The endpoint is only a hint; inspect the response for guard
-            // markers before challenging an otherwise ordinary redirect.
-        }
+        // The guard URL is only a hint; response markers determine a challenge.
+        let _guard_redirect = is_dle_guard_redirect(&current_url, &next_url);
         if next_url.scheme() != "http" && next_url.scheme() != "https" {
             return Err(format!("redirect bad scheme: {}", next_url.scheme()));
         }
@@ -800,7 +795,6 @@ async fn harbor_fetch_inner(
         if cross_origin {
             subtitle_credential = None;
             headers.retain(|(name, _)| crate::http_redirect::safe_cross_origin_header(name));
-            session_attached = false;
         }
         if had_body && body.is_none() {
             strip_headers(
