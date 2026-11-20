@@ -1618,7 +1618,6 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
   };
   const prefetchAddonId = liveStreamRef?.addonId ?? src.streamRef?.addonId ?? null;
   const prefetchNextEpisode =
-    settings.keepSourceNextEpisode &&
     settings.autoPlayNextEpisode &&
     !sleepAtEndArmed &&
     (!queuePlaybackEnabled || queueNextSameSeries) &&

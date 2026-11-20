@@ -347,8 +347,6 @@ export type Settings = {
   autoNextStreamOnStallSec: number;
   fullscreenMode: "fullscreen" | "borderless" | "maximized";
   seasonSourceLock: boolean;
-  rememberLastStream: boolean;
-  keepSourceNextEpisode: boolean;
   /** Automatically download the upcoming episode without affecting active playback. */
   autoPreDownloadNextEpisode: boolean;
   /** Show the compact Up Next pre-download event icons. */

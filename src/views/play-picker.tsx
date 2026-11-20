@@ -267,10 +267,10 @@ export function PlayPicker({
   const lastSeriesSource = useMemo(
     () =>
       seasonLockEntry ??
-      (settings.keepSourceNextEpisode && !!autoPlay && (meta.type === "series" || isAnimeMetaId)
+      (autoPlay && (meta.type === "series" || isAnimeMetaId)
         ? readLastSeriesPlayback(meta.id)
         : null),
-    [seasonLockEntry, meta.id, meta.type, isAnimeMetaId, settings.keepSourceNextEpisode, autoPlay],
+    [seasonLockEntry, meta.id, meta.type, isAnimeMetaId, autoPlay],
   );
   const lastSeriesSourceIsLineage = seasonLockEntry == null;
   const [resolving, setResolving] = useState<ResolvingSelection | null>(null);
@@ -504,12 +504,8 @@ export function PlayPicker({
   );
 
   const previousPlayback = useMemo(
-    () =>
-      continuation?.source ??
-      (settings.rememberLastStream
-        ? readPlayback(meta.id, episode?.season, episode?.episode)
-        : null),
-    [meta.id, episode?.season, episode?.episode, settings.rememberLastStream, continuation],
+    () => continuation?.source ?? readPlayback(meta.id, episode?.season, episode?.episode),
+    [meta.id, episode?.season, episode?.episode, continuation],
   );
   const playbackRevision = useSyncExternalStore(subscribePlayback, getPlaybackRevision);
   const lastPlayedMatch = useMemo(() => {
@@ -826,7 +822,6 @@ export function PlayPicker({
   const rememberedHandledFirst =
     !autoCancelled &&
     !!previousMatch &&
-    (settings.rememberLastStream || !!continuation) &&
     !!resume &&
     !wasInvitedTo(inviteKey) &&
     !isDownload &&

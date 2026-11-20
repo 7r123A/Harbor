@@ -2439,19 +2439,6 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
     ],
   },
   {
-    label: "Remember last stream",
-    section: "player",
-    tab: "play",
-    anchorTitle: "Playback",
-    keywords: [
-      "remember last stream",
-      "resume stream",
-      "last source",
-      "addon memory",
-      "source memory",
-    ],
-  },
-  {
     label: "Custom CSS / JS / HTML code",
     section: "advanced",
     tab: "code",
@@ -5579,19 +5566,6 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
       "continue watching",
       "start from beginning",
       "rewatch shows",
-    ],
-  },
-  {
-    label: "Keep same source on next episode",
-    section: "player",
-    tab: "play",
-    anchorTitle: "Streams",
-    keywords: [
-      "same release",
-      "next episode source",
-      "binge same source",
-      "keep addon",
-      "sticky source",
     ],
   },
   {

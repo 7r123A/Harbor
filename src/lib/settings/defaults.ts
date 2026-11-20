@@ -276,8 +276,6 @@ export const DEFAULT: Settings = {
   autoNextStreamOnStallSec: 10,
   fullscreenMode: "fullscreen",
   seasonSourceLock: false,
-  rememberLastStream: true,
-  keepSourceNextEpisode: true,
   autoPreDownloadNextEpisode: false,
   autoPreDownloadNotifications: true,
   autoPreDownloadNextEpisodeEnabledAt: 0,
