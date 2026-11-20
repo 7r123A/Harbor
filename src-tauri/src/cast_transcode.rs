@@ -121,6 +121,11 @@ pub struct VideoInfo {
     pub sar: Option<(u32, u32)>,
     /// The level the stream declares (H.264: 41 for 4.1; H.265: general_level_idc, 153 for 5.1).
     pub level: Option<u32>,
+    /// The profile as FFmpeg names it ("Constrained Baseline", "Main", "High").
+    pub profile: Option<String>,
+    /// H.264: the SPS's profile_idc, constraint flags and level_idc, read from the stream's
+    /// parameter sets by [`probe`]; `None` when they could not be read.
+    pub avc_header: Option<[u8; 3]>,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -259,6 +264,8 @@ struct ProbeStream {
     #[serde(default)]
     level: Option<i64>,
     #[serde(default)]
+    profile: Option<String>,
+    #[serde(default)]
     color_transfer: Option<String>,
     #[serde(default)]
     field_order: Option<String>,
@@ -353,6 +360,8 @@ pub(crate) fn parse_probe(json: &str) -> Result<MediaProbe, String> {
                     max_bitrate: s.max_bit_rate.as_deref().and_then(|b| b.trim().parse().ok()).unwrap_or(0),
                     sar: parse_sar(s.sample_aspect_ratio.as_deref()),
                     level: s.level.and_then(|l| u32::try_from(l).ok()).filter(|l| *l > 0),
+                    profile: s.profile.filter(|p| !p.is_empty() && p != "unknown"),
+                    avc_header: None,
                 });
             }
             "audio" => probe.audio.push(AudioInfo {
@@ -398,7 +407,67 @@ pub async fn probe(url: &str, headers: &HashMap<String, String>) -> Result<Media
     let output = crate::process_output::output(cmd, Duration::from_secs(20))
         .await
         .map_err(|e| format!("ffprobe: {e}"))?;
-    parse_probe(&String::from_utf8_lossy(&output.stdout))
+    let mut probe = parse_probe(&String::from_utf8_lossy(&output.stdout))?;
+    if let Some(video) = probe.video.as_mut().filter(|v| v.codec == "h264") {
+        video.avc_header = probe_avc_header(&ffprobe, url, headers).await;
+    }
+    Ok(probe)
+}
+
+/// The SPS header of the first video stream, from its parameter sets. A second, short probe of
+/// that one stream: `-show_data` on the full probe would also hex-dump every attachment, such as
+/// the fonts a Matroska file carries.
+async fn probe_avc_header(ffprobe: &std::path::Path, url: &str, headers: &HashMap<String, String>) -> Option<[u8; 3]> {
+    let mut cmd = quiet_command(ffprobe);
+    cmd.arg("-v").arg("error");
+    cmd.args(http_input_args(url, headers, false));
+    cmd.args(["-probesize", "2M", "-analyzeduration", "0", "-select_streams", "V:0"])
+        .args(["-show_entries", "stream=extradata", "-show_data", "-of", "json"])
+        .arg("-i")
+        .arg(url);
+    let output = crate::process_output::output(cmd, Duration::from_secs(10)).await.ok()?;
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let dump = parsed.get("streams")?.get(0)?.get("extradata")?.as_str()?;
+    avc_header(&parse_hex_dump(dump)?)
+}
+
+/// ffprobe's `-show_data` hex dump back to bytes. Each line is an 8-digit offset, ": ", then up to
+/// 16 bytes in groups of two padded to 41 columns, then the same bytes as text.
+fn parse_hex_dump(dump: &str) -> Option<Vec<u8>> {
+    let mut bytes = Vec::new();
+    for line in dump.lines().filter(|line| !line.trim().is_empty()) {
+        if line.get(8..10) != Some(": ") {
+            return None;
+        }
+        let rest = &line[10..];
+        let digits: Vec<u8> = rest.get(..41).unwrap_or(rest).bytes().filter(|b| *b != b' ').collect();
+        if digits.len() % 2 != 0 {
+            return None;
+        }
+        for pair in digits.chunks(2) {
+            bytes.push(u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?);
+        }
+    }
+    Some(bytes)
+}
+
+/// profile_idc, constraint flags and level_idc from H.264 parameter sets: an avcC record (MP4,
+/// Matroska) holds them right after its version byte; Annex B (MPEG-TS) has them after the SPS's
+/// NAL header. No emulation prevention byte can fall among them: profile_idc and level_idc are
+/// never 0.
+fn avc_header(extradata: &[u8]) -> Option<[u8; 3]> {
+    let header: [u8; 3] = if extradata.first() == Some(&1) {
+        extradata.get(1..4)?.try_into().ok()?
+    } else {
+        extradata.windows(3).enumerate().filter(|(_, start)| *start == [0, 0, 1]).find_map(|(at, _)| {
+            let nal = *extradata.get(at + 3)?;
+            if nal & 0x9F != 7 {
+                return None;
+            }
+            extradata.get(at + 4..at + 7)?.try_into().ok()
+        })?
+    };
+    (header[0] != 0 && header[2] != 0).then_some(header)
 }
 
 /// What the local FFmpeg build can do. Hardware encoders are listed by most builds whether or not
@@ -677,6 +746,36 @@ fn level_arg(level_idc: u32) -> String {
 /// before loading, so it must not claim less than the stream needs.
 fn h264_codec_string(level_idc: u32) -> String {
     format!("avc1.6400{level_idc:02X}")
+}
+
+/// The CODECS name for a copied H.264 picture at `level_idc`: the profile and constraint flags its
+/// own SPS carries, or, when that could not be read, the ones its profile's name implies.
+fn copied_h264_codec_string(video: &VideoInfo, level_idc: u32) -> String {
+    let (profile, constraints) = match video.avc_header {
+        Some([profile, constraints, _]) => (profile, constraints),
+        None => h264_profile_bytes(video.profile.as_deref()),
+    };
+    format!("avc1.{profile:02X}{constraints:02X}{level_idc:02X}")
+}
+
+/// profile_idc and the constraint flags a profile name implies (FFmpeg's names): Constrained
+/// Baseline is Baseline with constraint_set1, the Intra profiles set constraint_set3. An unknown
+/// name keeps High, which covers every 8-bit 4:2:0 stream.
+fn h264_profile_bytes(name: Option<&str>) -> (u8, u8) {
+    match name.unwrap_or("") {
+        "Constrained Baseline" => (66, 0x40),
+        "Baseline" => (66, 0),
+        "Main" => (77, 0),
+        "Extended" => (88, 0),
+        "High 10" => (110, 0),
+        "High 10 Intra" => (110, 0x10),
+        "High 4:2:2" => (122, 0),
+        "High 4:2:2 Intra" => (122, 0x10),
+        "High 4:4:4 Predictive" => (244, 0),
+        "High 4:4:4 Intra" => (244, 0x10),
+        "CAVLC 4:4:4" | "CAVLC 4:4:4 Intra" => (44, 0),
+        _ => (100, 0),
+    }
 }
 
 /// Main 10 for 10-bit (HDR) sources, Main for 8-bit ones, at `level_idc` (Main tier).
@@ -970,13 +1069,13 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         summary.video = "none".into();
     } else {
         output.extend(["-c:v".into(), "copy".into()]);
-        // A copied stream keeps its own level: announce what it declares, or what its size and
-        // frame rate need, whichever is higher.
+        // A copied stream keeps its own profile and level: announce its profile, and the level it
+        // declares or what its size and frame rate need, whichever is higher.
         let rate_kbps = video.map(|v| v.bitrate / 1000).filter(|k| *k > 0).and_then(|k| u32::try_from(k).ok());
         if let Some(v) = video.filter(|v| v.codec == "h264") {
             output.extend(["-bsf:v".into(), "h264_mp4toannexb".into()]);
             let needed = h264_level(v.width, v.height, fps, rate_kbps, None);
-            hls_video_codec = h264_codec_string(needed.max(v.level.unwrap_or(0)));
+            hls_video_codec = copied_h264_codec_string(v, needed.max(v.level.unwrap_or(0)));
         } else if let Some(v) = video.filter(|v| v.codec == "hevc") {
             // No Annex B filter here: copied H.265 goes into fragmented MP4 over HLS, where the
             // `hvc1` sample entry keeps the parameter sets in its hvcC record and the samples
@@ -1413,6 +1512,57 @@ mod tests {
                {{"index":1,"codec_type":"audio","codec_name":"aac","channels":2}}],"format":{{"duration":"100"}}}}"#
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn a_copied_h264_stream_announces_its_own_profile() {
+        // ffprobe's dumps of real parameter sets: x264 Constrained Baseline in MPEG-TS (Annex B),
+        // Main in Matroska and High in MP4 (avcC records).
+        let baseline_ts = "\n00000000: 0000 0001 6742 c01e d900 a02f f970 1100  ....gB...../.p..\n00000010: 0003 0001 0000 0300 300f 162e 4800 0000  ........0...H...\n00000020: 0001 68cb 83cb 20                        ..h... \n";
+        let main_mkv = "\n00000000: 014d 401e ffe1 0018 674d 401e eca0 5017  .M@.....gM@...P.\n00000010: fcb8 0880 0000 0300 8000 0018 078b 16cb  ................\n00000020: 0100 0568 ebe3 cb20                      ...h... \n";
+        let high_mp4 = "\n00000000: 0164 001e ffe1 001a 6764 001e acd9 40a0  .d......gd....@.\n00000010: 2ff9 7011 0000 0300 0100 0003 0030 0f16  /.p..........0..\n00000020: 2d96 0100 0668 ebe3 cb22 c0fd f8f8 00    -....h...\".....\n";
+        let cases = [
+            (baseline_ts, "Constrained Baseline", [0x42, 0xC0, 0x1E], "avc1.42C01E"),
+            (main_mkv, "Main", [0x4D, 0x40, 0x1E], "avc1.4D401E"),
+            (high_mp4, "High", [0x64, 0x00, 0x1E], "avc1.64001E"),
+        ];
+        for (dump, name, header, codecs) in cases {
+            let bytes = parse_hex_dump(dump).unwrap();
+            assert_eq!(avc_header(&bytes), Some(header), "{name}");
+            // Copied 360p24 at level 3.0: CODECS carries the stream's own three bytes.
+            let mut probe = copy_probe("h264", 640, 360, "24/1", Some(30));
+            let video = probe.video.as_mut().unwrap();
+            video.profile = Some(name.into());
+            video.avc_header = Some(header);
+            let p = plan_with(&probe, &CastOptions::default(), DeviceLimits::default());
+            assert_eq!(p.summary.video, "copy", "{name}");
+            assert_eq!(p.hls_codecs, format!("{codecs},mp4a.40.2"), "{name}");
+            // Without the parameter sets, the profile's name still gives the right profile.
+            probe.video.as_mut().unwrap().avc_header = None;
+            let p = plan_with(&probe, &CastOptions::default(), DeviceLimits::default());
+            assert_eq!(&p.hls_codecs[..7], &codecs[..7], "{name}: {}", p.hls_codecs);
+        }
+        assert_eq!(h264_profile_bytes(Some("Constrained Baseline")), (0x42, 0x40));
+        assert_eq!(h264_profile_bytes(Some("High 10 Intra")), (0x6E, 0x10));
+        assert_eq!(h264_profile_bytes(None), (0x64, 0));
+        // The probe reads the profile's name.
+        let named = parse_probe(r#"{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","profile":"Main","width":640,"height":360}],"format":{}}"#).unwrap();
+        assert_eq!(named.video.unwrap().profile.as_deref(), Some("Main"));
+        // Malformed or missing parameter sets give nothing rather than a guess.
+        assert_eq!(avc_header(&[0, 0, 0, 1, 0x68, 0xCB]), None, "a PPS is not an SPS");
+        assert_eq!(avc_header(&[1, 0x64]), None);
+        assert_eq!(avc_header(&[]), None);
+        assert_eq!(parse_hex_dump("garbage"), None);
+        assert_eq!(parse_hex_dump("\n00000000: 01zz                                     ..\n"), None);
+        // Re-encoded, the playlist names what the encoder writes (-profile:v high), not the source.
+        let mut probe = copy_probe("h264", 640, 360, "24/1", Some(30));
+        probe.video.as_mut().unwrap().avc_header = Some([0x42, 0xC0, 0x1E]);
+        let p = build_plan(
+            &PlanInput { probe: Some(&probe), options: &CastOptions::default(), audio_ordinal: 0, burn_sub: None, burn_bitmap: None, force_video_encode: true, limits: DeviceLimits::default() },
+            &FfmpegCaps::default(),
+        );
+        assert!(p.output.join(" ").contains("-profile:v high"), "{:?}", p.output);
+        assert!(p.hls_codecs.starts_with("avc1.6400"), "{}", p.hls_codecs);
     }
 
     fn plan_with(probe: &MediaProbe, options: &CastOptions, limits: DeviceLimits) -> CastPlan {
