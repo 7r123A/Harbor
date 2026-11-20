@@ -61,6 +61,8 @@ import { requestMusicPlaylist } from "@/lib/music/navigation";
 import { MusicNowPlaying } from "./music-now-playing";
 import { useMusicAppearance, useMusicArtworkColor } from "@/lib/music/appearance";
 import { requestMusicExplore, requestMusicPanel } from "@/lib/music/navigation";
+import type { MusicExploreRequest } from "@/lib/music/navigation";
+import type { MusicAlbumRef, MusicArtistRef, MusicTrack } from "@/lib/music/types";
 import { musicSourceName } from "@/lib/music/recovery";
 import { musicVolumeCeiling, useMusicAudioSettings } from "@/lib/music/audio-settings";
 import { getMusicSpeakerState, subscribeMusicSpeakerState } from "@/lib/music/casting";
@@ -463,6 +465,49 @@ export function MusicDock() {
     },
   });
 
+  // These callbacks feed a memoised Now Playing window: a new identity on every playback tick
+  // would re-render the whole panel, so the catalog identity it needs is read from a ref. They are
+  // hooks, and must therefore stay above the early return: closing the player skips the rest of
+  // this body, and a render that reaches fewer hooks than the previous one is a React crash.
+  const exploreTarget = useRef<{ track?: MusicTrack | null; album?: MusicAlbumRef }>({
+    track: null,
+  });
+  exploreTarget.current = { track: display, album: recording?.album };
+  const exploreFromDock = useCallback(
+    (kind: MusicExploreRequest["kind"], artist?: MusicArtistRef, track?: MusicTrack) => {
+      const target = track ?? exploreTarget.current.track;
+      if (!target) return;
+      armExpandRestore();
+      setExpanded(false);
+      setView("music");
+      requestMusicExplore({
+        kind,
+        track: target,
+        album: track ? undefined : exploreTarget.current.album,
+        artist,
+      });
+    },
+    [armExpandRestore, setView],
+  );
+  const changeSource = useCallback(() => {
+    setQueueOpen(false);
+    setSourceOpen((open) => !open);
+  }, []);
+  const openSpeakers = useCallback(() => {
+    setExpanded(false);
+    setView("music");
+    requestMusicPanel("__speakers");
+  }, [setView]);
+  const openAudio = useCallback(() => {
+    setExpanded(false);
+    setView("music");
+    requestMusicPanel("__audio");
+  }, [setView]);
+  const openQueue = useCallback(() => {
+    setExpanded(false);
+    setQueueOpen((open) => !open);
+  }, []);
+
   if (!visible || !current || !display) return null;
 
   const playing = player.phase === "playing";
@@ -471,24 +516,6 @@ export function MusicDock() {
   const duration = Math.max(player.duration || current.durationSeconds || 0, 1);
   const position = Math.max(0, Math.min(scrub ?? player.currentTime, duration));
   const percent = `${(position / duration) * 100}%`;
-  const changeSource = () => {
-    setQueueOpen(false);
-    setSourceOpen((open) => !open);
-  };
-  const openSpeakers = () => {
-    setExpanded(false);
-    setView("music");
-    requestMusicPanel("__speakers");
-  };
-  const openAudio = () => {
-    setExpanded(false);
-    setView("music");
-    requestMusicPanel("__audio");
-  };
-  const openQueue = () => {
-    setExpanded(false);
-    setQueueOpen((open) => !open);
-  };
 
   const commitScrub = (value: number) => {
     if (!draggingRef.current) return;
@@ -678,17 +705,7 @@ export function MusicDock() {
             dockRef={dockRef}
             closing={nowExit.closing}
             onClose={nowExit.close}
-            onExplore={(kind, artist, track) => {
-              armExpandRestore();
-              setExpanded(false);
-              setView("music");
-              requestMusicExplore({
-                kind,
-                track: track ?? display,
-                album: track ? undefined : recording?.album,
-                artist,
-              });
-            }}
+            onExplore={exploreFromDock}
             onAudio={openAudio}
             onSpeakers={openSpeakers}
             onSource={changeSource}

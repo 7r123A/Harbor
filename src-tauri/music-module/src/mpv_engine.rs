@@ -18,6 +18,9 @@ unsafe impl libmpv2::GetData for NativeFlag {
 }
 use serde::Serialize;
 
+/// Position updates reach the host at most this often; see `spawn_mpv_events`.
+const POSITION_EVENT_GAP: std::time::Duration = std::time::Duration::from_millis(200);
+
 #[derive(Default)]
 struct Deck {
     player: Option<Arc<Mpv>>,
@@ -627,6 +630,7 @@ fn spawn_mpv_events(
     }
     Ok(std::thread::spawn(move || {
         let mut eof_signaled = false;
+        let mut last_position = std::time::Instant::now() - POSITION_EVENT_GAP;
         while active_generation.load(Ordering::SeqCst)==generation {
             let Some(Ok(event))=context.wait_event(0.25) else {continue};
             if let Event::LogMessage {prefix,text,..} = &event {
@@ -637,6 +641,14 @@ fn spawn_mpv_events(
             }
             if matches!(event,Event::Seek){
                 if let Ok(mut value)=spectrum.lock(){value.clear();}
+            }
+            // Observed `time-pos` fires at mpv's own cadence, often many times a second. Each
+            // event is a JSON line on the event pipe plus an IPC message and a host re-render, so
+            // emitting all of them saturates the UI main thread for no extra accuracy. Keep the
+            // same 5 Hz the in-process deck delivers.
+            if matches!(event,Event::PropertyChange{name:"time-pos",..}) {
+                if last_position.elapsed()<POSITION_EVENT_GAP {continue;}
+                last_position=std::time::Instant::now();
             }
             // keep-open retains the file at EOF, so EndFile may never arrive.
             let end_reason = playback_end_reason(&event, &mut eof_signaled);
