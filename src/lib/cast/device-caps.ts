@@ -386,16 +386,15 @@ export const UNIVERSAL_SAFE_PROFILE: TranscodeProfile = {
 };
 
 /**
- * The profile a cast conversion runs under, or none when the stream is sent as it is. Whatever
- * starts the conversion (the receiver, live TV, burning in subtitles), it carries the receiver's
- * limits: without them FFmpeg falls back to its default ceilings.
+ * The receiver's profile sent with every cast. Whatever converts the stream (the receiver's needs,
+ * live TV, burning in subtitles, or Harbor remuxing a file whose URL names no format), the
+ * conversion keeps to the receiver's limits; without them FFmpeg falls back to its default
+ * ceilings. A stream sent as it is ignores them.
  */
-export function conversionProfile(
+export function castProfile(
   resolved: { kind: "compat" | "swapped" | "transcode"; profile: TranscodeProfile },
-  convert: boolean,
   liveIptv: boolean,
-): TranscodeProfile | undefined {
-  if (!convert) return undefined;
+): TranscodeProfile {
   if (resolved.kind === "transcode") return resolved.profile;
   return liveIptv ? UNIVERSAL_SAFE_PROFILE : resolved.profile;
 }

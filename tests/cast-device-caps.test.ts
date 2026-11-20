@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   checkStreamCompat,
-  conversionProfile,
+  castProfile,
   getDeviceCaps,
   keepCodecsProfile,
   UNIVERSAL_SAFE_PROFILE,
@@ -37,18 +37,13 @@ test("burning subtitles into a compatible stream keeps to the receiver's limits"
   );
   assert.equal(limits.force_h264, false);
   assert.equal(limits.force_aac, false);
-  // Subtitles start a conversion: it carries those limits instead of none, for the stream as it
-  // was and for one swapped in.
+  // Subtitles start a conversion, and Harbor may remux a file on its own: either way the cast
+  // carries those limits instead of none, for the stream as it was and for one swapped in.
   for (const kind of ["compat", "swapped"] as const) {
-    assert.deepEqual(conversionProfile({ kind, profile: limits }, true, false), limits, kind);
+    assert.deepEqual(castProfile({ kind, profile: limits }, false), limits, kind);
   }
-  // Nothing converted, nothing to limit.
-  assert.equal(conversionProfile({ kind: "compat", profile: limits }, false, false), undefined);
   // A conversion the receiver needs keeps its own profile; live TV gets the safe one.
   const needed = { ...limits, force_h264: true };
-  assert.equal(conversionProfile({ kind: "transcode", profile: needed }, true, true), needed);
-  assert.equal(
-    conversionProfile({ kind: "compat", profile: limits }, true, true),
-    UNIVERSAL_SAFE_PROFILE,
-  );
+  assert.equal(castProfile({ kind: "transcode", profile: needed }, true), needed);
+  assert.equal(castProfile({ kind: "compat", profile: limits }, true), UNIVERSAL_SAFE_PROFILE);
 });

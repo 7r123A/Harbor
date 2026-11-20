@@ -15,7 +15,7 @@ import type { ScoredStream } from "@/lib/streams/types";
 import type { PlayerSrc } from "@/lib/view";
 
 export type CastResolution =
-  // `profile` holds the receiver's limits, for a conversion made anyway (to burn in subtitles).
+  // `profile` holds the receiver's limits for any conversion made anyway (subtitles, a remux).
   | { kind: "compat"; url: string; caps: DeviceCaps; profile: TranscodeProfile }
   | {
       kind: "swapped";

@@ -675,7 +675,7 @@ pub async fn cast_load(
         sub_base: None,
         burn_bitmap: None,
         force_video_encode: transcode.unwrap_or(false) && profile.as_ref().is_some_and(|p| p.force_h264),
-        limits: device_limits(transcode.unwrap_or(false), profile.as_ref()),
+        limits: device_limits(profile.as_ref()),
         hls: wants_hls(&kind_str, &options),
     };
     if convert {
@@ -794,10 +794,11 @@ pub async fn cast_load(
     }
 }
 
-/// The device profile's limits apply when the caller already decided the source must change for
-/// this receiver; otherwise only the cast settings do.
-fn device_limits(transcode: bool, profile: Option<&TranscodeProfile>) -> DeviceLimits {
-    match profile.filter(|_| transcode) {
+/// The receiver's limits from its device profile. They hold for every conversion, including one
+/// Harbor starts by itself (a file whose URL names no format is remuxed), and only constrain what
+/// is converted: the caller's `transcode` decides whether the picture must change.
+fn device_limits(profile: Option<&TranscodeProfile>) -> DeviceLimits {
+    match profile {
         Some(p) => DeviceLimits {
             max_height: Some(p.max_height),
             max_video_kbps: p.max_video_kbps,
@@ -1653,6 +1654,22 @@ fn drain_briefly(device: &CastDevice<'_>, ms: u64) {
 #[cfg(test)]
 mod pause_state_tests {
     use super::*;
+
+    #[test]
+    fn the_receivers_limits_hold_for_conversions_harbor_starts_itself() {
+        let profile = TranscodeProfile {
+            fragmented_mp4: false,
+            max_height: 720,
+            force_h264: false,
+            force_aac: false,
+            force_stereo: false,
+            max_video_kbps: Some(3_500),
+        };
+        let limits = device_limits(Some(&profile));
+        assert_eq!(limits.max_height, Some(720));
+        assert_eq!(limits.max_video_kbps, Some(3_500));
+        assert_eq!(device_limits(None), DeviceLimits::default());
+    }
 
     #[test]
     fn a_paused_receiver_of_any_kind_is_paused_again_after_a_restart() {
