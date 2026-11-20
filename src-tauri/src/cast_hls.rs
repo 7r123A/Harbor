@@ -951,12 +951,18 @@ mod tests {
         let id = Uuid::new_v4().to_string();
         let temp_dir = std::env::temp_dir().join(format!("harbor-hls-test-{id}"));
         std::fs::create_dir_all(&temp_dir).expect("create test HLS directory");
-        state.sessions.write().await.insert(id.clone(), session(temp_dir.clone()));
-        tokio::time::sleep(Duration::from_millis(60)).await;
+        let s = session(temp_dir.clone());
+        state.sessions.write().await.insert(id.clone(), s.clone());
+        // Last access is moved back instead of sleeping, so a busy test machine cannot make a
+        // session look idle between two lines (a 40 ms window used to).
+        let idle = Duration::from_secs(5);
+        let long_ago = Instant::now().checked_sub(Duration::from_secs(10)).expect("the machine has run for 10 s");
+        *s.last_access.lock().unwrap() = long_ago;
         assert!(state.touch_session(&id).await);
-        assert_eq!(state.evict_idle(Duration::from_millis(40)).await, 0, "touched just now");
-        tokio::time::sleep(Duration::from_millis(60)).await;
-        assert_eq!(state.evict_idle(Duration::from_millis(40)).await, 1, "idle once nobody follows it");
+        assert_eq!(state.evict_idle(idle).await, 0, "touched just now");
+        *s.last_access.lock().unwrap() = long_ago;
+        drop(s);
+        assert_eq!(state.evict_idle(idle).await, 1, "idle once nobody follows it");
         assert!(!temp_dir.exists());
         assert!(!state.touch_session(&id).await);
     }
