@@ -208,3 +208,149 @@ test("a hidden Content Advisory on a TMDB title can be shown, with no IMDb reque
     dom.window.close();
   }
 });
+
+test("Content Advisory category chevrons use the row button as the only pointer target", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { url: "https://fixture.invalid" });
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    localStorage: dom.window.localStorage,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
+  localStorage.removeItem("harbor.content-advisory.keep-expanded");
+
+  const Icon = (props: any) =>
+    React.createElement("svg", { ...props, "aria-hidden": "true" }, React.createElement("path"));
+  const icons = new Proxy({}, { get: () => Icon });
+  const ParentsGuidePanel = load("src/views/detail/parents-guide-panel.tsx", {
+    react: React,
+    "react/jsx-runtime": jsxRuntime,
+    "lucide-react": icons,
+    "@/lib/window": { openUrl: () => {} },
+    "@/lib/i18n": { useT: () => (key: string) => key },
+    "@/lib/settings": {
+      useSettings: () => ({ settings: { contentAdvisoryTheme: "monochrome" } }),
+    },
+    "@/lib/providers/imdb-parents-guide": {
+      severityColorStyle: () => ({
+        textClass: "text-ink",
+        badgeClass: "text-ink",
+        barClass: "bg-white",
+      }),
+    },
+    "./use-parents-guide": {
+      useParentsGuide: () => ({ guide: null, loading: false, error: null, retry: () => {} }),
+    },
+    "../play-picker/use-imdb-id": {
+      useImdbId: () => ({ id: null, verified: false, settled: true }),
+    },
+  }).ParentsGuidePanel;
+  const guide = {
+    categories: [
+      {
+        id: "nudity",
+        label: "Sex & Nudity",
+        severity: "Mild",
+        items: [{ text: "A non-spoiler advisory", isSpoiler: false }],
+        totalItems: 1,
+        totalVotes: 0,
+        severityVotes: 0,
+      },
+      {
+        id: "violence",
+        label: "Violence & Gore",
+        severity: "Moderate",
+        items: [{ text: "A separate advisory", isSpoiler: false }],
+        totalItems: 1,
+        totalVotes: 0,
+        severityVotes: 0,
+      },
+    ],
+  };
+  const root = createRoot(document.getElementById("root")!);
+
+  try {
+    await React.act(async () =>
+      root.render(
+        React.createElement(ParentsGuidePanel, {
+          meta: { id: "tt1234567", name: "Example", type: "movie" },
+          imdbId: "tt1234567",
+          guide,
+        }),
+      ),
+    );
+    const expandSection = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent === "Expand",
+    );
+    assert.ok(expandSection);
+    await React.act(async () => expandSection.click());
+
+    const categoryButton = document.querySelector<HTMLButtonElement>(
+      'button[aria-controls="parents-guide-cat-nudity"]',
+    );
+    assert.ok(categoryButton, "the category heading is one full-width button");
+    assert.equal(categoryButton.getAttribute("aria-expanded"), "false");
+
+    // In the maximized WebView, pointerup can land on the card instead of
+    // the visual chevron. Capture the gesture on the header button itself.
+    const captures: number[] = [];
+    categoryButton.setPointerCapture = (id: number) => captures.push(id);
+    await React.act(async () => {
+      const down = new dom.window.MouseEvent("pointerdown", { bubbles: true, button: 0 });
+      Object.defineProperty(down, "pointerId", { value: 7 });
+      categoryButton.dispatchEvent(down);
+      categoryButton.dispatchEvent(
+        new dom.window.MouseEvent("pointerup", { bubbles: true, button: 0 }),
+      );
+      categoryButton.dispatchEvent(
+        new dom.window.MouseEvent("click", { bubbles: true, detail: 1 }),
+      );
+    });
+    assert.deepEqual(captures, [7], "the button must capture its own pointer gesture");
+    assert.equal(categoryButton.getAttribute("aria-expanded"), "true");
+    assert.ok(categoryButton.children[0].classList.contains("pointer-events-none"));
+    assert.ok(categoryButton.children[1].classList.contains("pointer-events-none"));
+    await React.act(async () => categoryButton.click());
+    assert.equal(categoryButton.getAttribute("aria-expanded"), "false");
+
+    const chevron = categoryButton.querySelectorAll("svg")[1];
+    assert.ok(chevron, "category button has a separate chevron graphic");
+    assert.ok(
+      chevron.classList.contains("pointer-events-none"),
+      "the rotating chevron must not become its own pointer target",
+    );
+    assert.equal(chevron.getAttribute("aria-hidden"), "true");
+
+    await React.act(async () => categoryButton.click());
+    assert.equal(categoryButton.getAttribute("aria-expanded"), "true");
+    assert.match(document.body.textContent ?? "", /A non-spoiler advisory/);
+
+    await React.act(async () =>
+      chevron
+        .querySelector("path")!
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })),
+    );
+    assert.equal(categoryButton.getAttribute("aria-expanded"), "false");
+    await React.act(async () => categoryButton.click());
+    assert.equal(categoryButton.getAttribute("aria-expanded"), "true");
+
+    const violenceButton = document.querySelector<HTMLButtonElement>(
+      'button[aria-controls="parents-guide-cat-violence"]',
+    );
+    assert.ok(violenceButton, "every advisory category must use the same clickable row");
+    const violenceChevron = violenceButton.querySelectorAll("svg")[1];
+    assert.ok(violenceChevron?.classList.contains("pointer-events-none"));
+    await React.act(async () =>
+      violenceChevron
+        .querySelector("path")!
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })),
+    );
+    assert.equal(violenceButton.getAttribute("aria-expanded"), "true");
+    assert.equal(categoryButton.getAttribute("aria-expanded"), "true");
+    assert.match(document.body.textContent ?? "", /A separate advisory/);
+  } finally {
+    await React.act(async () => root.unmount());
+    dom.window.close();
+  }
+});
