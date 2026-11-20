@@ -1,6 +1,7 @@
 import {
   checkStreamCompat,
   getDeviceCaps,
+  keepCodecsProfile,
   pickBestCompatStream,
   pickTranscodeProfile,
   type DeviceCaps,
@@ -14,8 +15,16 @@ import type { ScoredStream } from "@/lib/streams/types";
 import type { PlayerSrc } from "@/lib/view";
 
 export type CastResolution =
-  | { kind: "compat"; url: string; caps: DeviceCaps }
-  | { kind: "swapped"; url: string; alt: ScoredStream; caps: DeviceCaps; reasons: string[] }
+  // `profile` holds the receiver's limits, for a conversion made anyway (to burn in subtitles).
+  | { kind: "compat"; url: string; caps: DeviceCaps; profile: TranscodeProfile }
+  | {
+      kind: "swapped";
+      url: string;
+      alt: ScoredStream;
+      caps: DeviceCaps;
+      profile: TranscodeProfile;
+      reasons: string[];
+    }
   | {
       kind: "transcode";
       url: string;
@@ -54,17 +63,16 @@ export async function resolveCompatibleCastUrl(
     if (urlNeedsRemuxForCast(src.url, device.kind)) {
       const ffmpegOk = await isFfmpegPresent();
       if (ffmpegOk) {
-        const profile = pickTranscodeProfile(augmented, caps);
         return {
           kind: "transcode",
           url: src.url,
           caps,
-          profile: { ...profile, force_h264: false, force_aac: false },
+          profile: keepCodecsProfile(augmented, caps),
           reasons: ["remux to MPEGTS for reliable cast playback (avoids moov-atom-at-end issues)"],
         };
       }
     }
-    return { kind: "compat", url: src.url, caps };
+    return { kind: "compat", url: src.url, caps, profile: keepCodecsProfile(augmented, caps) };
   }
   const cached = peekPickerCache(src.meta, src.episode, animePreferImdbStreams);
   const candidates: ScoredStream[] = cached?.result.picker.all ?? [];
@@ -83,7 +91,14 @@ export async function resolveCompatibleCastUrl(
         }
       }
       if (url) {
-        return { kind: "swapped", url, alt, caps, reasons: currentCompat.reasons };
+        return {
+          kind: "swapped",
+          url,
+          alt,
+          caps,
+          profile: keepCodecsProfile(alt, caps),
+          reasons: currentCompat.reasons,
+        };
       }
     }
   }

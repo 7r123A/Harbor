@@ -5,6 +5,7 @@ import {
   type CastSubInfo,
   type CastSubStyle,
 } from "@/lib/cast";
+import { conversionProfile } from "@/lib/cast/device-caps";
 import { useDebridClients } from "@/lib/debrid/registry";
 import { t } from "@/lib/i18n";
 import type { PlayerBridge, PlayerSnapshot, TrackInfo } from "@/lib/player/bridge";
@@ -15,14 +16,6 @@ import { resolveCompatibleCastUrl } from "../cast-resolve";
 import { localizedFfmpegInstallStep, type useCastSession } from "./use-cast-session";
 
 type CastSession = ReturnType<typeof useCastSession>;
-
-const UNIVERSAL_SAFE_PROFILE = {
-  max_height: 1080 as const,
-  force_h264: true,
-  force_aac: true,
-  force_stereo: true,
-  max_video_kbps: 5000,
-};
 
 function subFormatFromTrack(track: TrackInfo): CastSubInfo["format"] {
   const codec = (track.codec ?? "").toLowerCase();
@@ -229,14 +222,9 @@ export function useCastPick(params: {
       const isLiveIptv = src.meta.id?.startsWith("iptv:") ?? false;
       const burnSub = burnSubsOnTv ? buildCastSub(snap.subtitleTracks) : null;
       const forceTranscode = resolved.kind === "transcode" || isLiveIptv || burnSub != null;
-      // Remuxing a compatible file (to burn in subtitles, say) is not a re-encode: only a device
-      // the source does not suit, or live TV, gets the safe 1080p H.264 stereo profile.
-      const profile =
-        resolved.kind === "transcode"
-          ? resolved.profile
-          : isLiveIptv
-            ? UNIVERSAL_SAFE_PROFILE
-            : undefined;
+      // Burning subtitles into a stream the receiver already plays changes no codec, but keeps to
+      // the receiver's resolution and bit rate; only live TV gets the safe 1080p H.264 profile.
+      const profile = conversionProfile(resolved, forceTranscode, isLiveIptv);
       setCastTranscoding(forceTranscode);
       await pickCastDevice(
         device,

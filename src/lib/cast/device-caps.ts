@@ -367,6 +367,39 @@ export function pickTranscodeProfile(stream: StreamLike, caps: DeviceCaps): Tran
   return { max_height, force_h264, force_aac, force_stereo, max_video_kbps };
 }
 
+/**
+ * The receiver's resolution and bit rate ceilings for a stream whose codecs it already plays: a
+ * conversion it does not itself require (a remux, burning in subtitles) changes no codec, but the
+ * picture it produces must still fit the receiver.
+ */
+export function keepCodecsProfile(stream: StreamLike, caps: DeviceCaps): TranscodeProfile {
+  return { ...pickTranscodeProfile(stream, caps), force_h264: false, force_aac: false };
+}
+
+/** Live TV streams are not described, so every receiver gets 1080p H.264 stereo. */
+export const UNIVERSAL_SAFE_PROFILE: TranscodeProfile = {
+  max_height: 1080,
+  force_h264: true,
+  force_aac: true,
+  force_stereo: true,
+  max_video_kbps: 5000,
+};
+
+/**
+ * The profile a cast conversion runs under, or none when the stream is sent as it is. Whatever
+ * starts the conversion (the receiver, live TV, burning in subtitles), it carries the receiver's
+ * limits: without them FFmpeg falls back to its default ceilings.
+ */
+export function conversionProfile(
+  resolved: { kind: "compat" | "swapped" | "transcode"; profile: TranscodeProfile },
+  convert: boolean,
+  liveIptv: boolean,
+): TranscodeProfile | undefined {
+  if (!convert) return undefined;
+  if (resolved.kind === "transcode") return resolved.profile;
+  return liveIptv ? UNIVERSAL_SAFE_PROFILE : resolved.profile;
+}
+
 export function needsTranscode(stream: StreamLike, caps: DeviceCaps): boolean {
   const v = checkStreamCompat(stream, caps);
   return !v.ok;
