@@ -470,13 +470,13 @@ export function ReviewerQuickMenu({
           </div>
 
           <div className="relative shrink-0 px-4 pb-3">
-            <div className="-mt-8 flex items-end gap-3">
+            <div className="flex items-start gap-3 pt-1">
               <UserHoverCard handle={profileHandle}>
                 <button
                   type="button"
                   onClick={openFullProfile}
                   aria-label={t("Open full profile")}
-                  className="shrink-0 rounded-full transition-transform enabled:hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                  className="-mt-5 shrink-0 rounded-full transition-transform enabled:hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 >
                   <Avatar
                     src={profile?.avatarUrl ?? fallback?.avatarUrl}
