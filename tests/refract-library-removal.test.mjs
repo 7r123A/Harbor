@@ -132,5 +132,8 @@ test("Library Stremio, Nuvio and local removals all dispatch the captured Refrac
     2,
     "local removals must trigger Refract in both provider modes",
   );
-  assert.match(remove, /for \(const l of twins\) removeFromWatchlist\(l.id\);\s*syncRefractRemoval\(\)/);
+  assert.match(
+    remove,
+    /for \(const l of twins\) removeFromWatchlist\(l.id\);\s*syncRefractRemoval\(\)/,
+  );
 });
