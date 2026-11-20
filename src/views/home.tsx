@@ -86,6 +86,8 @@ import {
   warmCwAnimeIdentities,
 } from "@/lib/cw-anime-identity";
 import { sortCwFinal } from "@/lib/cw-order";
+import { buildCwShareSnapshot } from "@/lib/cw-share-snapshot";
+import { copyText } from "@/lib/clipboard-text";
 import { reconcileCompletedMovies, movieCompletionAliasWarmRows, isCompletedMovieCheckpoint } from "@/lib/cw-movie-completion";
 import { cwCacheOwnerKey } from "@/lib/cw-derived-caches";
 import {
@@ -1023,6 +1025,43 @@ export function Home({
     cwProgressPool,
   );
 
+  const copyCurrentCw = useCallback(async (): Promise<boolean> => {
+    const sources = {
+      library: !isNuvioProvider && !hideSharedCw && settings.cwSources.library
+        ? items.filter((item) => !ANIME_CLOUD_ID.test(item._id)) : [],
+      local: isNuvioProvider ? [] : localCwItems.filter((item) => item.external !== "nuvio"),
+      external: externalCw.filter((item) =>
+        item.external === "nuvio" ? isNuvioProvider :
+          !isNuvioProvider && !hideSharedCw &&
+          (item.external === "simkl" ? settings.cwSources.simkl :
+            item.external === "trakt" ? settings.cwSources.trakt :
+              item.external === "publicmetadb" ? settings.cwSources.publicmetadb : false)),
+      manual: isNuvioProvider ? [] : manualWatchedLibraryItems(),
+    };
+    const snapshot = buildCwShareSnapshot({
+      sources,
+      eligible: continueWatching,
+      displayed: cwItems,
+      flags: {
+        perProfile: settings.cwPerProfile,
+        sharedHidden: hideSharedCw,
+        accountProvider: settings.accountProvider,
+        enabledSources: {
+          library: settings.cwSources.library,
+          local: settings.cwSources.local,
+          trakt: settings.cwSources.trakt,
+          simkl: settings.cwSources.simkl,
+          publicmetadb: settings.cwSources.publicmetadb,
+        },
+      },
+    });
+    return copyText(JSON.stringify(snapshot, null, 2));
+  }, [
+    items, localCwItems, externalCw, continueWatching, cwItems,
+    isNuvioProvider, hideSharedCw, settings.cwSources,
+    settings.accountProvider, settings.cwPerProfile,
+  ]);
+
   useEffect(() => {
     void detectAnimeForCw(items);
   }, [items]);
@@ -1595,6 +1634,7 @@ export function Home({
               items={cwItems}
               watchedSet={traktWatched}
               onDismiss={onDismissCw}
+              onCopyCw={copyCurrentCw}
               loading={nuvioProfileSwitching}
             />
           </Profiled>
