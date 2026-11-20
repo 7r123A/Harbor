@@ -48,6 +48,20 @@ const FILES = [
   [UNINSTALLER, "uninstall.exe"],
 ];
 
+// The experimental core enables Silero VAD, which dynamically loads ONNX Runtime.
+// ort-sys stages DLLs separately from the executable: include those copied next
+// to the core by build-shipyard-modules.ps1 in the managed installer payload.
+if (experimentalCore) {
+  const coreReleaseDir = dirname(resolve(experimentalCore));
+  const runtimeFiles = readdirSync(coreReleaseDir).filter((name) =>
+    /^(?:onnxruntime.*|DirectML)\.dll$/i.test(name),
+  );
+  if (!runtimeFiles.some((name) => name.toLowerCase() === "onnxruntime.dll")) {
+    throw new Error("Sidecar Core is missing onnxruntime.dll; rebuild the modular Shipyard core.");
+  }
+  for (const name of runtimeFiles) FILES.push([join(coreReleaseDir, name), name]);
+}
+
 // The NSIS bundle gets this from tauri.conf.json bundle.resources. This installer builds its own
 // payload, so it has to be named here or extensions are dead in every managed install.
 const CAPSTAN = join(APP, "resources", "capstan");

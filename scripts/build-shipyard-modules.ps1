@@ -112,11 +112,27 @@ if (-not $SkipCore) {
   $oldTarget = $env:CARGO_TARGET_DIR
   try {
     $env:CARGO_TARGET_DIR = $coreDir
+    # ort-sys 2.0.0-rc.10 copies ONNX Runtime DLLs beside the binary
+    # (OUT_DIR/../../.. = release) and optionally into release/examples and
+    # release/deps. Create those directories before its build script runs:
+    # otherwise the Windows copy fallback can panic with OS error 3.
+    $coreReleaseDir = Join-Path $coreDir 'release'
+    New-Item -ItemType Directory -Path $coreReleaseDir -Force | Out-Null
+    foreach ($child in @('examples', 'deps')) {
+      New-Item -ItemType Directory -Path (Join-Path $coreReleaseDir $child) -Force | Out-Null
+    }
     Invoke-Tool 'cargo' @(
       'build', '--manifest-path', 'src-tauri/Cargo.toml', '--locked',
       '--release', '--no-default-features', '--features',
       'games,plugins,music,music-sidecar,asr-whisper,tauri/custom-protocol', '--bin', 'harbor'
     )
+    # The shared runtime must remain beside harbor.exe and be packaged in
+    # Shipyard, not silently omitted when a build artifact is missing.
+    $ortDlls = @(Get-ChildItem -LiteralPath $coreReleaseDir -File -Filter '*.dll' |
+      Where-Object { $_.Name -match '^(?:onnxruntime.*|DirectML)\.dll$' })
+    if (-not ($ortDlls | Where-Object { $_.Name -eq 'onnxruntime.dll' })) {
+      throw 'Sidecar Core did not stage onnxruntime.dll for Silero VAD'
+    }
   } finally {
     $env:CARGO_TARGET_DIR = $oldTarget
   }
