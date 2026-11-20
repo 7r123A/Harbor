@@ -28,7 +28,7 @@ import gestdownLogo from "@/assets/service-logos/gestdown.png";
 import wyzieLogo from "@/assets/wyzie.png";
 import traktLogo from "@/assets/trakt.svg";
 import simklLogo from "@/assets/simkl.png";
-import refractLogo from "@/assets/refract.svg";
+import refractLogo from "@/assets/refract.png";
 import anilistLogo from "@/assets/anilist.png";
 import malLogo from "@/assets/mal.png";
 import letterboxdLogo from "@/assets/addon-logos/letterboxd.png";
