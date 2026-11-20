@@ -115,7 +115,7 @@ pub struct VideoInfo {
     /// Average bits per second (the stream's own field, or Matroska's BPS tag); 0 when unknown.
     pub bitrate: u64,
     /// The peak bits per second the stream declares (MP4 `btrt`/`esds` maxBitrate, as ffprobe's
-    /// `max_bit_rate`); 0 when it declares none. Only this bounds what a copied picture can reach.
+    /// `max_bit_rate`); 0 when it declares none. A copied picture's BANDWIDTH announces it.
     pub max_bitrate: u64,
     /// Sample (pixel) aspect ratio when it is not square, e.g. 16:15 for a PAL DVD.
     pub sar: Option<(u32, u32)>,
@@ -661,7 +661,11 @@ pub struct PlanInput<'a> {
 /// a Nest Hub stops at 720p, an older TV takes only stereo AAC.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DeviceLimits {
+    /// The tallest picture the receiver decodes; a taller one is converted.
     pub max_height: Option<u32>,
+    /// The most Harbor encodes for this receiver, peak included. It is the profile's budget for a
+    /// conversion (8000 kbit/s at 1080p), not a decoder limit: a picture the receiver plays as it
+    /// is, is copied whatever its rate.
     pub max_video_kbps: Option<u32>,
     pub force_aac: bool,
     pub force_stereo: bool,
@@ -879,7 +883,7 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
     let limits = input.limits;
     let (quality_height, quality_kbps) = options.quality();
     let max_height = limits.max_height.map_or(quality_height, |m| m.clamp(240, quality_height));
-    // A limit the receiver declared is honoured as it is, even below the quality setting's rate.
+    // The receiver's budget caps what is encoded, even below the quality setting's rate.
     let device_kbps = limits.max_video_kbps.filter(|k| *k > 0);
     let target_kbps = device_kbps.map_or(quality_kbps, |k| k.min(quality_kbps));
     let video = input.probe.and_then(|p| p.video.as_ref());
@@ -929,29 +933,9 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
             reasons.push(format!("{}p above {}p", v.height, max_height));
             encode_video = true;
         }
-        // Under a receiver's bit rate limit the picture is copied only when its declared peak fits.
-        // An average (the stream's rate, Matroska's BPS tag, the file's rate) says nothing about
-        // the peaks: a 720p stream averaging 2.5 Mbit/s can reach 6 Mbit/s. Without a declared
-        // peak the picture is encoded with the capped maxrate instead.
-        if let Some(limit) = device_kbps {
-            // Compared in bit/s: dividing first would round 3,000,999 bit/s down to a 3000 kbit/s
-            // limit. The rates shown round up for the same reason.
-            let limit_bps = u64::from(limit) * 1_000;
-            let average = video_average_rate(input.probe, v);
-            let reason = if average > limit_bps {
-                Some(format!("{} kbit/s above {limit} kbit/s", average.div_ceil(1_000)))
-            } else if v.max_bitrate > limit_bps {
-                Some(format!("{} kbit/s peak above {limit} kbit/s", v.max_bitrate.div_ceil(1_000)))
-            } else if v.max_bitrate == 0 {
-                Some(format!("peak bit rate unknown, receiver limit {limit} kbit/s"))
-            } else {
-                None
-            };
-            if let Some(reason) = reason {
-                reasons.push(reason);
-                encode_video = true;
-            }
-        }
+        // The bit rate budget does not decide between copying and encoding: it caps what Harbor
+        // encodes. Most files (every MKV) declare no peak rate, so holding a copy to it re-encoded
+        // nearly every film the receiver plays as it is, at a cost in quality and GPU or CPU time.
         if v.hdr && !native_hevc {
             reasons.push(if v.dolby_vision.is_some() { "Dolby Vision".into() } else { "HDR".into() });
             encode_video = true;
@@ -1826,15 +1810,16 @@ mod tests {
             &gpu,
         );
         assert!(nvenc.output.join(" ").contains("-b:v 3000k -maxrate 3000k"), "{:?}", nvenc.output);
-        // A 720p H.264 file within the size limit but at 20 Mbit/s is re-encoded to the device's rate.
+        // A 720p H.264 file the receiver plays as it is, is copied: the budget caps encoding only.
         let fast = parse_probe(
             r#"{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","pix_fmt":"yuv420p","width":1280,"height":720,"avg_frame_rate":"24/1","bit_rate":"20000000"},
                {"index":1,"codec_type":"audio","codec_name":"aac","channels":2}],"format":{"duration":"100"}}"#,
         )
         .unwrap();
         let p = plan_with(&fast, &CastOptions::default(), limits);
-        assert_ne!(p.summary.video, "copy");
-        assert!(p.summary.reasons.iter().any(|r| r == "20000 kbit/s above 3000 kbit/s"), "{:?}", p.summary.reasons);
+        assert_eq!(p.summary.video, "copy", "{:?}", p.summary.reasons);
+        // Encoded anyway (subtitles, a forced conversion), it keeps to the budget.
+        let p = plan_with(&fast, &CastOptions { force_conversion: true, ..Default::default() }, limits);
         assert!(p.output.join(" ").contains("-maxrate 3000k"), "{:?}", p.output);
         // Without a device limit the 1.5x peak allowance stays: 720p's 4000 kbit/s peaks at 6000.
         let free = plan_with(&probe, &CastOptions { quality: "720p".into(), force_conversion: true, ..Default::default() }, DeviceLimits::default());
@@ -1856,7 +1841,7 @@ mod tests {
     }
 
     #[test]
-    fn a_copied_picture_must_declare_a_peak_within_the_receiver_limit() {
+    fn a_picture_the_receiver_plays_is_copied_whatever_its_rate() {
         let limits = DeviceLimits { max_height: Some(1080), max_video_kbps: Some(3_000), ..Default::default() };
         let film = |video_extra: &str, format_extra: &str| {
             parse_probe(&format!(
@@ -1865,52 +1850,32 @@ mod tests {
             ))
             .unwrap()
         };
-        let reasons = |p: &CastPlan| p.summary.reasons.clone();
-        // A declared peak within the limit (MP4's maxBitrate) allows the copy, and BANDWIDTH
-        // announces that peak, not the average.
-        let p = plan_with(&film(r#","bit_rate":"2500000","max_bit_rate":"2800000""#, ""), &CastOptions::default(), limits);
-        assert_eq!(p.summary.video, "copy", "{:?}", reasons(&p));
-        assert_eq!(p.bandwidth, (2_800_000 + 192_000) * 11 / 10);
-        // A 720p stream averaging 2.5 Mbit/s that peaks at 6 Mbit/s is encoded to the capped rate.
-        let p = plan_with(&film(r#","bit_rate":"2500000","max_bit_rate":"6000000""#, ""), &CastOptions::default(), limits);
-        assert!(reasons(&p).iter().any(|r| r == "6000 kbit/s peak above 3000 kbit/s"), "{:?}", reasons(&p));
-        assert!(p.output.join(" ").contains("-maxrate 3000k"), "{:?}", p.output);
-        // At the boundary the comparison is exact: a peak of exactly 3,000,000 bit/s fits a
-        // 3000 kbit/s limit, one bit/s more does not (3,000,999 is not rounded down to 3000).
-        let p = plan_with(&film(r#","bit_rate":"2500000","max_bit_rate":"3000000""#, ""), &CastOptions::default(), limits);
-        assert_eq!(p.summary.video, "copy", "{:?}", reasons(&p));
-        for peak in ["3000001", "3000999"] {
-            let p = plan_with(&film(&format!(r#","bit_rate":"2500000","max_bit_rate":"{peak}""#), ""), &CastOptions::default(), limits);
-            assert_ne!(p.summary.video, "copy", "peak {peak}");
-            assert!(reasons(&p).iter().any(|r| r == "3001 kbit/s peak above 3000 kbit/s"), "{:?}", reasons(&p));
-        }
-        // The average is compared exactly too.
-        let p = plan_with(&film(r#","bit_rate":"3000999","max_bit_rate":"2900000""#, ""), &CastOptions::default(), limits);
-        assert!(reasons(&p).iter().any(|r| r == "3001 kbit/s above 3000 kbit/s"), "{:?}", reasons(&p));
-        // An average below the limit proves nothing about the peaks: the stream's own rate, MKV's
-        // statistics tag under either name, or the file's rate less its audio.
-        for (video, format) in [
-            (r#","bit_rate":"2500000""#, ""),
-            (r#","tags":{"BPS-eng":"2500000"}"#, ""),
-            (r#","tags":{"BPS":"2500000"}"#, ""),
-            ("", r#","bit_rate":"2800000""#),
-            ("", ""),
-        ] {
+        // Declared peak, average only (the stream's rate, MKV's statistics tag under either name,
+        // the file's rate less its audio), above or below the budget, or nothing known: copied.
+        let cases = [
+            (r#","bit_rate":"2500000","max_bit_rate":"2800000""#, "", 2_800_000),
+            (r#","bit_rate":"2500000","max_bit_rate":"6000000""#, "", 6_000_000),
+            (r#","bit_rate":"2500000""#, "", 2_500_000),
+            (r#","tags":{"BPS-eng":"2500000"}"#, "", 2_500_000),
+            (r#","tags":{"BPS":"2500000"}"#, "", 2_500_000),
+            ("", r#","bit_rate":"9000000""#, 8_808_000),
+            ("", "", 8_000_000),
+        ];
+        for (video, format, video_bps) in cases {
             let p = plan_with(&film(video, format), &CastOptions::default(), limits);
-            assert_ne!(p.summary.video, "copy", "{video} {format}");
-            assert!(reasons(&p).iter().any(|r| r == "peak bit rate unknown, receiver limit 3000 kbit/s"), "{:?}", reasons(&p));
-            assert!(p.output.join(" ").contains("-maxrate 3000k"), "{:?}", p.output);
+            assert_eq!(p.summary.video, "copy", "{video} {format}: {:?}", p.summary.reasons);
+            // BANDWIDTH announces the declared peak when there is one, else the best estimate.
+            assert_eq!(p.bandwidth, (video_bps + 192_000) * 11 / 10, "{video} {format}");
         }
-        // An average already above the limit says so.
-        let p = plan_with(&film("", r#","bit_rate":"9000000""#), &CastOptions::default(), limits);
-        assert!(reasons(&p).iter().any(|r| r == "8808 kbit/s above 3000 kbit/s"), "{:?}", reasons(&p));
-        // Without a limit nothing is required: the film is copied, its MKV tag only feeds BANDWIDTH.
-        let tagged = film(r#","tags":{"BPS-eng":"2500000"}"#, "");
-        assert_eq!(tagged.video.as_ref().unwrap().bitrate, 2_500_000);
-        let p = plan_with(&tagged, &CastOptions::default(), DeviceLimits::default());
-        assert_eq!(p.summary.video, "copy");
-        assert_eq!(p.bandwidth, (2_500_000 + 192_000) * 11 / 10);
-        assert_eq!(plan_with(&film("", ""), &CastOptions::default(), DeviceLimits::default()).summary.video, "copy");
+        assert_eq!(film(r#","tags":{"BPS-eng":"2500000"}"#, "").video.unwrap().bitrate, 2_500_000);
+        // What the receiver cannot take as it is still converts, within the budget.
+        let tall = parse_probe(
+            r#"{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","pix_fmt":"yuv420p","width":1920,"height":1080,"avg_frame_rate":"24/1"}],"format":{"duration":"100"}}"#,
+        )
+        .unwrap();
+        let p = plan_with(&tall, &CastOptions::default(), DeviceLimits { max_height: Some(720), ..limits });
+        assert_ne!(p.summary.video, "copy");
+        assert!(p.output.join(" ").contains("-maxrate 3000k"), "{:?}", p.output);
     }
 
     #[test]

@@ -5,7 +5,7 @@ import {
   type CastSubInfo,
   type CastSubStyle,
 } from "@/lib/cast";
-import { conversionProfile } from "@/lib/cast/device-caps";
+import { castProfile } from "@/lib/cast/device-caps";
 import { useDebridClients } from "@/lib/debrid/registry";
 import { t } from "@/lib/i18n";
 import type { PlayerBridge, PlayerSnapshot, TrackInfo } from "@/lib/player/bridge";
@@ -222,9 +222,10 @@ export function useCastPick(params: {
       const isLiveIptv = src.meta.id?.startsWith("iptv:") ?? false;
       const burnSub = burnSubsOnTv ? buildCastSub(snap.subtitleTracks) : null;
       const forceTranscode = resolved.kind === "transcode" || isLiveIptv || burnSub != null;
-      // Burning subtitles into a stream the receiver already plays changes no codec, but keeps to
-      // the receiver's resolution and bit rate; only live TV gets the safe 1080p H.264 profile.
-      const profile = conversionProfile(resolved, forceTranscode, isLiveIptv);
+      // Any conversion (burning in subtitles, or one Harbor starts itself) keeps to the receiver's
+      // resolution and bit rate, and changes no codec it plays; live TV gets the safe 1080p H.264
+      // profile.
+      const profile = castProfile(resolved, isLiveIptv);
       setCastTranscoding(forceTranscode);
       await pickCastDevice(
         device,
