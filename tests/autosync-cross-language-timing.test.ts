@@ -18,6 +18,47 @@ const excerpts = JSON.parse(
   translated: Interval[];
 }>;
 
+test("a rejected overlapping Moonshine window does not hide a better later window", () => {
+  // On a 45s cache clip the two 35s ASR probes overlap. The first may
+  // contain too little distinct dialogue while the second has enough.
+  const speech: Interval[] = [
+    [32, 33.1],
+    [37, 39.2],
+    [42, 44.1],
+  ];
+  const subtitles: Interval[] = speech.map(([start, end]) => [start - 2, end - 2]);
+  const diagnostics: Array<{ startSec: number; accepted: boolean }> = [];
+  const offset = crossLanguagePlaybackOffset(
+    speech,
+    subtitles,
+    [{ startSec: 0, lenSec: 35 }, { startSec: 12, lenSec: 35 }],
+    10,
+    (diagnostic) => diagnostics.push(diagnostic),
+  );
+  assert.deepEqual(diagnostics.map((item) => item.startSec), [0, 12]);
+  assert.equal(diagnostics[0].accepted, false);
+  assert.equal(diagnostics[1].accepted, true);
+  assert.ok(offset !== null && Math.abs(offset - 2) < 0.15);
+});
+
+test("accepted overlapping Moonshine probes count as one independent anchor", () => {
+  const speech: Interval[] = [
+    [5, 6.3], [11, 13], [18, 20.5], [25, 27], [32, 33.1],
+  ];
+  const subtitles: Interval[] = speech.map(([start, end]) => [start - 1, end - 1]);
+  const diagnostics: Array<{ startSec: number; accepted: boolean }> = [];
+  const offset = crossLanguagePlaybackOffset(
+    speech,
+    subtitles,
+    [{ startSec: 0, lenSec: 35 }, { startSec: 2, lenSec: 35 }],
+    10,
+    (diagnostic) => diagnostics.push(diagnostic),
+  );
+  assert.deepEqual(diagnostics.map((item) => item.startSec), [0]);
+  assert.equal(diagnostics[0].accepted, true);
+  assert.ok(offset !== null && Math.abs(offset - 1) < 0.15);
+});
+
 test("real translated cue grouping recovers different local delays without assuming a constant episode offset", () => {
   for (const excerpt of excerpts) {
     const result = crossLanguagePlaybackOffset(

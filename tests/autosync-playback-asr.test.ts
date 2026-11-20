@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { matchPlaybackSpeech } from "../src/lib/subtitles/autosync/playback-asr.ts";
+import {
+  matchPlaybackSpeech,
+  playbackSpeechFailureCode,
+  retryablePlaybackSpeechFailure,
+} from "../src/lib/subtitles/autosync/playback-asr.ts";
 
 const windows = [
   {
@@ -102,6 +106,54 @@ test("Moonshine transcribes prepared playback audio using the selected audio lan
     assert.equal(call?.args?.sessionId, base.sessionId);
     assert.equal(progress.length, 2);
   }
+});
+
+test("Moonshine uses the selected English track title when MKV language tags are missing", async () => {
+  const bridge = native();
+  const result = await matchPlaybackSpeech(
+    {
+      ...base,
+      audioLanguage: undefined,
+      audioTrackTitle: "English : DTS-HD Master Audio 5.1",
+      subtitleLanguage: "en",
+      modelLanguage: "auto",
+      crossLanguage: false,
+    },
+    bridge.invoke,
+    () => {},
+    () => true,
+  );
+  assert.ok(Math.abs(result.offsetSec - 2) < 0.15);
+  assert.equal(
+    bridge.calls.find((call) => call.command === "moonshine_transcribe_windows")?.args?.subLang,
+    "en",
+  );
+  await assert.rejects(
+    matchPlaybackSpeech(
+      {
+        ...base,
+        audioLanguage: undefined,
+        audioTrackTitle: "English : DTS-HD Master Audio 5.1",
+        subtitleLanguage: "fr",
+        crossLanguage: false,
+      },
+      native().invoke,
+      () => {},
+      () => true,
+    ),
+    /Cross-language matching is off/,
+  );
+});
+
+test("playback Moonshine resolves language from the currently selected audio track", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const hook = await readFile(
+    new URL("../src/views/player/hooks/use-auto-sync.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(hook, /audioLanguage:\s*liveSnapRef\.current\.audioTracks\.find/);
+  assert.match(hook, /audioTrackTitle:\s*liveSnapRef\.current\.audioTracks\.find/);
+  assert.doesNotMatch(hook, /audioLanguage:\s*snap\.audioTracks\.find/);
 });
 
 test("explicit Moonshine language overrides the audio metadata for testing", async () => {
@@ -218,16 +270,58 @@ test("cancelled playback cannot produce an offer", async () => {
   assert.equal(bridge.calls.length, 1);
 });
 
-test("unrelated subtitle timing is refused after Moonshine recognition", async () => {
+test("unrelated subtitle timing emits fit diagnostics and a safe failure code", async () => {
+  const fits: Array<{ accepted: boolean; ncc?: number; coverage?: number }> = [];
   await assert.rejects(
     matchPlaybackSpeech(
       { ...base, cues: [[0, 45]] },
       native().invoke,
       () => {},
       () => true,
+      undefined,
+      (diagnostic) => fits.push(diagnostic),
     ),
-    /Moonshine processed.*did not agree/,
+    (error: unknown) => {
+      assert.equal(playbackSpeechFailureCode(error), "alignment-rejected");
+      assert.match((error as Error).message, /Moonshine processed.*neither speech timing nor matching dialogue/);
+      return true;
+    },
   );
+  assert.equal(fits.length, windows.length);
+  assert.ok(fits.every((fit) => !fit.accepted));
+  assert.ok(fits.every((fit) => Number.isFinite(fit.ncc) && Number.isFinite(fit.coverage)));
+  assert.ok(!JSON.stringify(fits).includes("speech"));
+});
+
+test("Moonshine failure logs never include arbitrary native error contents", () => {
+  assert.equal(playbackSpeechFailureCode(new Error("failed C:/private/audio.wav")), "native-error");
+  assert.equal(
+    playbackSpeechFailureCode("https://example.invalid/private?token=secret"),
+    "native-error",
+  );
+  assert.equal(playbackSpeechFailureCode(new Error("subsync-scene-timeout")), "timeout");
+  assert.equal(
+    playbackSpeechFailureCode(new Error("moonshine-model-not-installed:en")),
+    "model-missing",
+  );
+});
+
+test("only scene-dependent Moonshine failures can trigger another buffered excerpt", () => {
+  for (const code of ["audio-silent", "no-speech", "timestamps-missing", "alignment-rejected"])
+    assert.equal(retryablePlaybackSpeechFailure(code), true, code);
+  for (const code of [
+    "disabled",
+    "cross-language-off",
+    "model-missing",
+    "python-missing",
+    "runtime-missing",
+    "language-unsupported",
+    "timeout",
+    "cancelled",
+    "native-error",
+    "none",
+  ])
+    assert.equal(retryablePlaybackSpeechFailure(code), false, code);
 });
 
 test("already aligned foreign-language subtitle timing is a successful zero-offset result", async () => {

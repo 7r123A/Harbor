@@ -30,24 +30,43 @@ export function moonshineLanguageName(code: string): string {
   return MOONSHINE_LANGUAGES.find(([key]) => key === code)?.[1] ?? code;
 }
 
+/** Only an explicitly prefixed language in the selected audio track title is reliable.
+ * Some MKVs omit the language tag despite naming their audio streams, e.g.
+ * "English : DTS-HD Master Audio 5.1". Never inspect a media or subtitle title.
+ */
+function languageFromAudioTrackTitle(title: string | null | undefined): MoonshineLanguage | null {
+  const match = (title ?? "").trim().match(
+    /^(English|Arabic|German|Spanish|Japanese|Mandarin|Chinese|Tagalog|Filipino|Vietnamese)(?:\s*\([^)]{1,40}\))?\s*(?::|[-|]|$)/i,
+  );
+  if (!match) return null;
+  const name = match[1].toLowerCase();
+  if (name === "chinese") return "zh";
+  if (name === "filipino") return "tl";
+  return MOONSHINE_LANGUAGES.find(([, label]) => label.toLowerCase() === name)?.[0] ?? null;
+}
+
 /**
- * Resolve only from an explicit override or the currently selected AUDIO track.
- * Never infer from subtitle language, media title, region or another installed
- * model, since a mistaken ASR language produces misleading timing suggestions.
+ * Respect explicit override, then the selected AUDIO track's language tag.
+ * Only when the tag is missing/unknown may its clearly labelled track title
+ * supply the language. An unsupported known tag must not be overridden.
  */
 export function resolveMoonshineLanguage(
   preference: string | null | undefined,
   audioTrackLanguage: string | null | undefined,
+  audioTrackTitle?: string | null,
 ): MoonshineLanguage | null {
   const moonshineCode = (value: string) => {
     const normalized = normalizeLang(value);
-    const base = normalized.split("-")[0];
-    return isMoonshineLanguage(base) ? base : null;
+    const base = normalized?.split("-")[0];
+    return base && isMoonshineLanguage(base) ? base : null;
   };
   if (preference && preference !== "auto") {
     return moonshineCode(preference);
   }
-  return moonshineCode(audioTrackLanguage ?? "");
+  const tagged = normalizeLang(audioTrackLanguage).split("-")[0];
+  if (tagged && !["und", "mul", "zxx", "mis"].includes(tagged))
+    return isMoonshineLanguage(tagged) ? tagged : null;
+  return languageFromAudioTrackTitle(audioTrackTitle);
 }
 
 // The full auto-sync pipeline can discover that speech recognition needs a

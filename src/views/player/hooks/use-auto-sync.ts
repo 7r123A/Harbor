@@ -75,7 +75,11 @@ import {
   SCENE_CLIP_SEC,
   selectPlaybackRetryScene,
 } from "@/lib/subtitles/autosync/scene-window";
-import { matchPlaybackSpeech } from "@/lib/subtitles/autosync/playback-asr";
+import {
+  matchPlaybackSpeech,
+  playbackSpeechFailureCode,
+  retryablePlaybackSpeechFailure,
+} from "@/lib/subtitles/autosync/playback-asr";
 import {
   moonshineMissingModelLanguage,
   moonshineLanguageName,
@@ -84,16 +88,16 @@ import {
   type MoonshineModelStatus,
 } from "@/lib/subtitles/autosync/moonshine-models";
 import { playbackTimelineFailure } from "@/lib/subtitles/autosync/playback-timeline-error";
-import { matchPlaybackVad } from "@/lib/subtitles/autosync/playback-vad";
-import { isLikelyDialogueCue } from "@/lib/subtitles/autosync/dialogue-matches";
-import {
-  hasSavedAutoSyncCorrection,
 import {
   cacheCaptureAttemptPath,
   cacheCaptureRetryReason,
   cacheCaptureScenePath,
   MAX_CACHE_CAPTURE_ATTEMPTS,
 } from "@/lib/subtitles/autosync/playback-cache-retry";
+import { matchPlaybackVad } from "@/lib/subtitles/autosync/playback-vad";
+import { isLikelyDialogueCue } from "@/lib/subtitles/autosync/dialogue-matches";
+import {
+  hasSavedAutoSyncCorrection,
   readSavedAutoSyncCorrection,
   shouldRestoreAutoSyncCorrection,
   saveAutoSyncCorrection,
@@ -1945,6 +1949,7 @@ export function useAutoSync(params: {
           const directAttempted = false;
           let cacheAudioReady = false;
           let moonshineFailure: string | null = null;
+          let moonshineFailureCode = "none";
           let usedMoonshine = false;
           let usedSilero = false;
           const directMoonshine = settingsRef.current.subtitleAutoSyncEngine === "moonshine";
@@ -2227,8 +2232,25 @@ export function useAutoSync(params: {
                           cues: sourceCues
                             .filter((cue) => isLikelyDialogueCue(cue.text))
                             .map((cue) => [cue.start - startAt, cue.end - startAt]),
-                          audioLanguage: snap.audioTracks.find((track) => track.selected)?.lang,
-                          subtitleLanguage: snap.subtitleTracks.find((track) => track.selected)
+                          // Only genuine external subtitle text can anchor spoken
+                          // words. Embedded cache cues have fabricated labels.
+                          textCues: embeddedPlayback
+                            ? undefined
+                            : sourceCues
+                                .filter((cue) => isLikelyDialogueCue(cue.text))
+                                .map((cue) => ({
+                                  start: cue.start - startAt,
+                                  end: cue.end - startAt,
+                                  text: cue.text,
+                                })),
+                          // Read the active track at recognition time: the stream
+                          // can start in French and then switch to English.
+                          // Some MKVs specify "English" only in the audio title.
+                          audioLanguage: liveSnapRef.current.audioTracks.find((track) => track.selected)
+                            ?.lang,
+                          audioTrackTitle: liveSnapRef.current.audioTracks.find((track) => track.selected)
+                            ?.title,
+                          subtitleLanguage: liveSnapRef.current.subtitleTracks.find((track) => track.selected)
                             ?.lang,
                           enabled: settingsRef.current.subtitleAutoSyncAsr === true,
                           modelLanguage: settingsRef.current.subtitleMoonshineLanguage,
@@ -2256,12 +2278,30 @@ export function useAutoSync(params: {
                             ],
                           }).catch(() => {});
                         },
+                        (diagnostic) => {
+                          void invoke("mpv_command", {
+                            cmd: [
+                              "print-text",
+                              `[harbor/subsync] moonshine-fit ${JSON.stringify(diagnostic)}`,
+                            ],
+                          }).catch(() => {});
+                        },
+                        (diagnostic) => {
+                          // Numeric evidence only; no transcript or subtitle text.
+                          void invoke("mpv_command", {
+                            cmd: [
+                              "print-text",
+                              `[harbor/subsync] moonshine-lexical ${JSON.stringify(diagnostic)}`,
+                            ],
+                          }).catch(() => {});
+                        },
                       ),
                     () => cancelNativeAnalysis(asrSessionId),
                     90_000,
                   );
                   usedMoonshine = true;
                 } catch (error) {
+                  moonshineFailureCode = playbackSpeechFailureCode(error);
                   const missingLanguage = moonshineMissingModelLanguage(error);
                   if (missingLanguage) {
                     if (!moonshinePromptedRef.current.has(missingLanguage)) {
@@ -2283,6 +2323,25 @@ export function useAutoSync(params: {
                 }
               }
               if (aborted || !isCurrentAutoSyncScope(scope)) return;
+              // A timing mismatch or missing speech in one excerpt is not proof
+              // that a different, already-buffered dialogue scene cannot match.
+              // Retry once with fresh cache files; never loosen the fit gates.
+              if (
+                !result &&
+                directMoonshine &&
+                retryAfterStartSec === null &&
+                retryablePlaybackSpeechFailure(moonshineFailureCode) &&
+                selectPlaybackRetryScene(bufferedScenes, focusSec, requestedStartSec)
+              ) {
+                retryAfterStartSec = requestedStartSec;
+                moonshineFailure = null;
+                moonshineFailureCode = "none";
+                setReason("Checking another buffered dialogue excerpt with Moonshine");
+                void invoke("mpv_command", {
+                  cmd: ["print-text", "[harbor/subsync] playback-moonshine=retry-nearby-excerpt"],
+                }).catch(() => {});
+                continue;
+              }
               if (result) localReferenceFocusRef.current = { scope, positionSec: position };
               break;
             } catch (error) {
@@ -2319,7 +2378,7 @@ export function useAutoSync(params: {
             void invoke("mpv_command", {
               cmd: [
                 "print-text",
-                `[harbor/subsync] live failed cache=${reportCode(cacheError)} direct=${reportCode(directError)} attempted=${directAttempted} decoded=${cacheAudioReady}`,
+                `[harbor/subsync] live failed cache=${reportCode(cacheError)} direct=${reportCode(directError)} attempted=${directAttempted} decoded=${cacheAudioReady} moonshine=${moonshineFailureCode}`,
               ],
             }).catch(() => {});
             throw new Error(
