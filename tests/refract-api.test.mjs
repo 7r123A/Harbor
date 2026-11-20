@@ -114,6 +114,20 @@ test("Refract is registered in the visible settings sidebar and tracker panel", 
   assert.match(panel, /active === "refract" && <RefractPanel/);
 });
 
+test("Refract appears in Licenses attribution under trackers with its existing logo", () => {
+  const panel = readFileSync(
+    new URL("../src/views/settings/licenses-panel.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(panel, /import refractLogo from "@\\/assets\\/refract\\.svg"/);
+  const trackers = panel.slice(panel.indexOf("const TRACKERS: Credit[] = ["));
+  assert.match(
+    trackers,
+    /name: "Refract",[\\s\\S]*?url: "https:\\/\\/getrefract\\.app",[\\s\\S]*?logo: refractLogo/,
+  );
+  assert.match(panel, /title="Trackers and lists"[\\s\\S]*?items={TRACKERS}/);
+});
+
 test("automatic Refract playback threshold defaults to 70 percent and is configurable", () => {
   const original = globalThis.localStorage;
   const storage = new Map();
