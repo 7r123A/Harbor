@@ -8,6 +8,11 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf
 // Execute production functions with isolated storage and no network or React rendering.
 function load(path, mocks = {}, storage = undefined) {
   const defaultMocks = {
+    "@/lib/active-profile-id": {
+      activeProfileIsPrimary: () => true,
+      activeScopedProfileId: () => "fixture",
+    },
+    "@/lib/refract/client": { getRefractKey: () => null, refractEnabled: () => false },
     "@/lib/nuvio/nuvio-sync": {
       isNuvioProviderActive: () => false,
       resolveNuvioProfileIndex: () => 1,
@@ -41,7 +46,7 @@ function load(path, mocks = {}, storage = undefined) {
 
 const tab = load("src/views/library/watchlist-tab.tsx", {
   "@/lib/trakt/to-meta": load("src/lib/trakt/to-meta.ts"),
-  "@/lib/stremio": { libraryMetaType: (type) => type },
+  "@/lib/stremio": { CW_FINISHED_RATIO: 0.9, libraryMetaType: (type) => type },
   "./shared": { parseTs: (value) => (value ? Date.parse(value) : null) },
 });
 const local = (id, imdbId) => ({ id, imdbId, type: "movie", name: "Aladdin", addedAt: 1 });
@@ -121,6 +126,19 @@ test("IMDb aliases combine local, Stremio and Trakt while preserving removal han
   assert.equal(result.length, 1);
   assert.equal(result[0].stremioId, "tt1");
   assert.equal(result[0].localId, "tmdb:movie:1");
+});
+
+test("in-progress movies and partially watched series stay in Watchlist", () => {
+  const inProgressMovie = { ...cloud("tt1"), state: { duration: 100, timeOffset: 50 } };
+  assert.equal(tab.filterLibrary([inProgressMovie], false, "watchlist").length, 1);
+  const finishedMovie = { ...cloud("tt1"), state: { duration: 100, timeOffset: 95 } };
+  assert.equal(tab.filterLibrary([finishedMovie], false, "watchlist").length, 0);
+  const partialSeries = {
+    ...cloud("tt2"),
+    type: "series",
+    state: { duration: 100, timeOffset: 50, timesWatched: 3 },
+  };
+  assert.equal(tab.filterLibrary([partialSeries], false, "watchlist").length, 1);
 });
 
 test("bookmarked-only filtering excludes temporary entries in both library modes", () => {

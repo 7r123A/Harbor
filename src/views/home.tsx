@@ -39,7 +39,7 @@ import { StreamingRail } from "@/components/streaming-rail";
 import { TopRankCard } from "@/components/top-rank-card";
 import { setTop10Metas } from "@/lib/top10-set";
 import { fetchHeroFeed } from "@/lib/feed/hero-pool";
-import { hasTmdbProviderAddon, loadAddonRows, userAddons, type AddonRow } from "@/lib/addons";
+import { hasTmdbProviderAddon, loadAddonRows, cachedUserAddons, type AddonRow } from "@/lib/addons";
 import { isAnimeRow } from "@/views/anime";
 import { buildArabicHomeRows } from "@/lib/arabic/home-rows";
 import { buildRussianHomeRows } from "@/lib/russian/home-rows";
@@ -412,7 +412,7 @@ export function Home({
       }
 
       if (authKey) {
-        const installed = await userAddons(authKey).catch(() => []);
+        const installed = await cachedUserAddons(authKey).catch(() => []);
         if (cancelled) return;
         setTmdbProvidedByAddon(hasTmdbProviderAddon(installed));
       }

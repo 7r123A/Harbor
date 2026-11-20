@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchInstalledAddons, fetchManifestAt, filterEnabled } from "@/lib/addon-store";
-import { userAddons, withDebridKeys, type Addon } from "@/lib/addons";
+import { cachedUserAddons, withDebridKeys, type Addon } from "@/lib/addons";
 import { resolveEffectiveStremioAuthKey } from "@/lib/auth";
 import { isNuvioSignedIn, isNuvioProviderActive } from "@/lib/nuvio/nuvio-client";
 import { fetchNuvioAddons } from "@/lib/nuvio/nuvio-sync";
@@ -86,7 +86,7 @@ export function useAddons(
       const stremioKey = resolveEffectiveStremioAuthKey(authKey);
       const stremioAddons =
         (!isNuvio || nuvioAddonMode === "combined") && stremioKey
-          ? filterEnabled(await userAddons(stremioKey).catch(() => []))
+          ? filterEnabled(await cachedUserAddons(stremioKey).catch(() => []))
           : [];
       const nuvioAddons =
         (isNuvio || nuvioAddonMode === "combined") && isNuvioSignedIn()

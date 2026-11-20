@@ -94,35 +94,41 @@ async fn thumb_or_base64(
     app: &tauri::AppHandle,
     url: &str,
     width: Option<u32>,
-    bytes: &[u8],
+    bytes: Vec<u8>,
     persistence: Option<(u64, u64, Option<String>, Option<String>)>,
-) -> String {
+    return_asset: bool,
+) -> Result<(String, Option<String>), String> {
     let w = width.unwrap_or(0);
-    let owned = bytes.to_vec();
-    let output = tokio::task::spawn_blocking(move || make_thumb(&owned, w).unwrap_or(owned))
-        .await
-        .unwrap_or_else(|_| bytes.to_vec());
-    let body = base64::engine::general_purpose::STANDARD.encode(&output);
-    if let Some((lifetime, generation, etag, modified)) = persistence {
-        if let Ok(format) = image::guess_format(&output) {
-            let image = crate::thumb_cache::CachedImage {
-                bytes: output,
-                content_type: format.to_mime_type().to_string(),
-                etag,
-                modified,
-                fresh: true,
-                max_age: lifetime,
-                lifetime,
-            };
-            let app = app.clone();
-            let url = url.to_string();
-            let _ = tokio::task::spawn_blocking(move || {
-                crate::thumb_cache::write_thumb(&app, &url, w, &image, lifetime, generation)
-            })
-            .await;
+    let app = app.clone();
+    let url = url.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let output = make_thumb(&bytes, w).unwrap_or(bytes);
+        if let Some((lifetime, generation, etag, modified)) = persistence {
+            if let Ok(format) = image::guess_format(&output) {
+                let image = crate::thumb_cache::CachedImage {
+                    bytes: output,
+                    content_type: format.to_mime_type().to_string(),
+                    etag,
+                    modified,
+                    fresh: true,
+                    max_age: lifetime,
+                    lifetime,
+                };
+                let path =
+                    crate::thumb_cache::write_thumb(&app, &url, w, &image, lifetime, generation);
+                if let Some(path) = path.filter(|_| return_asset) {
+                    return (String::new(), Some(path.to_string_lossy().into_owned()));
+                }
+                return (
+                    base64::engine::general_purpose::STANDARD.encode(image.bytes),
+                    None,
+                );
+            }
         }
-    }
-    body
+        (base64::engine::general_purpose::STANDARD.encode(output), None)
+    })
+    .await
+    .map_err(|error| format!("image response: {error}"))
 }
 
 #[tauri::command]
@@ -413,6 +419,7 @@ pub struct HarborFetchArgs {
     pub thumb_width_px: Option<u32>,
     pub cache_image: Option<bool>,
     pub allow_image_challenge: Option<bool>,
+    pub return_image_asset: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -421,6 +428,8 @@ pub struct HarborFetchResponse {
     pub status: u16,
     pub ok: bool,
     pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asset_path: Option<String>,
     pub content_type: Option<String>,
     pub headers: HashMap<String, String>,
     pub url: Option<String>,
@@ -440,6 +449,7 @@ fn cached_image_response(
         status: 200,
         ok: true,
         body: base64::engine::general_purpose::STANDARD.encode(&image.bytes),
+        asset_path: None,
         content_type: Some(image.content_type.clone()),
         headers: HashMap::from([
             ("content-type".to_string(), image.content_type.clone()),
@@ -489,6 +499,7 @@ async fn harbor_fetch_inner(
     retried: bool,
     request_id: uuid::Uuid,
 ) -> Result<HarborFetchResponse, String> {
+    let return_asset = args.return_image_asset == Some(true);
     let timeout = Duration::from_millis(args.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
     let solver_ok = can_open_solver(&args);
     let retry_args = args.clone();
@@ -660,6 +671,7 @@ async fn harbor_fetch_inner(
                     status: 200,
                     ok: true,
                     body: base64::engine::general_purpose::STANDARD.encode(&hit.bytes),
+                    asset_path: None,
                     content_type: Some(hit.content_type.clone()),
                     headers: HashMap::from([
                         ("content-type".to_string(), hit.content_type.clone()),
@@ -869,6 +881,7 @@ async fn harbor_fetch_inner(
                 status: 200,
                 ok: true,
                 body,
+                asset_path: None,
                 content_type: Some(content_type.clone()),
                 headers: HashMap::from([
                     ("content-type".to_string(), content_type),
@@ -912,7 +925,7 @@ async fn harbor_fetch_inner(
         }
     }
     let final_url = res.url().to_string();
-    let body = if let Some(max_bytes) = args.max_response_bytes {
+    let (body, asset_path) = if let Some(max_bytes) = args.max_response_bytes {
         if res.content_length().is_some_and(|size| size > max_bytes) {
             if let Some(hit) = cached_image.as_ref() {
                 if !hit.fresh {
@@ -951,14 +964,30 @@ async fn harbor_fetch_inner(
             }
         }
         if args.response_type.as_deref() == Some("base64") {
-            thumb_or_base64(&app, &args.url, args.thumb_width_px, &bytes, persistence).await
+            thumb_or_base64(
+                &app,
+                &args.url,
+                args.thumb_width_px,
+                bytes,
+                persistence,
+                return_asset,
+            )
+            .await?
         } else {
-            String::from_utf8_lossy(&bytes).into_owned()
+            (String::from_utf8_lossy(&bytes).into_owned(), None)
         }
     } else if args.response_type.as_deref() == Some("base64") {
         match res.bytes().await {
             Ok(bytes) => {
-                thumb_or_base64(&app, &args.url, args.thumb_width_px, &bytes, persistence).await
+                thumb_or_base64(
+                    &app,
+                    &args.url,
+                    args.thumb_width_px,
+                    bytes.to_vec(),
+                    persistence,
+                    return_asset,
+                )
+                .await?
             }
             Err(_) => {
                 if let Some(hit) = cached_image.as_ref() {
@@ -966,11 +995,11 @@ async fn harbor_fetch_inner(
                         return stale_image_response(&args.url, args.max_response_bytes, hit);
                     }
                 }
-                String::new()
+                (String::new(), None)
             }
         }
     } else {
-        res.text().await.unwrap_or_default()
+        (res.text().await.unwrap_or_default(), None)
     };
 
     if !retried && needs_source_login(&retry_args, status, content_type.as_deref()) {
@@ -1109,6 +1138,7 @@ async fn harbor_fetch_inner(
         status,
         ok,
         body,
+        asset_path,
         content_type,
         headers: response_headers,
         url: Some(final_url),
@@ -1151,6 +1181,7 @@ fn browser_text_response(
         status: browser.status,
         ok: (200..300).contains(&browser.status),
         body: browser.body,
+        asset_path: None,
         content_type: browser.content_type,
         headers,
         url: Some(url),
@@ -1478,6 +1509,7 @@ async fn harbor_upload_inner(args: HarborUploadArgs) -> Result<HarborFetchRespon
         status,
         ok,
         body,
+        asset_path: None,
         content_type,
         headers,
         url,
@@ -1698,6 +1730,7 @@ mod tests {
             thumb_width_px: None,
             cache_image: None,
             allow_image_challenge: None,
+            return_image_asset: None,
         };
         assert!(super::needs_source_login(&request, 401, Some("text/html")));
         assert!(!super::needs_source_login(&request, 200, Some("text/html")));

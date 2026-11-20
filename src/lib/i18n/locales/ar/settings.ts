@@ -4,8 +4,8 @@ const settings: Record<string, string> = {
   "Syncing display name…": "جارٍ مزامنة اسم العرض…",
   "Display name saved to your Harbor account.": "تم حفظ اسم العرض في حسابك في هاربور.",
   "Content advisory theme": "سمة التنبيه بالمحتوى",
-  "Choose whether the content advisory appears in full color or a restrained monochrome tone.":
-    "اختر ما إذا كان التنبيه بالمحتوى سيظهر بألوان كاملة أو بنمط أحادي اللون هادئ.",
+  "Choose whether the content advisory appears in full color or a restrained monochrome tone. Also affects the Content Advisory section on detail pages.":
+    "اختر ما إذا كان التنبيه بالمحتوى سيظهر بألوان كاملة أو بنمط أحادي اللون هادئ. يؤثر أيضاً على قسم التنبيه بالمحتوى في صفحات التفاصيل.",
   Monochrome: "أحادي اللون",
   "Press Enter or Space to type": "اضغط Enter أو Space للكتابة",
   "Text mode — Esc to exit": "وضع الكتابة — Esc للخروج",
@@ -651,8 +651,8 @@ const settings: Record<string, string> = {
   "Show Simkl Trending Today rail": "إظهار صف Simkl الرائج اليوم",
   "Show Simkl rails on Home": "إظهار صفوف Simkl في الصفحة الرئيسية",
   "Show Up Next on Simkl rail": 'إظهار "التالي" في صف Simkl',
-  "Show a Skip Intro / Skip Credits button when Harbor detects one. Turn this off to never show it. You can also tap the X on the button to dismiss a wrong one for the rest of the episode.":
-    "إظهار زر تخطّي المقدمة / تخطّي الشارة عندما يكتشف Harbor واحداً منها. عطّل هذا الخيار لعدم إظهاره أبداً. يمكنك أيضاً النقر على X على الزر لتجاهل زر خاطئ لبقية الحلقة.",
+  "Show a Skip Intro / Skip Credits button when Harbor detects one. Turn this off to never show it. The button hides itself when the intro or credits end, or after the delay below.":
+    "إظهار زر تخطّي المقدمة / تخطّي الشارة عندما يكتشف Harbor واحداً منها. عطّل هذا الخيار لعدم إظهاره أبداً. يُخفي الزر نفسه عند انتهاء المقدمة أو الشارة، أو بعد المهلة أدناه.",
   "Show a Skip button when a known injected ad plays, and a small report button on new releases so you can mark ads for review.":
     "إظهار زر تخطّي عند تشغيل إعلان مُدرَج معروف، وزر إبلاغ صغير على الإصدارات الجديدة لتتمكّن من وضع علامة على الإعلانات للمراجعة.",
   "Show a bookmark on saved titles": "إظهار إشارة مرجعية على العناوين المحفوظة",

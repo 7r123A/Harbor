@@ -147,6 +147,7 @@ const coverage: Record<string, string> = {
   "70s": "70-an",
   "70s Auteurs": "Sineas 70-an",
   "8 seconds": "8 detik",
+  "10 seconds": "10 detik",
   "8-0-4-1. Half the passes, kinder to weaker cards.":
     "8-0-4-1. Separuh jumlah lintasan, lebih ringan untuk kartu yang lebih lemah.",
   "8-character key": "Kunci 8 karakter",
@@ -767,6 +768,18 @@ const coverage: Record<string, string> = {
   "Increase the subtitle text size.": "Perbesar ukuran teks subtitle.",
   "Audio: {name}": "Audio: {name}",
   "Subtitle size: {size}": "Ukuran subtitle: {size}",
+  "Save to library": "Save to library",
+  "In library": "In library",
+  "In your library": "In your library",
+  'Right-click any title in Harbor or hit "Save to library" on its detail page to add it here.':
+    'Right-click any title in Harbor or hit "Save to library" on its detail page to add it here.',
+  "Add to all trackers": "Add to all trackers",
+  "Remove from all trackers": "Remove from all trackers",
+  "Remove from all trackers?": "Remove from all trackers?",
+  "This removes the title from every connected tracker. Simkl completed or watching titles stay unchanged; AniList and MyAnimeList list progress may be removed.":
+    "This removes the title from every connected tracker. Simkl completed or watching titles stay unchanged; AniList and MyAnimeList list progress may be removed.",
+  "Updated: {providers}.": "Updated: {providers}.",
+  "No changes were made.": "No changes were made.",
 };
 
 export default coverage;

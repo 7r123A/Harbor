@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  activeScopedProfileId as currentHarborProfileId,
+  activeProfileIsPrimary,
+} from "@/lib/active-profile-id";
+import { getRefractKey, refractEnabled, syncRefractWatchlist } from "@/lib/refract/client";
+import {
   addToWatchlist as traktAdd,
   removeFromWatchlist as traktRemove,
 } from "@/lib/trakt/watchlist";
@@ -452,6 +457,24 @@ export function removeFromWatchlistEntry(input: string | WatchlistInput): void {
   }
 }
 
+/** Capture the Refract account before Library removals perform async provider writes. */
+export function prepareRefractLibraryRemoval(input: WatchlistInput): () => void {
+  const key = getRefractKey();
+  if (!key || !refractEnabled() || !activeProfileIsPrimary()) return () => {};
+  const profile = currentHarborProfileId();
+  const isCurrent = () =>
+    getRefractKey() === key &&
+    refractEnabled() &&
+    activeProfileIsPrimary() &&
+    currentHarborProfileId() === profile;
+  return () => {
+    if (!isCurrent()) return;
+    void syncRefractWatchlist(key, input, false, () => {
+      if (!isCurrent()) throw new Error("The Refract account or profile changed.");
+    }).catch(() => {});
+  };
+}
+
 export function toggleWatchlist(input: string | WatchlistInput): boolean {
   const map = read();
   const id = typeof input === "string" ? input : input.id;
@@ -493,6 +516,20 @@ export function toggleWatchlist(input: string | WatchlistInput): boolean {
     void syncWithNuvio(input, !has);
   } else {
     void syncWithStremio(input, !has);
+  }
+  const refractKey = getRefractKey();
+  if (refractKey && refractEnabled() && activeProfileIsPrimary()) {
+    const profile = currentHarborProfileId();
+    const target = typeof input === "string" ? { id } : input;
+    void syncRefractWatchlist(refractKey, target, !has, () => {
+      if (
+        getRefractKey() !== refractKey ||
+        !refractEnabled() ||
+        !activeProfileIsPrimary() ||
+        currentHarborProfileId() !== profile
+      )
+        throw new Error("The Refract account or profile changed.");
+    }).catch(() => {});
   }
   return !has;
 }
