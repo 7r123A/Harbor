@@ -73,21 +73,28 @@ test("failed anime requests share an inflight request and back off", async () =>
   assert.equal(downloads, 1);
 });
 
-test("resume reads parse once while still observing restored data and removals", () => {
+test("resume reads parse each unchanged storage source only once while observing updates", () => {
   let raw = JSON.stringify({ movie: { ms: 123, t: 1 } });
+  const keysRead = new Set();
   const h = load("../src/lib/resume.ts", {
-    getItem: () => raw,
-    setItem: (_key, value) => {
+    getItem: (key) => {
+      keysRead.add(key);
+      return key === "harbor.resume" ? raw : null;
+    },
+    setItem: (key, value) => {
+      assert.equal(key, "harbor.resume");
       raw = value;
     },
   });
   for (let i = 0; i < 1000; i++) assert.equal(h.api.readResumeEntry("movie").ms, 123);
-  assert.equal(h.parses(), 1);
+  assert.deepEqual([...keysRead].sort(), ["harbor.profiles.v1", "harbor.resume"]);
+  assert.equal(h.parses(), 2, "one profile roster lookup and one resume parse for 1000 reads");
   raw = JSON.stringify({ movie: { ms: 456, t: 2 } });
   assert.equal(h.api.readResumeMs("movie"), 456);
   h.api.saveResumeMs("movie", 789);
   assert.equal(h.api.readResumeMs("movie"), 789);
-  assert.equal(h.parses(), 2);
+  assert.equal(h.parses(), 3, "only the changed resume value is reparsed");
   raw = null;
   assert.equal(h.api.readResumeEntry("movie"), null);
+  assert.equal(h.parses(), 3, "removing resume data does not reparse the profile roster");
 });

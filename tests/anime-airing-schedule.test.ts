@@ -103,7 +103,39 @@ test("season-zero specials keep their own airdate when regular S1E1 is reschedul
   assert.equal(episodes[1].airDate, new Date(E8 * 1000).toISOString());
 });
 
-test("anime detail's Kitsu airdate rewrite also excludes specials", () => {
+test("anime detail's real airing rewrite preserves mapped S0 specials with native season 1", async () => {
+  // Exercise the actual private detail-page implementation, not a duplicate
+  // test helper: episode.number can coincide for S0E2 and regular S1E2.
   const detail = readFileSync("src/lib/providers/anime-detail.ts", "utf8");
-  assert.match(detail, /if \(!Number\.isInteger\(episode\.seasonNumber\) \|\| episode\.seasonNumber <= 0\) continue;/);
+  const start = detail.indexOf("async function applyAnilistAiringDates(");
+  const end = detail.indexOf("\nasync function loadAnimeDetails(", start);
+  assert.ok(start >= 0 && end > start, "detail-page airing updater found");
+  const compiled = ts.transpileModule(detail.slice(start, end), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const updater = new Function(
+    "kitsuToAnilist", "fetchAnilistAiringSchedule",
+    `${compiled}\nreturn applyAnilistAiringDates;`,
+  )(
+    async () => 1234,
+    async () => ({ 2: E9 }),
+  ) as (episodes: Array<{
+    number: number;
+    seasonNumber: number;
+    imdbSeason?: number;
+    airdate: string;
+  }>, kitsuId: number) => Promise<void>;
+  const originalSpecialDate = "2999-01-02T03:04:05.000Z";
+  const episodes = [
+    { number: 2, seasonNumber: 1, imdbSeason: 0, airdate: originalSpecialDate },
+    { number: 2, seasonNumber: 0, imdbSeason: 0, airdate: originalSpecialDate },
+    { number: 2, seasonNumber: 1, imdbSeason: 1, airdate: "2999-02-01T00:00:00.000Z" },
+  ];
+  await updater(episodes, 50024);
+  assert.equal(episodes[0].airdate, originalSpecialDate,
+    "a mapped special retains its airdate even with native seasonNumber 1");
+  assert.equal(episodes[1].airdate, originalSpecialDate,
+    "native season-zero specials remain untouched");
+  assert.equal(episodes[2].airdate, new Date(E9 * 1000).toISOString(),
+    "regular episodes still receive the scheduled AniList date");
 });
