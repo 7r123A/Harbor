@@ -1,4 +1,4 @@
-import type { LibraryItem } from "@/lib/stremio";
+import { CW_FINISHED_RATIO, type LibraryItem } from "@/lib/stremio";
 
 // Only verified display decisions are persisted. Never cache a grouped card's
 // ownership, provider playback IDs, dismissals, or arbitrary metadata here.
@@ -50,6 +50,15 @@ export type CwRestoredDisplay = {
 };
 
 type Store = Pick<Storage, "getItem" | "setItem">;
+
+function canCacheDisplay(item: LibraryItem): boolean {
+  if (item.type !== "series") return true;
+  const offset = item.state?.timeOffset ?? 0;
+  const duration = item.state?.duration ?? 0;
+  // A paused episode needs current watched-state evidence before it can advance
+  // or disappear. A snapshot only fingerprints the pause itself.
+  return offset <= 0 || (duration > 0 && offset / duration >= CW_FINISHED_RATIO);
+}
 
 function storage(): Store | null {
   try {
@@ -193,6 +202,7 @@ export function saveCwDisplaySnapshot(
   if (items.length === 0 && !options.library?.length) return;
   const decisions: SavedDecision[] = [];
   for (const item of items) {
+    if (!canCacheDisplay(item)) continue;
     const fingerprint = cwDisplayInputFingerprint(item);
     if (removed.has(item._id)) {
       decisions.push({ id: item._id, fingerprint, kind: "remove" });
@@ -242,12 +252,14 @@ export function saveCwDisplaySnapshot(
         previous.savedAt <= now &&
         Array.isArray(previous.decisions)
       ) {
-        const present = new Set(items.map((item) => item._id));
+        const present = new Map(items.map((item) => [item._id, item]));
         const retained = new Set(decisions.map((decision) => decision.id));
         for (const decision of previous.decisions.slice(0, MAX_ITEMS)) {
           if (decisions.length >= MAX_ITEMS) break;
           if (!decision || typeof decision.id !== "string" || retained.has(decision.id)) continue;
-          if (present.has(decision.id) && !options.unresolvedIds?.has(decision.id)) continue;
+          const input = present.get(decision.id);
+          if (input && (!canCacheDisplay(input) || !options.unresolvedIds?.has(decision.id)))
+            continue;
           if (
             decision.kind !== "remove" &&
             (decision.kind !== "advance" || !validDisplay(decision.display))
@@ -270,7 +282,13 @@ export function saveCwDisplaySnapshot(
     const byId = new Map(options.library.map((item) => [item._id, item]));
     for (const output of options.extra.slice(0, MAX_ITEMS)) {
       const source = byId.get(output._id);
-      if (!source?.state || present.has(output._id) || output.upNext !== true) continue;
+      if (
+        !source?.state ||
+        !canCacheDisplay(source) ||
+        present.has(output._id) ||
+        output.upNext !== true
+      )
+        continue;
       if (!output.state || output.state.timeOffset !== 0 || output.waitingForAir) continue;
       const season = output.state.season;
       const episode = output.state.episode;
@@ -345,7 +363,12 @@ export function restoreCwDisplaySnapshot(
       )
         continue;
       const input = eligible.get(decision.id);
-      if (!input?.state || cwDisplayInputFingerprint(input) !== decision.fingerprint) continue;
+      if (
+        !input?.state ||
+        !canCacheDisplay(input) ||
+        cwDisplayInputFingerprint(input) !== decision.fingerprint
+      )
+        continue;
       if (decision.kind === "remove") {
         const verifiedAt = decision.verifiedAt ?? saved.savedAt;
         if (Number.isFinite(verifiedAt) && verifiedAt <= now && now - verifiedAt <= REMOVE_TTL_MS) {
@@ -376,7 +399,12 @@ export function restoreCwDisplaySnapshot(
         if (typeof extra?.id !== "string" || typeof extra.fingerprint !== "string") continue;
         if (eligible.has(extra.id) || !validDisplay(extra.display)) continue;
         const input = byId.get(extra.id);
-        if (!input?.state || cwDisplayInputFingerprint(input) !== extra.fingerprint) continue;
+        if (
+          !input?.state ||
+          !canCacheDisplay(input) ||
+          cwDisplayInputFingerprint(input) !== extra.fingerprint
+        )
+          continue;
         if (extra.display.waitingForAir) continue;
         const date = extra.display.nextAirDate ? Date.parse(extra.display.nextAirDate) : NaN;
         if (Number.isFinite(date) && date > now) continue;

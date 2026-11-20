@@ -830,7 +830,7 @@ test("a finished temporary JoJo source advances to E8 without showing its alread
   assert.equal(out[0].upNext, true);
 });
 
-test("Phase 4C restores a verified up-next card before the live provider request finishes", async () => {
+test("a paused episode waits for live completion evidence before advancing", async () => {
   const storage = new Map<string, string>();
   const initial = harness(storage);
   initial.setRemote(progress([1, 2, 3]));
@@ -839,7 +839,6 @@ test("Phase 4C restores a verified up-next card before the live provider request
   const [settled] = await initial.flush();
   assert.equal(settled?.state?.episode, 4);
   assert.equal(settled?.upNext, true);
-  assert.ok(storage.size > 0, "the completed pass did not persist a display decision");
 
   const reopened = harness(storage);
   reopened.setRemote(progress([1, 2, 3]));
@@ -847,8 +846,8 @@ test("Phase 4C restores a verified up-next card before the live provider request
   reopened.setGate(new Promise<void>((resolve) => (release = resolve)));
   try {
     const immediately = reopened.render([{ ...source }], "", true, []);
-    assert.equal(immediately[0]?.state?.episode, 4, "reopened Home showed a stale episode");
-    assert.equal(immediately[0]?.upNext, true);
+    assert.equal(immediately[0]?.state?.episode, 1);
+    assert.equal(immediately[0]?.upNext, undefined);
   } finally {
     release();
   }
@@ -1047,7 +1046,7 @@ test("Phase 4C restores a proven resurfaced next-up card before its recheck", as
 
 test("Phase 4C keeps a validated snapshot through an empty startup hydration pass", async () => {
   const storage = new Map<string, string>();
-  const source = item(1);
+  const source = anchor(1);
   const initial = harness(storage);
   initial.setRemote(progress([1, 2, 3]));
   initial.render([source], "", true, []);

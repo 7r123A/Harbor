@@ -5,6 +5,7 @@ import test from "node:test";
 import type { LibraryItem } from "../src/lib/stremio.ts";
 import { providerMappedEpisode } from "../src/lib/cw-anime-episode.ts";
 import {
+  cwDisplayInputFingerprint,
   cwDisplayOwnerKey,
   restoreCwDisplaySnapshot,
   saveCwDisplaySnapshot,
@@ -81,6 +82,33 @@ test("restores verified next episode without restoring source or dismissal owner
   const payload = [...s.data.values()][0];
   assert.doesNotMatch(payload, /playback-1|Fixture Show|account-a/);
 });
+
+for (const external of ["simkl", "trakt", "publicmetadb", undefined] as const) {
+  test(`a stale snapshot cannot replace JoJo's paused episode (${external ?? "local"})`, () => {
+    const s = store();
+    const input = { ...item("kitsu:7158"), external, local: external === undefined };
+    const paused = { ...input, state: { ...input.state!, timeOffset: 150480 } };
+    const next = advanced(input);
+    const options = { store: s, now: start };
+
+    saveCwDisplaySnapshot(owner, [input], new Map([[input._id, next]]), new Set(), options);
+    const [key, json] = [...s.data.entries()][0]!;
+    const legacy = JSON.parse(json);
+    const decision = legacy.decisions[0];
+    decision.fingerprint = cwDisplayInputFingerprint(paused);
+    decision.display.episode = 8;
+    decision.display.videoId = "kitsu:7158:8";
+    s.setItem(key, JSON.stringify(legacy));
+
+    assert.equal(restoreCwDisplaySnapshot(owner, [paused], options).advanced.size, 0);
+    legacy.decisions = [{ ...decision, kind: "remove" }];
+    s.setItem(key, JSON.stringify(legacy));
+    assert.equal(restoreCwDisplaySnapshot(owner, [paused], options).removed.size, 0);
+
+    saveCwDisplaySnapshot(owner, [paused], new Map([[input._id, next]]), new Set(), options);
+    assert.deepEqual(JSON.parse(s.getItem(key)!).decisions, []);
+  });
+}
 
 test("verified Black Clover E4 replays provider S2 without rewriting playback coordinates", () => {
   const s = store();
