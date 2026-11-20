@@ -4,7 +4,7 @@ import { addonLogoMap } from "@/components/addon-logo";
 import { HostSourceBanner } from "@/components/host-source-banner";
 import { HoverTooltip } from "@/components/hover-tooltip";
 import { fetchInstalledAddons } from "@/lib/addon-store";
-import { userAddons, type Addon } from "@/lib/addons";
+import { cachedUserAddons, type Addon } from "@/lib/addons";
 import { isNuvioSignedIn, isNuvioProviderActive } from "@/lib/nuvio/nuvio-client";
 import { fetchNuvioAddons } from "@/lib/nuvio/nuvio-sync";
 import { useAuth, resolveEffectiveStremioAuthKey } from "@/lib/auth";
@@ -145,7 +145,7 @@ export function StreamSwitcher({
       const effectiveAuthKey = resolveEffectiveStremioAuthKey(authKey);
       const stremio =
         shouldStremio && effectiveAuthKey
-          ? await userAddons(effectiveAuthKey).catch(() => [] as Addon[])
+          ? await cachedUserAddons(effectiveAuthKey).catch(() => [] as Addon[])
           : [];
       const nuvio = shouldNuvio ? await fetchNuvioAddons().catch(() => [] as Addon[]) : [];
       const plugins = runnableStreamPlugins();
