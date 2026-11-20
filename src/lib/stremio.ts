@@ -91,12 +91,14 @@ export function episodeFromVideoId(
 
 /**
  * The episode a Continue Watching card actually represents. Complete state
- * coordinates win, including season zero for Specials; native anime stream ids
- * are entry-relative, never a season; nothing is invented when coordinates are
- * incomplete or malformed.
+ * coordinates win, including season zero for Specials. An exact local source
+ * checkpoint can prove a merged library's 0:0 is only a watched-sync placeholder.
+ * Native anime stream ids are entry-relative, never a season; nothing is
+ * invented when coordinates are incomplete or malformed.
  */
 export function resolvedEpisodeCoords(
-  item: Pick<LibraryItem, "_id" | "state"> & Partial<Pick<LibraryItem, "removed" | "temp">>,
+  item: Pick<LibraryItem, "_id" | "state"> &
+    Partial<Pick<LibraryItem, "removed" | "temp" | "cwMembers">>,
 ): { season: number; episode: number } | null {
   const season = item.state?.season;
   const episode = item.state?.episode;
@@ -113,14 +115,29 @@ export function resolvedEpisodeCoords(
     // playback video still identifies an episode. This is not a Season 0
     // special: only replace the double-zero placeholder when the video id
     // belongs to this exact record and names a real episode.
-    if (season === 0 && episode === 0 && item.removed === true && item.temp === true) {
+    if (season === 0 && episode === 0) {
       const encoded = episodeFromVideoId(videoId);
       if (
         encoded &&
         encoded.episode > 0 &&
         videoId === `${item._id}:${encoded.season}:${encoded.episode}`
       ) {
-        return encoded;
+        if (item.removed === true && item.temp === true) return encoded;
+        // An ordinary library row can keep 0:0 after Stremio marks an episode
+        // watched, even though the same merged CW card retains its actual local
+        // S3E1 checkpoint. Trust this only with independent local evidence;
+        // the video id alone must never turn a genuine S0 special into S3.
+        if (
+          encoded.season >= 1 &&
+          item.cwMembers?.some((member) =>
+            member.local === true &&
+            member._id === item._id &&
+            member.state?.video_id === videoId &&
+            member.state.season === encoded.season &&
+            member.state.episode === encoded.episode &&
+            (member.state.timeOffset ?? 0) > 0
+          )
+        ) return encoded;
       }
     }
     return { season, episode };

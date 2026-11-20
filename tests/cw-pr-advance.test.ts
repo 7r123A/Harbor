@@ -1073,3 +1073,36 @@ test("Phase 4C keeps a validated snapshot through an empty startup hydration pas
   const [confirmed] = await reopened.flush();
   assert.equal(confirmed?.state?.episode, 4);
 });
+
+test("Rings of Power S3E1 completed under a library 0:0 placeholder advances to aired S3E2", async () => {
+  const h = harness();
+  const id = "tt7631058";
+  h.setRemote(progress([], id));
+  h.setEpisodes([
+    { season: 3, episode: 1, airDate: "2026-11-11" },
+    { season: 3, episode: 2, airDate: "2026-11-11" },
+    { season: 3, episode: 3, airDate: "2026-11-11" },
+  ]);
+  const library = {
+    ...item(1, iso(-120_000), id),
+    name: "The Lord of the Rings: The Rings of Power",
+    state: {
+      ...item(1, iso(-120_000), id).state,
+      season: 0, episode: 0,
+      video_id: `${id}:3:1`, timeOffset: 4_410_208,
+      duration: 4_413_504, flaggedWatched: 1,
+    },
+  };
+  const local = {
+    ...library, local: true,
+    state: { ...library.state, season: 3, episode: 1 },
+  };
+  const merged = { ...library, cwMembers: [library, local] };
+  h.render([merged], "", true, [merged, local]);
+  const out = await h.flush();
+  assert.equal(out.length, 1, "the completed series must still have a real next-up card");
+  assert.equal(out[0].state.season, 3);
+  assert.equal(out[0].state.episode, 2);
+  assert.equal(out[0].upNext, true);
+  assert.equal(out[0].state.timeOffset, 0);
+});
