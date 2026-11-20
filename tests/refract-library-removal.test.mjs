@@ -16,6 +16,7 @@ function harness() {
   const module = { exports: {} };
   const mocks = {
     react: {},
+    "@/lib/nuvio/nuvio-sync": { isNuvioProviderActive: () => false },
     "@/lib/active-profile-id": {
       activeScopedProfileId: () => profile,
       activeProfileIsPrimary: () => primary,
@@ -25,7 +26,7 @@ function harness() {
       refractEnabled: () => enabled,
       syncRefractWatchlist: async (account, input, on, assertCurrent) => {
         assertCurrent();
-        await Promise.resolve(); // Simulate asynchronous Refract lookup.
+        await Promise.resolve();
         assertCurrent();
         writes.push({ account, input, on });
       },
@@ -39,10 +40,18 @@ function harness() {
   return {
     prepare: module.exports.prepareRefractLibraryRemoval,
     writes,
-    setKey: (value) => { key = value; },
-    setProfile: (value) => { profile = value; },
-    setPrimary: (value) => { primary = value; },
-    setEnabled: (value) => { enabled = value; },
+    setKey: (value) => {
+      key = value;
+    },
+    setProfile: (value) => {
+      profile = value;
+    },
+    setPrimary: (value) => {
+      primary = value;
+    },
+    setEnabled: (value) => {
+      enabled = value;
+    },
   };
 }
 
@@ -53,11 +62,13 @@ test("Library removal syncs Refract Plan to Watch removal with the captured acco
   const finish = h.prepare({ id: "tmdb:movie:55", type: "movie", imdbId: "tt55" });
   finish();
   await tick();
-  assert.deepEqual(h.writes, [{
-    account: "rfk_original",
-    input: { id: "tmdb:movie:55", type: "movie", imdbId: "tt55" },
-    on: false,
-  }]);
+  assert.deepEqual(h.writes, [
+    {
+      account: "rfk_original",
+      input: { id: "tmdb:movie:55", type: "movie", imdbId: "tt55" },
+      on: false,
+    },
+  ]);
 });
 
 test("Library removal cannot send to a replacement Refract account or profile", async () => {
@@ -96,13 +107,16 @@ test("Library removal revalidates the account during an asynchronous lookup", as
   assert.equal(h.writes.length, 0);
 });
 
-test("Library Stremio, Nuvio and local removal actions all dispatch the captured Refract removal", () => {
+test("Library Stremio, Nuvio and local removals all dispatch the captured Refract removal", () => {
   const source = readFileSync(
     new URL("../src/views/library/watchlist-tab.tsx", import.meta.url),
     "utf8",
   );
-  const remove = source.slice(source.indexOf("const handleRemove ="), source.indexOf("const handleRemoveLocal"));
-  const local = source.slice(source.indexOf("const handleRemoveLocal"), source.indexOf("useEffect(() => {", source.indexOf("const handleRemoveLocal")));
+  const removeStart = source.indexOf("const handleRemove =");
+  const localStart = source.indexOf("const handleRemoveLocal");
+  const localEnd = source.indexOf("useEffect(() => {", localStart);
+  const remove = source.slice(removeStart, localStart);
+  const local = source.slice(localStart, localEnd);
   assert.equal(
     (remove.match(/prepareRefractLibraryRemoval\(/g) || []).length,
     2,
