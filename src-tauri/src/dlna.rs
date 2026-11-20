@@ -449,7 +449,6 @@ fn ssdp_find_uuid(uuid: &str, timeout_ms: u64) -> Vec<String> {
         let _ = s.set_multicast_ttl_v4(4);
     }
     let targets = [format!("uuid:{uuid}"), "urn:schemas-upnp-org:service:AVTransport:1".to_string()];
-    let needle = uuid.to_ascii_lowercase();
     let deadline = Instant::now() + Duration::from_millis(timeout_ms);
     let mut next_send = Instant::now();
     let mut found: Vec<String> = Vec::new();
@@ -465,20 +464,30 @@ fn ssdp_find_uuid(uuid: &str, timeout_ms: u64) -> Vec<String> {
             next_send = Instant::now() + Duration::from_millis(700);
         }
         for s in &sockets {
-            if let Ok((n, _)) = s.recv_from(&mut buf) {
-                let resp = String::from_utf8_lossy(&buf[..n]);
-                let usn = extract_header(&resp, "usn").unwrap_or_default().to_ascii_lowercase();
-                if usn.contains(&needle) {
-                    if let Some(loc) = extract_header(&resp, "location") {
-                        if !found.contains(&loc) {
-                            found.push(loc);
-                        }
+            if let Ok((n, from)) = s.recv_from(&mut buf) {
+                if let Some(loc) = matching_location(&String::from_utf8_lossy(&buf[..n]), uuid, from.ip()) {
+                    if !found.contains(&loc) {
+                        found.push(loc);
                     }
                 }
             }
         }
     }
     found
+}
+
+/// The description URL in an SSDP reply from the renderer `uuid`, when the reply names exactly that
+/// UUID and points at the host that sent it. Any machine on the network can answer an M-SEARCH, so
+/// a reply that names another host (or only contains the UUID inside a longer one) is ignored
+/// rather than fetched.
+fn matching_location(reply: &str, uuid: &str, sender: IpAddr) -> Option<String> {
+    let usn = extract_header(reply, "usn")?;
+    if !parse_uuid_from_usn(&usn)?.eq_ignore_ascii_case(uuid) {
+        return None;
+    }
+    let location = extract_header(reply, "location")?;
+    let host = reqwest::Url::parse(&location).ok()?.host_str()?.trim_matches(['[', ']']).parse::<IpAddr>().ok()?;
+    (host == sender).then_some(location)
 }
 
 fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
@@ -913,5 +922,34 @@ mod music_metadata_tests {
         let video = build_didl("http://192.0.2.1/movie.mp4", "Movie", "video/mp4", false, DlnaVendor::SonyBravia);
         assert!(video.contains("object.item.videoItem"));
         assert!(video.contains("DLNA.ORG_PN=AVC_MP4_MP_HD_AC3;"));
+    }
+}
+
+#[cfg(test)]
+mod rediscovery_tests {
+    use super::matching_location;
+    use std::net::IpAddr;
+
+    fn reply(usn: &str, location: &str) -> String {
+        format!("HTTP/1.1 200 OK\r\nST: urn:schemas-upnp-org:service:AVTransport:1\r\nUSN: {usn}\r\nLOCATION: {location}\r\n\r\n")
+    }
+
+    #[test]
+    fn only_the_renderer_itself_can_answer_for_its_uuid() {
+        let tv: IpAddr = "192.168.1.15".parse().unwrap();
+        let uuid = "6a52b7dd-db6a-400c-656d-c4faa865b5e1";
+        let usn = format!("uuid:{uuid}::urn:schemas-upnp-org:service:AVTransport:1");
+        assert_eq!(
+            matching_location(&reply(&usn, "http://192.168.1.15:49152/description.xml"), uuid, tv),
+            Some("http://192.168.1.15:49152/description.xml".into())
+        );
+        assert!(matching_location(&reply(&usn.to_uppercase(), "http://192.168.1.15:1/d.xml"), uuid, tv).is_some(), "UUIDs compare without case");
+        // Another machine answering for the TV, or pointing Harbor somewhere else, is ignored.
+        assert_eq!(matching_location(&reply(&usn, "http://192.168.1.15:49152/d.xml"), uuid, "192.168.1.66".parse().unwrap()), None);
+        assert_eq!(matching_location(&reply(&usn, "http://127.0.0.1:8080/admin"), uuid, tv), None);
+        assert_eq!(matching_location(&reply(&usn, "http://example.com/d.xml"), uuid, tv), None);
+        // A longer UUID that merely contains this one is a different device.
+        let longer = format!("uuid:x{uuid}0::urn:schemas-upnp-org:device:MediaRenderer:1");
+        assert_eq!(matching_location(&reply(&longer, "http://192.168.1.15:1/d.xml"), uuid, tv), None);
     }
 }

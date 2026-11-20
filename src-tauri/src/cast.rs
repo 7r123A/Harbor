@@ -919,9 +919,10 @@ async fn start_converted(
         converted: true,
     };
     let info = CastLoadInfo { stream: if reload.hls { "hls".into() } else { "ts".into() }, summary: Some(summary) };
-    let loaded: Result<ActiveSession, String> = match reload.kind.as_str() {
-        "dlna" => {
-            let cu = control_url.ok_or_else(|| "DLNA device missing control_url".to_string())?;
+    let loaded: Result<ActiveSession, String> = match (reload.kind.as_str(), control_url) {
+        // Errors past this point stop the conversion just registered (below), so none returns early.
+        ("dlna" | "roku", None) => Err(format!("{} device missing its control URL", reload.kind)),
+        ("dlna", Some(cu)) => {
             let mime = reload.hls.then(|| "application/vnd.apple.mpegurl".to_string());
             let mut result = dlna::load(cu.clone(), registered.url.clone(), reload.title.clone(), Some(start), mime.clone(), true)
                 .await
@@ -939,13 +940,12 @@ async fn start_converted(
             }
             result.map(|cu| ActiveSession::Dlna { control_url: cu, hls_session_id: Some(stream_id.clone()), extra })
         }
-        "roku" => {
-            let ecp = control_url.ok_or_else(|| "Roku device missing ecp_base".to_string())?;
+        ("roku", Some(ecp)) => {
             roku::load(ecp.clone(), registered.url.clone(), reload.title.clone(), Some("application/x-mpegURL".into()), None)
                 .await
                 .map(|_| ActiveSession::Roku { ecp_base: ecp, hls_session_id: Some(stream_id.clone()), extra })
         }
-        "airplay" => airplay::load(reload.host.clone(), reload.port, registered.url.clone(), None)
+        ("airplay", _) => airplay::load(reload.host.clone(), reload.port, registered.url.clone(), None)
             .await
             .map(|_| ActiveSession::AirPlay {
                 host: reload.host.clone(),
@@ -1091,6 +1091,7 @@ async fn cast_load_chromecast(
     let title_clone = title.clone();
     let poster_clone = poster.clone();
     let start = start_time_sec.unwrap_or(0.0);
+    let offset = receiver_clock_offset(&stream_url, start);
     let (result_tx, result_rx) =
         tokio::sync::oneshot::channel::<Result<(String, String, Option<i32>), String>>();
 
@@ -1206,10 +1207,22 @@ async fn cast_load_chromecast(
         transport_id,
         session_id,
         media_session_id: msid,
-        seek_start_sec: start,
+        seek_start_sec: offset,
         hls_session_id,
         extra,
     })
+}
+
+/// Film time at which a Chromecast's own clock reads zero. Harbor's converted HLS stream begins at
+/// the start position, so its clock is offset by it. A stream loaded with `currentTime` (a direct
+/// file) already reports film time, and adding the start again doubled the position (a resume at
+/// 10:00 showed 20:00). Other playlists are loaded from their beginning.
+fn receiver_clock_offset(stream_url: &str, start: f64) -> f64 {
+    if stream_url.to_ascii_lowercase().contains("/cast/hls/") {
+        start
+    } else {
+        0.0
+    }
 }
 
 fn snapshot_chromecast() -> Result<(String, u16, String, Option<i32>, f64), String> {
@@ -1651,6 +1664,15 @@ mod pause_state_tests {
         assert!(state_is_paused(Some("paused")));
         assert!(!state_is_paused(Some("PLAYING")));
         assert!(!state_is_paused(None));
+    }
+
+    #[test]
+    fn a_chromecast_position_counts_the_start_once() {
+        // Harbor's converted stream begins at the start position: the receiver's clock is offset.
+        assert_eq!(receiver_clock_offset("http://192.168.1.7:5000/cast/hls/abc/master.m3u8", 600.0), 600.0);
+        // A direct file is loaded at currentTime=600 and reports film time itself.
+        assert_eq!(receiver_clock_offset("http://192.168.1.7:5000/s/abc", 600.0), 0.0);
+        assert_eq!(receiver_clock_offset("https://cdn.example/film.mp4", 600.0), 0.0);
     }
 }
 

@@ -193,9 +193,10 @@ pub fn http_input_args(url: &str, headers: &HashMap<String, String>, reconnect: 
         return Vec::new();
     }
     let mut args = Vec::new();
+    // A line break inside a value would start a header of its own in FFmpeg's request.
     let ua = headers
         .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("user-agent"))
+        .find(|(k, v)| k.eq_ignore_ascii_case("user-agent") && !v.contains(['\r', '\n']))
         .map(|(_, v)| v.clone())
         .unwrap_or_else(|| "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Harbor/1.0".into());
     args.push("-user_agent".into());
@@ -1323,6 +1324,19 @@ mod tests {
         assert!(!args.contains("-user_agent") && !args.contains("-reconnect"), "{args}");
         assert!(args.ends_with("-noaccurate_seek -ss 754.200 -i C:/Films/movie.mp4"), "{args}");
         assert_eq!(http_input_args("https://a/b.mkv", &HashMap::new(), true)[0], "-user_agent");
+    }
+
+    #[test]
+    fn header_values_cannot_add_lines_to_ffmpeg_requests() {
+        let headers = HashMap::from([
+            ("User-Agent".to_string(), "x\r\nX-Evil: 1".to_string()),
+            ("Referer".to_string(), "https://site/\r\nCookie: stolen".to_string()),
+            ("Origin".to_string(), "https://site".to_string()),
+        ]);
+        let args = http_input_args("https://a/b.mkv", &headers, false);
+        assert!(args.iter().all(|a| !a.contains("X-Evil") && !a.contains("Cookie")), "{args:?}");
+        assert!(args.contains(&"Origin: https://site\r\n".to_string()), "{args:?}");
+        assert!(args[1].starts_with("Mozilla/5.0"), "the default agent replaces a broken one: {args:?}");
     }
 
     #[test]

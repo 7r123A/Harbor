@@ -258,6 +258,20 @@ fn sniff_format(url: &str, content_type: Option<&str>, declared: Option<&str>) -
     "srt".to_string()
 }
 
+/// A film's subtitle file is a few hundred KB. Anything bigger than this, downloaded or unpacked,
+/// is not a subtitle, and reading it whole could exhaust memory.
+const MAX_SUBTITLE_BYTES: usize = 20 * 1024 * 1024;
+
+/// Unpacks a gzip-compressed subtitle, refusing one that grows past [`MAX_SUBTITLE_BYTES`].
+fn gunzip_limited(raw: &[u8]) -> Option<Vec<u8>> {
+    let mut decoded = Vec::new();
+    flate2::read::GzDecoder::new(raw)
+        .take(MAX_SUBTITLE_BYTES as u64 + 1)
+        .read_to_end(&mut decoded)
+        .ok()?;
+    (decoded.len() <= MAX_SUBTITLE_BYTES).then_some(decoded)
+}
+
 async fn download_remote(url: &str, declared_format: Option<&str>, encoding: &str, dir: &Path) -> Option<PathBuf> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
@@ -283,14 +297,23 @@ async fn download_remote(url: &str, declared_format: Option<&str>, encoding: &st
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_lowercase());
     let fmt = sniff_format(url, ct.as_deref(), declared_format);
-    let raw = res.bytes().await.ok()?;
+    if res.content_length().is_some_and(|len| len > MAX_SUBTITLE_BYTES as u64) {
+        eprintln!("[harbor::cast-subs] subtitle download refused: larger than {MAX_SUBTITLE_BYTES} bytes");
+        return None;
+    }
+    let mut res = res;
+    let mut raw: Vec<u8> = Vec::new();
+    while let Some(chunk) = res.chunk().await.ok()? {
+        if raw.len() + chunk.len() > MAX_SUBTITLE_BYTES {
+            eprintln!("[harbor::cast-subs] subtitle download stopped: larger than {MAX_SUBTITLE_BYTES} bytes");
+            return None;
+        }
+        raw.extend_from_slice(&chunk);
+    }
     let bytes: Vec<u8> = if raw.len() >= 2 && raw[0] == 0x1f && raw[1] == 0x8b {
-        let mut decoder = flate2::read::GzDecoder::new(&raw[..]);
-        let mut decoded = Vec::with_capacity(raw.len() * 4);
-        decoder.read_to_end(&mut decoded).ok()?;
-        decoded
+        gunzip_limited(&raw)?
     } else {
-        raw.to_vec()
+        raw
     };
     let raw_path = dir.join(format!("{}.{}", Uuid::new_v4(), fmt));
     std::fs::write(&raw_path, &bytes).ok()?;
@@ -491,6 +514,22 @@ mod encoding_tests {
         std::fs::write(&marked, [&[0xEF, 0xBB, 0xBF][..], text.as_bytes()].concat()).unwrap();
         assert_eq!(ensure_utf8(&marked, "auto", &dir), marked);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_gzip_bomb_is_refused_but_a_real_subtitle_unpacks() {
+        use std::io::Write;
+        let pack = |data: &[u8]| {
+            let mut e = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+            e.write_all(data).unwrap();
+            e.finish().unwrap()
+        };
+        let srt = b"1\r\n00:00:01,000 --> 00:00:02,000\r\nHello\r\n".to_vec();
+        assert_eq!(gunzip_limited(&pack(&srt)), Some(srt));
+        // 40 MB of zeros packs into a few dozen KB; unpacking it stops at the limit.
+        let bomb = pack(&vec![0u8; 40 * 1024 * 1024]);
+        assert!(bomb.len() < 200_000);
+        assert_eq!(gunzip_limited(&bomb), None);
     }
 
     #[test]
