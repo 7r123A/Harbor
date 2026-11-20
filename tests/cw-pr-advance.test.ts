@@ -185,6 +185,9 @@ function harness(persistentStorage = new Map<string, string>()) {
       animeCwIdsVersion: () => 0,
       subscribeAnimeCwIds: () => () => {},
     },
+    // The hook's optional airing lookup is independent of episode
+    // advancement; keep these suites offline and test airing separately.
+    "@/lib/anilist/cw-next-airing": { fetchCwNextAiring: async () => null },
     "@/lib/cw-anime-identity": {
       cwAnimeIdentityKey: () => null,
       cwWarmIdentityKey: (item: any) => JSON.stringify(item),
@@ -252,6 +255,7 @@ function harness(persistentStorage = new Map<string, string>()) {
   const load = (name: string): any => {
     if (name in mocks) return mocks[name];
     if (name === "./anime-detect") return mocks["@/lib/anime-detect"];
+    if (name === "@/lib/cw-derived-caches") return { cwCacheOwnerKey: () => "test-owner" };
     assert.ok(name.startsWith("@/"), `unexpected import ${name}`);
     if (!modules.has(name))
       modules.set(
@@ -466,11 +470,16 @@ test("finished Psycho-Pass 2 is not shown as a resume while its final episode is
   let release: () => void = () => {};
   h.setGate(new Promise<void>((resolve) => (release = resolve)));
   try {
-    assert.deepEqual(h.render([source], "", true, []), [],
-      "the finished S2 E11 source flashed as a 0m-left resume before metadata resolved");
+    assert.deepEqual(
+      h.render([source], "", true, []),
+      [],
+      "the finished S2 E11 source flashed as a 0m-left resume before metadata resolved",
+    );
     await new Promise((resolve) => setImmediate(resolve));
-    assert.ok(h.readIds.includes(source._id),
-      "hiding a completed checkpoint must not prevent checking for the next episode");
+    assert.ok(
+      h.readIds.includes(source._id),
+      "hiding a completed checkpoint must not prevent checking for the next episode",
+    );
   } finally {
     release();
   }
@@ -481,15 +490,22 @@ test("completed sources are hidden while pending, then yield their verified next
   const h = harness();
   const source = {
     ...item(1, iso(-3600000), "ttPsychoNext"),
-    state: { ...item(1, iso(-3600000), "ttPsychoNext").state,
-      timeOffset: 1_316_899, duration: 1_341_385, flaggedWatched: 1 },
+    state: {
+      ...item(1, iso(-3600000), "ttPsychoNext").state,
+      timeOffset: 1_316_899,
+      duration: 1_341_385,
+      flaggedWatched: 1,
+    },
   };
   h.setEpisodes([1, 2].map((episode) => ({ season: 1, episode, airDate: "2020-01-01" })));
   let release: () => void = () => {};
   h.setGate(new Promise<void>((resolve) => (release = resolve)));
   try {
-    assert.deepEqual(h.render([source], "", true, []), [],
-      "a completed source was shown before its successor was verified");
+    assert.deepEqual(
+      h.render([source], "", true, []),
+      [],
+      "a completed source was shown before its successor was verified",
+    );
   } finally {
     release();
   }
@@ -503,16 +519,25 @@ test("in-progress and manually unwatched checkpoints remain visible without meta
   const h = harness();
   const id = "ttPsychoManual";
   const partial = item(1, iso(-3600000), id);
-  const finished = { ...partial, state: {
-    ...partial.state, timeOffset: 1_316_899, duration: 1_341_385, flaggedWatched: 1,
-  } };
+  const finished = {
+    ...partial,
+    state: {
+      ...partial.state,
+      timeOffset: 1_316_899,
+      duration: 1_341_385,
+      flaggedWatched: 1,
+    },
+  };
   let release: () => void = () => {};
   h.setGate(new Promise<void>((resolve) => (release = resolve)));
   try {
     assert.equal(h.render([partial], "", true, [partial])[0]?._id, id);
     h.manual.set(`${id}:1:1`, false);
-    assert.equal(h.render([finished], "", true, [finished])[0]?._id, id,
-      "an explicit manual unwatched override must not be hidden");
+    assert.equal(
+      h.render([finished], "", true, [finished])[0]?._id,
+      id,
+      "an explicit manual unwatched override must not be hidden",
+    );
   } finally {
     release();
   }
@@ -836,20 +861,23 @@ test("live Black Clover advancement preserves verified provider S2 coordinates a
   const source = anchor(3, "mal:61967");
   const original = harness(storage);
   original.setRemote(progress([3], source._id));
-  original.setEpisodes([1, 2, 3, 4].map((episode) => ({
-    season: 1,
-    episode,
-    imdbSeason: 2,
-    imdbEpisode: episode,
-    airDate: "2020-01-01",
-    kitsuStreamId: "kitsu:50024:" + episode,
-  })));
+  original.setEpisodes(
+    [1, 2, 3, 4].map((episode) => ({
+      season: 1,
+      episode,
+      imdbSeason: 2,
+      imdbEpisode: episode,
+      airDate: "2020-01-01",
+      kitsuStreamId: "kitsu:50024:" + episode,
+    })),
+  );
   original.render([source], "", true, []);
   const [verified] = await original.flush();
   assert.equal(verified?.state?.season, 1, "native playback remains entry-relative");
   assert.equal(verified?.state?.episode, 4);
   assert.deepEqual(verified?.cwVerifiedProviderMapping, {
-    imdbSeason: 2, imdbEpisode: 4,
+    imdbSeason: 2,
+    imdbEpisode: 4,
   });
 
   const reopened = harness(storage);
@@ -860,7 +888,8 @@ test("live Black Clover advancement preserves verified provider S2 coordinates a
     assert.equal(provisional?.state?.episode, 4);
     assert.equal(provisional?.state?.season, 1);
     assert.deepEqual(provisional?.cwVerifiedProviderMapping, {
-      imdbSeason: 2, imdbEpisode: 4,
+      imdbSeason: 2,
+      imdbEpisode: 4,
     });
   } finally {
     release();
@@ -895,7 +924,10 @@ test("a partial live row still replays Black Clover's verified E4 when Simkl arr
     );
     assert.equal(early.find((card: any) => card._id === source._id)?.upNext, true);
 
-    const changed = { ...source, state: { ...source.state, episode: 4, video_id: "mal:61967:1:4" } };
+    const changed = {
+      ...source,
+      state: { ...source.state, episode: 4, video_id: "mal:61967:1:4" },
+    };
     const fresh = reopened.render([other, changed], "", true, []);
     assert.equal(
       fresh.find((card: any) => card._id === source._id)?.state.episode,
@@ -919,14 +951,21 @@ test("a definitive live no-next result retires a cached episode advancement", as
 
   const reopened = harness(storage);
   reopened.setRemote(progress([3], "mal:61967"));
-  reopened.setEpisodes([1, 2, 3].map((episode) => ({
-    season: 1, episode, airDate: "2020-01-01",
-  })));
+  reopened.setEpisodes(
+    [1, 2, 3].map((episode) => ({
+      season: 1,
+      episode,
+      airDate: "2020-01-01",
+    })),
+  );
   const provisional = reopened.render([{ ...source }], "", true, []);
   assert.equal(provisional[0]?.state?.episode, 4);
   const live = await reopened.flush();
-  assert.equal(live.some((card: any) => card._id === source._id), false,
-    "a successfully verified caught-up series must not keep its old saved E4");
+  assert.equal(
+    live.some((card: any) => card._id === source._id),
+    false,
+    "a successfully verified caught-up series must not keep its old saved E4",
+  );
 });
 
 test("late Simkl session hydration can replay only its own verified E4 checkpoint", async () => {
@@ -947,8 +986,11 @@ test("late Simkl session hydration can replay only its own verified E4 checkpoin
     reopened.setSession({ username: "fixture" });
     reopened.setRemote(progress([3], blackClover._id));
     const early = reopened.render([{ ...blackClover }], "", true, []);
-    assert.equal(early[0]?.state?.episode, 4,
-      "late account hydration displayed the already-watched E3 despite a scoped proof");
+    assert.equal(
+      early[0]?.state?.episode,
+      4,
+      "late account hydration displayed the already-watched E3 despite a scoped proof",
+    );
     assert.equal(early[0]?.upNext, true);
   } finally {
     release();
@@ -1030,4 +1072,37 @@ test("Phase 4C keeps a validated snapshot through an empty startup hydration pas
   }
   const [confirmed] = await reopened.flush();
   assert.equal(confirmed?.state?.episode, 4);
+});
+
+test("Rings of Power S3E1 completed under a library 0:0 placeholder advances to aired S3E2", async () => {
+  const h = harness();
+  const id = "tt7631058";
+  h.setRemote(progress([], id));
+  h.setEpisodes([
+    { season: 3, episode: 1, airDate: "2026-11-11" },
+    { season: 3, episode: 2, airDate: "2026-11-11" },
+    { season: 3, episode: 3, airDate: "2026-11-11" },
+  ]);
+  const library = {
+    ...item(1, iso(-120_000), id),
+    name: "The Lord of the Rings: The Rings of Power",
+    state: {
+      ...item(1, iso(-120_000), id).state,
+      season: 0, episode: 0,
+      video_id: `${id}:3:1`, timeOffset: 4_410_208,
+      duration: 4_413_504, flaggedWatched: 1,
+    },
+  };
+  const local = {
+    ...library, local: true,
+    state: { ...library.state, season: 3, episode: 1 },
+  };
+  const merged = { ...library, cwMembers: [library, local] };
+  h.render([merged], "", true, [merged, local]);
+  const out = await h.flush();
+  assert.equal(out.length, 1, "the completed series must still have a real next-up card");
+  assert.equal(out[0].state.season, 3);
+  assert.equal(out[0].state.episode, 2);
+  assert.equal(out[0].upNext, true);
+  assert.equal(out[0].state.timeOffset, 0);
 });

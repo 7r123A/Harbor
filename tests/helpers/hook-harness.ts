@@ -61,6 +61,9 @@ export function hookHarness(
   new Function("require", "exports", ...Object.keys(globals), output)(
     (name: string) => {
       if (name === "react") return react;
+      // Final ordering is exercised directly in cw-order.test.ts; hook suites
+      // only need the module to exist so they can keep asserting source gating.
+      if (name === "@/lib/cw-order") return { sortCwFinal: (items: any[]) => items };
       if (!(name in mocks)) throw new Error(`Unexpected dependency ${name}`);
       return mocks[name];
     },

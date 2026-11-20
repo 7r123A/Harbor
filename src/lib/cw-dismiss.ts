@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { noteNotify } from "./render-cause";
 import { clearResume, readResumeEntry } from "./resume";
+import { flattenCwSourceMembers } from "./cw-members";
 import { setItemWithRecovery } from "./storage-recovery";
 import { episodeFromVideoId, type LibraryItem } from "./stremio";
 import { cloudLibraryPut } from "./stremio-write-queue";
@@ -500,7 +501,11 @@ export function dismissCw(
 ): void | Promise<CwDismissResult> {
   loadDismissed();
   const providerSources = providerDismissSources();
-  const members = (item as LibraryItem & { cwMembers?: LibraryItem[] }).cwMembers;
+  const rawMembers = (item as LibraryItem & { cwMembers?: LibraryItem[] }).cwMembers;
+  // Accept old/nested group shapes as well as the new flat groups. A tracker
+  // source buried inside an earlier local+provider merge still needs its own
+  // dismissal marker and provider cleanup.
+  const members = rawMembers?.length ? flattenCwSourceMembers(rawMembers) : undefined;
   if (members?.length) {
     // A provider's pause time can be ahead of the local clock. The dismissal
     // must cover every member's activity or the hidden survivor's member
@@ -609,6 +614,9 @@ export function dismissCw(
     const cloudWrites: Promise<boolean>[] = [];
     let cleanupError: unknown;
     for (const member of [item, ...members]) {
+      // A display-only repaired proxy has never existed in the remote library.
+      // Only its genuine original members can authorize a cloud cleanup.
+      if (member.cwRepairSourceId) continue;
       const id = member._id;
       if (!id) continue;
       const { season, episode } = resolveEpisode(member);

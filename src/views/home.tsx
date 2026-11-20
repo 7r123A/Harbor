@@ -63,7 +63,7 @@ import { clearResume, readResumeEntry, saveResumeBatch } from "@/lib/resume";
 import { dismissCw, isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import {
   clearLocalCw,
-  listLocalCw,
+  listLocalCwMerged,
   localCwSourceEnabled,
   localCwVersion,
   subscribeLocalCw,
@@ -85,6 +85,8 @@ import {
   dedupeAnimeCw,
   warmCwAnimeIdentities,
 } from "@/lib/cw-anime-identity";
+import { sortCwFinal } from "@/lib/cw-order";
+import { reconcileCompletedMovies, movieCompletionAliasWarmRows, isCompletedMovieCheckpoint } from "@/lib/cw-movie-completion";
 import { cwCacheOwnerKey } from "@/lib/cw-derived-caches";
 import {
   cwAnimeVersion,
@@ -113,7 +115,11 @@ import { recentlyPlayed, subscribePlayback, type WatchedSet } from "@/lib/playba
 import { collapseWatchedKeys, isTitleWatched } from "@/lib/watched-title";
 import { useWatchedFlagIds } from "@/lib/watched-flag";
 import { useMovieWatchedIds } from "@/lib/movie-watched";
-import { detectAnimeForCw, useDetectedAnimeVersion, warmCwAnimeRoomAliases } from "@/lib/anime-detect";
+import {
+  detectAnimeForCw,
+  useDetectedAnimeVersion,
+  warmCwAnimeRoomAliases,
+} from "@/lib/anime-detect";
 import { buildSimklHomeRows } from "@/lib/simkl/home-rails";
 import {
   loadSimklWatchedMap,
@@ -736,7 +742,7 @@ export function Home({
   }, [items]);
   const localCwItems = useMemo<LibraryItem[]>(() => {
     void localCwVer;
-    return listLocalCw(isNuvioProvider ? false : hideSharedCw)
+    return listLocalCwMerged(isNuvioProvider ? false : hideSharedCw)
       .filter((e) => isNuvioProvider || localCwSourceEnabled(e, settings.cwSources))
       .map((e) => ({
         _id: e.id,
@@ -767,6 +773,25 @@ export function Home({
         local: true,
       }));
   }, [localCwVer, hideSharedCw, activeProfile?.id, isNuvioProvider, settings.cwSources]);
+  // Warm only potential completed/incomplete movie pairs. Matching titles are
+  // discovery hints, NEVER proof; suppression needs verified IMDb/TMDB aliases.
+  useEffect(() => {
+    if (isNuvioProvider) return;
+    const pool = [
+      ...(!hideSharedCw && settings.cwSources.library
+        ? items.filter((i) => !ANIME_CLOUD_ID.test(i._id)) : []),
+      ...localCwItems.filter((i) => i.external !== "nuvio"),
+    ];
+    if (!hideSharedCw) pool.push(...externalCw.filter((row) =>
+      row.external === "trakt" ? settings.cwSources.trakt :
+      row.external === "simkl" ? settings.cwSources.simkl :
+      row.external === "publicmetadb" ? settings.cwSources.publicmetadb : false));
+    const candidates = movieCompletionAliasWarmRows(pool);
+    if (candidates.length > 0)
+      void warmCwAnimeIdentities(candidates, { tmdbKey: settings.tmdbKey }).catch(() => {});
+  }, [items, externalCw, localCwItems, hideSharedCw, isNuvioProvider,
+      settings.cwSources, settings.tmdbKey]);
+
   const continueWatching = useMemo(() => {
     const disabledSources = new Set<string>();
     if (!settings.cwSources.simkl) disabledSources.add("simkl");
@@ -779,7 +804,10 @@ export function Home({
       if (disabledSources.has(i.external)) return false;
       if (hideSharedCw) return false;
       if (i.external === "simkl" || i.external === "trakt" || i.external === "publicmetadb") {
-        if (i.upNext || i.waitingForAir) return true;
+        if (i.upNext || i.waitingForAir || i.caughtUp) return true;
+        // Completion evidence from an enabled tracker must remain in the pool
+        // until the older local/IMDb/TMDB checkpoint is reconciled.
+        if (isCompletedMovieCheckpoint(i)) return true;
         const offset = i.state?.timeOffset ?? 0;
         const dur = i.state?.duration ?? 0;
         if (offset <= 0 || (i.state?.flaggedWatched ?? 0) > 0) return false;
@@ -796,9 +824,13 @@ export function Home({
             ...(settings.cwSources.library ? items.filter((i) => !ANIME_CLOUD_ID.test(i._id)) : []),
             ...externalAllowed.filter((i) => i.external !== "nuvio"),
           ];
-    const eligible = (
-      isNuvioProvider ? cwBase : [...cwBase, ...localCwItems.filter((i) => i.external !== "nuvio")]
-    )
+    // A finished movie must remain in the source pool long enough to veto an
+    // OLDER incomplete checkpoint (including one under a verified IMDb/TMDB
+    // alias). isCwMember discards finished movies, so reconcile BEFORE it.
+    const cwPool = isNuvioProvider
+      ? cwBase
+      : [...cwBase, ...localCwItems.filter((i) => i.external !== "nuvio")];
+    const eligible = reconcileCompletedMovies(cwPool).rows
       .filter(
         (i) =>
           (i.type as string) !== "other" &&
@@ -828,7 +860,7 @@ export function Home({
       if (manualToAdd.length > 0) candidateEligible = [...eligible, ...manualToAdd];
     }
 
-    return dedupeAnimeCw(candidateEligible).slice(0, 100);
+    return sortCwFinal(dedupeAnimeCw(candidateEligible)).slice(0, 100);
   }, [
     items,
     externalCw,
@@ -881,7 +913,7 @@ export function Home({
         if (!i.external || i.type !== "series") return false;
         if (disabledSources.has(i.external)) return false;
         if (i.external === "simkl" || i.external === "trakt" || i.external === "publicmetadb") {
-          if (i.upNext || i.waitingForAir) return true;
+          if (i.upNext || i.waitingForAir || i.caughtUp) return true;
           const offset = i.state?.timeOffset ?? 0;
           const dur = i.state?.duration ?? 0;
           if (offset <= 0 || (i.state?.flaggedWatched ?? 0) > 0) return false;

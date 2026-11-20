@@ -35,6 +35,7 @@ export function AddToAnilistButton({ harborId, title }: { harborId: string; titl
   const [mediaId, setMediaId] = useState<number | null>(null);
   const [entryId, setEntryId] = useState<number | null>(null);
   const [status, setStatus] = useState<MediaListStatus | null>(null);
+  const [ready, setReady] = useState(false);
   const [privacy, setPrivacy] = useState(false);
   const [entryLists, setEntryLists] = useState<string[]>([]);
   const [availableLists, setAvailableLists] = useState<string[]>([]);
@@ -49,6 +50,7 @@ export function AddToAnilistButton({ harborId, title }: { harborId: string; titl
 
   useEffect(() => {
     if (!isConnected) return;
+    setReady(false);
     let cancelled = false;
     let timer: number | undefined;
     (async () => {
@@ -59,13 +61,20 @@ export function AddToAnilistButton({ harborId, title }: { harborId: string; titl
         return;
       }
       setMediaId(id);
+      // A failed request is not proof that the anime is absent from the list.
+      // Keep the button hidden until the service confirms a real entry or null.
       const info = await fetchListEntry(id).catch(() => null);
       if (cancelled) return;
-      setEntryId(info?.entry?.id ?? null);
-      setStatus(info?.entry?.status ?? null);
-      setPrivacy(info?.entry?.private ?? false);
-      setEntryLists(info?.entry?.customLists ?? []);
-      setAvailableLists(info?.customLists ?? []);
+      if (!info) {
+        if (attempt < 2) timer = window.setTimeout(() => setAttempt((a) => a + 1), 15000);
+        return;
+      }
+      setEntryId(info.entry?.id ?? null);
+      setStatus(info.entry?.status ?? null);
+      setPrivacy(info.entry?.private ?? false);
+      setEntryLists(info.entry?.customLists ?? []);
+      setAvailableLists(info.customLists ?? []);
+      setReady(true);
     })();
     return () => {
       cancelled = true;
@@ -73,7 +82,7 @@ export function AddToAnilistButton({ harborId, title }: { harborId: string; titl
     };
   }, [harborId, isConnected, attempt, trackerStatusVersion]);
 
-  if (!isConnected || mediaId == null) return null;
+  if (!isConnected || mediaId == null || !ready) return null;
 
   const setTo = async (next: MediaListStatus) => {
     setBusy(true);

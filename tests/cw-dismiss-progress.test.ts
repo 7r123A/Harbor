@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 import { dedupeCwItems } from "../src/lib/cw-dedupe";
+import { flattenCwSourceMembers } from "../src/lib/cw-members.ts";
 import { resolvedEpisodeCoords as realEpisodeCoords, type LibraryItem } from "../src/lib/stremio";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -81,6 +82,7 @@ function harness(seed?: string, onChange = () => {}, options: { nuvio?: boolean 
   const key = (id: string, s?: number, e?: number) => `${id}|${s}|${e}`;
   const mocks: Record<string, unknown> = {
     "./cw-profile": { privateCwProfileId: () => privateProfile },
+    "./cw-members": { flattenCwSourceMembers },
     react: {
       useSyncExternalStore: (subscribe: (notify: () => void) => () => void) => {
         subscribe(onChange);
@@ -404,6 +406,7 @@ function advanceHarness(
     advanced,
     extra,
     new Set<string>(),
+    new Set<string>(),
     0,
   ];
   let slot = 0;
@@ -438,6 +441,7 @@ function advanceHarness(
       cwWarmIdentityKey: (item: any) => JSON.stringify(item),
     },
     "@/lib/cw-dedupe": { dedupeCwItems },
+    "@/lib/cw-order": { sortCwFinal: (items: LibraryItem[]) => items },
     "@/lib/cw-next-display": { cwNextDisplayCoords },
     "@/lib/stremio": {
       isAnimeCwItem: (item: LibraryItem) => /^(kitsu|mal|anilist|anidb):/.test(item._id),

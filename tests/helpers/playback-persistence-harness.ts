@@ -1,9 +1,14 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { emptySnapshot } from "../../src/lib/player/bridge.ts";
-import { isNaturalEnd } from "../../src/lib/player/playback-end.ts";
+import {
+  PLAYBACK_FINISH_RATIO,
+  isNaturalEnd,
+  isPlaybackFinished,
+} from "../../src/lib/player/playback-end.ts";
 import { playerLoadIdentity } from "../../src/lib/player/load-identity.ts";
 import { animeTrackerTarget } from "../../src/lib/tracker-progress.ts";
+import { nativeLiveProgressTargets } from "../../src/lib/identity/live-scrobble.ts";
 
 export function playbackPersistenceHarness(kind: "local" | "cloud" = "local") {
   const effects: Array<{ deps: unknown[] | undefined; cleanup?: () => void }> = [];
@@ -55,6 +60,7 @@ export function playbackPersistenceHarness(kind: "local" | "cloud" = "local") {
     markMalWatching: noop,
     syncMalProgress: noop,
     animeTrackerTarget,
+    nativeLiveProgressTargets,
     activeProfileId: () => profileId,
     getSession: () => trackerSession,
     animeIdentityEligible: () => false,
@@ -98,6 +104,8 @@ export function playbackPersistenceHarness(kind: "local" | "cloud" = "local") {
       return Promise.resolve();
     },
     isNaturalEnd,
+    isPlaybackFinished,
+    PLAYBACK_FINISH_RATIO,
     playerLoadIdentity,
     cloudWriteId: (id: string, resolved: string, verified: boolean) =>
       id.startsWith("tt") ? id : verified ? resolved : null,

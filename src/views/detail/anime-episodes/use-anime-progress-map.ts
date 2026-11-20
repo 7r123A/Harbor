@@ -40,11 +40,11 @@ export function useAnimeProgressMap({
   mwVersion: number;
   settings: Parameters<typeof spoilerMaskFor>[0];
 }) {
-  const progressById = useMemo(() => {
+  const progressByEpisode = useMemo(() => {
     const local = createEpisodeProgressSnapshot();
-    const m = new Map<number, EpisodeProgress>();
+    const m = new Map<KitsuEpisode, EpisodeProgress>();
     const add = (ep: KitsuEpisode) => {
-      if (m.has(ep.id)) return;
+      if (m.has(ep)) return;
       const isCurrent = ep.sourceMetaId == null;
       const isEntry = entrySourceId != null && ep.sourceMetaId === entrySourceId;
       const seasonKey = animeSeasonKey(ep);
@@ -91,7 +91,7 @@ export function useAnimeProgressMap({
         );
         if (alt.watched || alt.ratio > prog.ratio) prog = alt;
       }
-      m.set(ep.id, prog);
+      m.set(ep, prog);
     };
     for (const ep of episodes) add(ep);
     for (const ep of displayEpisodes) add(ep);
@@ -111,28 +111,28 @@ export function useAnimeProgressMap({
     mwVersion,
   ]);
 
-  const progressFor = (ep: KitsuEpisode) => progressById.get(ep.id) ?? NO_PROGRESS;
+  const progressFor = (ep: KitsuEpisode) => progressByEpisode.get(ep) ?? NO_PROGRESS;
 
   const nextUpEp = useMemo(() => {
     const scan = displayEpisodes.length > 0 ? displayEpisodes : episodes;
     for (const ep of scan) {
-      if (!progressById.get(ep.id)?.watched) return ep;
+      if (!progressByEpisode.get(ep)?.watched) return ep;
     }
     return null;
-  }, [displayEpisodes, episodes, progressById]);
+  }, [displayEpisodes, episodes, progressByEpisode]);
 
   const nextUpId = nextUpEp ? nextUpEp.id : null;
   const nextUpNum = nextUpEp ? nextUpEp.number : null;
 
   const spoilerFor = (ep: KitsuEpisode): SpoilerMask =>
     spoilerMaskFor(settings, {
-      watched: progressById.get(ep.id)?.watched ?? false,
-      isNextUp: ep.id === nextUpId,
+      watched: progressByEpisode.get(ep)?.watched ?? false,
+      isNextUp: ep === nextUpEp,
     });
 
   const airedDisplay = airedOnly(displayEpisodes, (ep) => ep.airdate);
   const allWatched =
-    airedDisplay.length > 0 && airedDisplay.every((ep) => progressById.get(ep.id)?.watched);
+    airedDisplay.length > 0 && airedDisplay.every((ep) => progressByEpisode.get(ep)?.watched);
 
   return { progressFor, nextUpNum, nextUpId, spoilerFor, allWatched };
 }

@@ -207,6 +207,8 @@ function detailFixture() {
         return new Map([["2:1", 8.2]]);
       },
     },
+      // Airing dates have an isolated suite; keep cache/performance fixtures offline.
+      "@/lib/anilist/next-airing": { fetchAnilistAiringSchedule: async () => null },
     "@/lib/providers/anizip": { aniZipByKitsu: async () => ({ mappings: { imdb_id: "tt1" } }) },
     "@/lib/providers/anime-episode-build": {
       buildKitsuEpisodes: () => episodes.map((ep) => ({ ...ep })),

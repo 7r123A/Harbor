@@ -9,7 +9,10 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex, OnceLock,
+};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
@@ -19,6 +22,23 @@ const ENGINE: &str = "harbor.spotify.soloist.v1.engine";
 const DEVICE_NAME: &str = "Harbor Soloist";
 
 static CHILD: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+static SINGLE_TRACK: AtomicBool = AtomicBool::new(false);
+static SINGLE_EXIT_CODE: OnceLock<Mutex<Option<i32>>> = OnceLock::new();
+fn single_exit_code() -> &'static Mutex<Option<i32>> {
+    SINGLE_EXIT_CODE.get_or_init(|| Mutex::new(None))
+}
+pub(super) fn single_track_mode() -> bool {
+    SINGLE_TRACK.load(Ordering::SeqCst)
+}
+/// Reap the short-lived subprocess exactly once so EOF can be distinguished
+/// from login, expiry or playback failures (single-track exit code 0).
+pub(super) fn single_track_exit() -> Option<i32> {
+    if !single_track_mode() {
+        return None;
+    }
+    let _ = running();
+    single_exit_code().lock().ok()?.to_owned()
+}
 // Avoid repeated device discovery for intentionally selected external speakers.
 static VERIFIED_EXTERNAL: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 fn verified_external() -> &'static Mutex<HashSet<String>> {
@@ -183,7 +203,16 @@ fn running() -> bool {
     match guard.as_mut() {
         Some(process) => match process.try_wait() {
             Ok(None) => true,
-            _ => {
+            other => {
+                if SINGLE_TRACK.load(Ordering::SeqCst) {
+                    let exit_code = match other {
+                        Ok(Some(status)) => status.code().unwrap_or(-1),
+                        _ => -1,
+                    };
+                    if let Ok(mut exit) = single_exit_code().lock() {
+                        *exit = Some(exit_code);
+                    }
+                }
                 *guard = None;
                 false
             }
@@ -331,24 +360,26 @@ pub async fn music_soloist_set_engine(
     keystore::write(&app, ENGINE, Some(&engine))
 }
 
-/// Start the managed Connect daemon if it is not already running. Internal so
-/// playback can start it without going through the Tauri command surface (and
-/// its MusicState dependency).
-pub(super) async fn start_daemon(app: &AppHandle) -> Result<(), String> {
+#[tauri::command]
+pub async fn music_soloist_start(app: AppHandle) -> Result<SoloistStatus, String> {
     if running() {
-        return Ok(());
+        return music_soloist_status(app).await;
     }
-    let executable = executable(app).ok_or("Choose the downloaded Soloist executable first.")?;
+    let executable = executable(&app).ok_or("Choose the downloaded Soloist executable first.")?;
     let executable = validate_executable(&executable)?;
-    let key = keystore::read(app, KEY).ok_or("Add your personal Spotify Soloist API key.")?;
-    let data = data_dir(app)?;
-    let cache = cache_dir(app)?;
+    let key = keystore::read(&app, KEY).ok_or("Add your personal Spotify Soloist API key.")?;
+    let data = data_dir(&app)?;
+    let cache = cache_dir(&app)?;
     std::fs::create_dir_all(&data).map_err(|_| "Cannot create Soloist data directory")?;
     std::fs::create_dir_all(&cache).map_err(|_| "Cannot create Soloist cache directory")?;
     // Remove discovery data left by an earlier crashed process. A fresh
     // managed child must publish its own port before we connect to it.
     for name in ["ws.addr", "ws.port"] {
         let _ = std::fs::remove_file(data.join(name));
+    }
+    SINGLE_TRACK.store(false, Ordering::SeqCst);
+    if let Ok(mut exit) = single_exit_code().lock() {
+        *exit = None;
     }
     let mut command = Command::new(executable);
     command.args([
@@ -400,18 +431,90 @@ pub(super) async fn start_daemon(app: &AppHandle) -> Result<(), String> {
         }
         tokio::time::sleep(Duration::from_millis(150)).await;
     }
-    Ok(())
+    music_soloist_status(app).await
 }
 
-#[tauri::command]
-pub async fn music_soloist_start(app: AppHandle) -> Result<SoloistStatus, String> {
-    start_daemon(&app).await?;
-    music_soloist_status(app).await
+/// For playback controlled by Harbor, use Soloist's documented one-track
+/// mode instead of the Spotify Connect daemon. The daemon has an independent
+/// context/autoplay queue which cannot be disabled by its WebSocket API.
+/// The session is reused from the already paired Harbor Soloist data dir.
+pub(super) async fn start_harbor_track(
+    app: &AppHandle,
+    uri: &str,
+    initial_volume: u8,
+) -> Result<(), String> {
+    // Stop only the process Harbor launched; never touch unrelated Connect
+    // devices. Do this before creating the new URI's playback observer.
+    terminate_managed()?;
+    let executable = executable(app).ok_or("Choose the downloaded Soloist executable first.")?;
+    let executable = validate_executable(&executable)?;
+    let key = keystore::read(app, KEY).ok_or("Add your personal Spotify Soloist API key.")?;
+    let data = data_dir(app)?;
+    let cache = cache_dir(app)?;
+    std::fs::create_dir_all(&data).map_err(|_| "Cannot create Soloist data directory")?;
+    std::fs::create_dir_all(&cache).map_err(|_| "Cannot create Soloist cache directory")?;
+    for name in ["ws.addr", "ws.port"] {
+        let _ = std::fs::remove_file(data.join(name));
+    }
+    let mut cmd = Command::new(executable);
+    cmd.args([
+        "--device-name",
+        DEVICE_NAME,
+        "--api-key",
+        &key,
+        "--ws",
+        "127.0.0.1:0",
+    ]);
+    cmd.arg("--single-track").arg(uri);
+    cmd.arg("--initial-volume").arg(initial_volume.to_string());
+    cmd.arg("--data-dir").arg(&data);
+    cmd.arg("--cache-dir").arg(&cache);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    {
+        let mut guard = child()
+            .lock()
+            .map_err(|_| "Soloist process manager unavailable")?;
+        *guard = Some(
+            cmd.spawn()
+                .map_err(|_| "Failed to start Soloist single-track playback")?,
+        );
+        SINGLE_TRACK.store(true, Ordering::SeqCst);
+        if let Ok(mut exit) = single_exit_code().lock() {
+            *exit = None;
+        }
+    }
+    playback::reset_control().await;
+    // A new single-track process publishes its own loopback endpoint.
+    for _ in 0..30 {
+        if !running() {
+            let code = single_track_exit().unwrap_or(-1);
+            return Err(format!("Soloist single-track playback exited early (code {code}). Check pairing and the installed build."));
+        }
+        if let Some(url) = endpoint(&data) {
+            // The restored session must really be authenticated before
+            // Harbor attaches its playback observer. Connect device activity
+            // is separate from whether the stored session is logged in.
+            if let Ok((true, _)) = auth_state(&url).await {
+                return Ok(());
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(120)).await;
+    }
+    let _ = terminate_managed();
+    Err("Soloist single-track playback did not become ready. Pair Soloist first.".into())
 }
 
 /// Forcefully release Soloist's audio output when its WebSocket cannot stop it.
 /// Keep the child handle on a failed kill rather than reporting a false stop.
 pub fn terminate_managed() -> Result<(), String> {
+    SINGLE_TRACK.store(false, Ordering::SeqCst);
     capture::release_process();
     playback::shutdown();
     let mut slot = child()

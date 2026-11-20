@@ -8,6 +8,7 @@ import * as jsx from "react/jsx-runtime";
 import * as icons from "lucide-react";
 import { createRoot } from "react-dom/client";
 import * as leave from "../src/lib/player/leave-confirm";
+import * as playbackEnd from "../src/lib/player/playback-end";
 import * as back from "../src/lib/back-intercept";
 import * as pickerReturn from "../src/lib/picker-return";
 import * as dockedNavigation from "../src/lib/player/docked-navigation";
@@ -73,6 +74,7 @@ function harness() {
       streamMatchesEntry: () => false,
     },
     "@/lib/player/playback-clock": { getPlaybackPosition: () => 42 },
+    "@/lib/player/playback-end": playbackEnd,
     "@/lib/resume": { saveResumeMs: (...args: unknown[]) => calls.push(["resume", ...args]) },
     "@/lib/fullscreen-state": {
       isAnyFullscreen: async () => fullscreen,
@@ -356,6 +358,8 @@ test("the original close flow saves progress before PiP, casting, fullscreen and
       },
       season: 2,
       episode: 3,
+      // A playable episode, not a finished close that should clear its resume.
+      snap: { status: "playing", positionSec: 42, durationSec: 3600 },
       bridgeRef: { current: null },
       liveUrl: "fixture://episode",
       liveStreamRef: { title: "Episode" },

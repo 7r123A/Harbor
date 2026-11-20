@@ -302,6 +302,16 @@ export function DetailView({
   } | null>(null);
   const [franchise, setFranchise] = useState<FranchiseEntry[]>([]);
   const [animeCanonicalId, setAnimeCanonicalId] = useState<string | null>(null);
+  const [seasonTrackerSelection, setSeasonTrackerSelection] = useState<{
+    id: string | null;
+    requiresOwner: boolean;
+  }>({ id: null, requiresOwner: false });
+  const seasonCanonicalId = seasonTrackerSelection.id;
+  const onSeasonCanonicalEntry = useCallback((id: string | null, requiresOwner: boolean) => {
+    setSeasonTrackerSelection((prev) =>
+      prev.id === id && prev.requiresOwner === requiresOwner ? prev : { id, requiresOwner },
+    );
+  }, []);
   const [ownLogo, setOwnLogo] = useState<string | undefined>(() =>
     peekCachedLogo(
       settings.tmdbKey,
@@ -432,6 +442,7 @@ export function DetailView({
     promoteMetaToRoot,
     openMeta,
     openManga,
+    metaHasSeasonScroll,
   } = useView();
   useTvdbCastFallback(meta, detail, detectedKitsu, setDetail);
   const { snapshot: roomSnapshot, claimHost } = useTogether();
@@ -442,7 +453,12 @@ export function DetailView({
   const { toggle: toggleFavorite } = useMediaFavorites();
   const isFav = useIsFavorite(meta.id, [detail?.imdbId]);
   const inSession = roomSnapshot.state === "joined" && roomSnapshot.participants.length >= 2;
-  useScrollMemory(`meta:${meta.id}`, scrollRef, settings.resumeDetailScroll, true);
+  useScrollMemory(
+    `meta:${meta.id}`,
+    scrollRef,
+    settings.resumeDetailScroll || metaHasSeasonScroll,
+    true,
+  );
 
   useEffect(() => {
     if (!meta.id.startsWith("simkl:")) return;
@@ -555,7 +571,20 @@ export function DetailView({
     if (detectedKitsu == null) return;
     setAnimeCanonicalId((current) => current ?? `kitsu:${detectedKitsu}`);
   }, [detectedKitsu]);
+  // The episode panel can switch a catalog/franchise page to the native entry
+  // that owns the selected season. The airing banner must follow that entry.
   const anilistExtra = useAnimeAnilistDetails(animeCanonicalId, isAnime);
+  const seasonDetails = useAnimeAnilistDetails(seasonCanonicalId, isAnime);
+  const nextAiring =
+    seasonTrackerSelection.requiresOwner && !seasonCanonicalId
+      ? null
+      : (seasonCanonicalId ? seasonDetails : anilistExtra)?.nextAiring;
+  // A selected season must never inherit the opened entry's status when its
+  // native owner is not resolved yet.
+  const animeTrackerId = seasonTrackerSelection.requiresOwner
+    ? seasonCanonicalId
+    : (seasonCanonicalId ?? animeCanonicalId ?? meta.id);
+  const listTrackerId = isAnime ? animeTrackerId : meta.id;
   const animeCharacters = useAnimeCharacters(animeCanonicalId, isAnime);
   const stickyAwardName = useRef<string | null>(null);
   useEffect(() => {
@@ -2840,28 +2869,32 @@ export function DetailView({
                     </button>
                   </HoverTooltip>
                 )}
-                {actionStage < 2 && animeIdentity && (
+                {actionStage < 2 && animeIdentity && animeTrackerId && (
                   <AddToAnilistButton
-                    harborId={animeCanonicalId ?? meta.id}
+                    key={`anilist:${animeTrackerId}`}
+                    harborId={animeTrackerId}
                     title={title || meta.name}
                   />
                 )}
-                {actionStage < 2 && animeIdentity && (
+                {actionStage < 2 && animeIdentity && animeTrackerId && (
                   <AddToMalButton
-                    harborId={animeCanonicalId ?? meta.id}
+                    key={`mal:${animeTrackerId}`}
+                    harborId={animeTrackerId}
                     title={title || meta.name}
                   />
                 )}
-                {actionStage < 2 && (
+                {actionStage < 2 && listTrackerId && (
                   <AddToSimklButton
-                    harborId={isAnime ? (animeCanonicalId ?? meta.id) : meta.id}
+                    key={`simkl:${listTrackerId}`}
+                    harborId={listTrackerId}
                     title={title || meta.name}
                     type={meta.type === "movie" ? "movie" : "series"}
                   />
                 )}
-                {actionStage < 2 && (
+                {actionStage < 2 && listTrackerId && (
                   <AddToPmdbButton
-                    harborId={isAnime ? (animeCanonicalId ?? meta.id) : meta.id}
+                    key={`pmdb:${listTrackerId}`}
+                    harborId={listTrackerId}
                     title={title || meta.name}
                     type={meta.type === "movie" ? "movie" : "series"}
                   />
@@ -2929,15 +2962,15 @@ export function DetailView({
                             | "LANDSCAPE") || "POSTER",
                       })
                     }
-                    simkl={{
-                      harborId: isAnime ? (animeCanonicalId ?? meta.id) : meta.id,
+                    simkl={listTrackerId ? {
+                      harborId: listTrackerId,
                       type: meta.type === "movie" ? "movie" : "series",
-                    }}
-                    anilist={isAnime ? { harborId: animeCanonicalId ?? meta.id } : null}
-                    pmdb={{
-                      harborId: isAnime ? (animeCanonicalId ?? meta.id) : meta.id,
+                    } : null}
+                    anilist={isAnime && animeTrackerId ? { harborId: animeTrackerId } : null}
+                    pmdb={listTrackerId ? {
+                      harborId: listTrackerId,
                       type: meta.type === "movie" ? "movie" : "series",
-                    }}
+                    } : null}
                     canDrop={canDropTitle}
                     onDrop={() => setDropConfirmOpen(true)}
                   />
@@ -3105,6 +3138,7 @@ export function DetailView({
                   (meta.id.startsWith("tt") ? meta.id : null)
                 }
                 onSeasonArt={handleSeasonArt}
+                onCanonicalEntry={onSeasonCanonicalEntry}
                 localizedOverview={localizedAnimeOverview}
                 seasonOverviews={detail?.seasonOverviews}
                 tmdbTvId={detail?.tmdbTvId}
@@ -3206,14 +3240,14 @@ export function DetailView({
 
         {(() => {
           const railSections: DetailSection[] = [];
-          if (isAnime && anilistExtra?.nextAiring) {
+          if (isAnime && nextAiring) {
             railSections.push({
               key: "animeAiring",
               label: t("Airing"),
               minHeight: 90,
               node: (
                 <AnimeAiringBanner
-                  nextAiring={anilistExtra.nextAiring}
+                  nextAiring={nextAiring}
                   reminderSeed={{
                     id: meta.id,
                     name: title || meta.name,

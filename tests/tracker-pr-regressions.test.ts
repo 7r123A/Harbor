@@ -14,6 +14,12 @@ function load(path: string, mocks: Record<string, unknown>, globals: Record<stri
   const exports: any = {};
   new Function("require", "exports", ...Object.keys(globals), code)(
     (id: string) => {
+      if (id === "@/lib/tracker-progress-events") {
+        return {
+          TRACKER_PROGRESS_EVENT: "harbor:tracker-progress-updated",
+          notifyTrackerProgress: () => {},
+        };
+      }
       assert.ok(id in mocks, `Unexpected import: ${id}`);
       return mocks[id];
     },

@@ -103,7 +103,7 @@ test("anime room sources local CW entries", () => {
   assert.match(anime, /const localAnimeCw = useMemo<LibraryItem\[\]>/);
   assert.match(
     anime,
-    /listLocalCw\(hideSharedCw\)\s*\.filter\(\(e\) => localCwSourceEnabled\(e, settings\.cwSources\)\)\s*\.filter\(\(e\) => ANIME_CLOUD_ID\.test\(e\.id\) \|\| e\.isAnime\)/,
+    /listLocalCwMerged\(hideSharedCw\)\s*\.filter\(\(e\) => localCwSourceEnabled\(e, settings\.cwSources\)\)\s*\.filter\(\(e\) => ANIME_CLOUD_ID\.test\(e\.id\) \|\| e\.isAnime\)/,
   );
   assert.match(
     anime,
@@ -122,7 +122,8 @@ test("home and anime room absorb legacy cloud anime items into local CW", () => 
     );
   }
   const absorb = read("src/lib/anime-cw-absorb.ts");
-  assert.match(absorb, /if \(existing && existing\.t >= t\) continue;/);
+  assert.match(absorb, /localCwEntryMerged\(i\._id, false\)/);
+  assert.match(absorb, /if \(existing\.t >= t\) continue;/);
   assert.match(absorb, /if \(i\.removed && !i\.temp\) continue;/);
 });
 

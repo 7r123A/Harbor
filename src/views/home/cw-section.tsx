@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LogIn } from "lucide-react";
 import stremioWordmark from "@/assets/stremio-wordmark.png";
 import nuvioLogo from "@/assets/nuvio.png";
@@ -13,6 +13,8 @@ import { isLibraryItemWatched } from "@/lib/trakt/library-key";
 import type { ContinueDismiss } from "@/lib/continue-card-actions";
 import { QueueContinueCard } from "@/components/queue-basket/queue-continue-card";
 import { useQueueResumeItem } from "@/lib/queue";
+import { useIdentityCardGrouping } from "@/lib/identity/use-card-grouping";
+import { useSettings } from "@/lib/settings";
 
 type Props = {
   signedIn: boolean;
@@ -23,12 +25,36 @@ type Props = {
   loading?: boolean;
 };
 
-export function CWSection({ signedIn, isNuvio, items, watchedSet, onDismiss, loading }: Props) {
+export function CWSection({
+  signedIn,
+  isNuvio,
+  items: rawItems,
+  watchedSet,
+  onDismiss,
+  loading,
+}: Props) {
+  const { settings } = useSettings();
+  const repairEnabled = settings.animeIdentityEnabled && settings.animeIdentityRepairEnabled;
+  const items = useIdentityCardGrouping(rawItems, repairEnabled);
   const t = useT();
   const queueResumeItem = useQueueResumeItem();
   const showQueueCard = queueResumeItem !== null;
   const headKey = showQueueCard ? "queue" : (items[0]?._id ?? "");
   const [showAuth, setShowAuth] = useState(false);
+
+  // Shadow phase: observe what identity would resolve for these cards without
+  // changing the row. Loaded lazily and gated by the shadow flag.
+  useEffect(() => {
+    let cancelled = false;
+    void import("@/lib/identity/shadow-observer")
+      .then(({ observeIdentityShadow }) => {
+        if (!cancelled) void observeIdentityShadow(items);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [items]);
 
   const signInButton = signedIn ? null : (
     <button

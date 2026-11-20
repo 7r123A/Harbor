@@ -1186,7 +1186,9 @@ test("Discarded watch progress pull does not clear the next account's playback c
       ],
     } as unknown as Response);
 
-    assert.deepEqual(await pending, []);
+    // Freshness is explicit: an obsolete account response cannot masquerade
+    // as an empty successful snapshot or clear the current account cache.
+    assert.deepEqual(await pending, { fresh: false, items: [] });
     assert.deepEqual(
       readCachedWatchProgress(1, "user-b").map((item) => item.content_id),
       ["tt-b-only"],

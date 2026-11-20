@@ -65,6 +65,7 @@ import {
 import { animeFranchiseKey, stripFranchiseSuffix } from "@/lib/providers/jikan";
 import { animeCwIdsVersion, subscribeAnimeCwIds } from "@/lib/anime-cw-ids";
 import { dedupeAnimeCw, warmCwAnimeIdentities } from "@/lib/cw-anime-identity";
+import { sortCwFinal } from "@/lib/cw-order";
 import { animeFiltered, enrichAnimeCountry, type AnimeFilterOpts } from "@/lib/anime-filter";
 import {
   buildHeroSelection,
@@ -102,7 +103,7 @@ import {
 } from "@/lib/stremio";
 import {
   clearLocalCw,
-  listLocalCw,
+  listLocalCwMerged,
   localCwSourceEnabled,
   localCwVersion,
   subscribeLocalCw,
@@ -410,8 +411,8 @@ export function AnimeView({ active = true }: { active?: boolean }) {
     }
     let cancelled = false;
     fetchSimklPlaybackItems()
-      .then((cw) => {
-        if (!cancelled) setSimklCw(cw.filter(isAnimeCwItem));
+      .then(({ items }) => {
+        if (!cancelled) setSimklCw(items.filter(isAnimeCwItem));
       })
       .catch(() => {});
     return () => {
@@ -427,7 +428,7 @@ export function AnimeView({ active = true }: { active?: boolean }) {
   const localCwVer = useSyncExternalStore(subscribeLocalCw, localCwVersion);
   const localAnimeCw = useMemo<LibraryItem[]>(() => {
     void localCwVer;
-    return listLocalCw(hideSharedCw)
+    return listLocalCwMerged(hideSharedCw)
       .filter((e) => localCwSourceEnabled(e, settings.cwSources))
       .filter((e) => ANIME_CLOUD_ID.test(e.id) || e.isAnime)
       .map((e) => ({
@@ -454,28 +455,30 @@ export function AnimeView({ active = true }: { active?: boolean }) {
       }));
   }, [localCwVer, hideSharedCw, activeProfile?.id, settings.cwSources]);
   const continueWatching = useMemo(() => {
-    return dedupeAnimeCw(
-      [
-        ...localAnimeCw,
-        ...(hideSharedCw || !settings.cwSources.library
-          ? []
-          : libItems.filter((i) => !ANIME_CLOUD_ID.test(i._id))),
-        ...(hideSharedCw || !settings.cwSources.simkl ? [] : simklCw),
-        ...(hideSharedCw
-          ? []
-          : trackerCw.filter(
-              (i) =>
-                (i.external === "trakt" && settings.cwSources.trakt) ||
-                (i.external === "publicmetadb" && settings.cwSources.publicmetadb),
-            )),
-      ]
-        .filter((i) => {
-          if (!isCwMember(i)) return false;
-          if (!i.local && !isAnimeCwItem(i)) return false;
-          if (isCwDismissed(i)) return false;
-          return true;
-        })
-        .sort((a, b) => cwSortKey(b) - cwSortKey(a)),
+    return sortCwFinal(
+      dedupeAnimeCw(
+        [
+          ...localAnimeCw,
+          ...(hideSharedCw || !settings.cwSources.library
+            ? []
+            : libItems.filter((i) => !ANIME_CLOUD_ID.test(i._id))),
+          ...(hideSharedCw || !settings.cwSources.simkl ? [] : simklCw),
+          ...(hideSharedCw
+            ? []
+            : trackerCw.filter(
+                (i) =>
+                  (i.external === "trakt" && settings.cwSources.trakt) ||
+                  (i.external === "publicmetadb" && settings.cwSources.publicmetadb),
+              )),
+        ]
+          .filter((i) => {
+            if (!isCwMember(i)) return false;
+            if (!i.local && !isAnimeCwItem(i)) return false;
+            if (isCwDismissed(i)) return false;
+            return true;
+          })
+          .sort((a, b) => cwSortKey(b) - cwSortKey(a)),
+      ),
     ).slice(0, 20);
   }, [
     localAnimeCw,

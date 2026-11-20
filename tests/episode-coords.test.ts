@@ -94,3 +94,36 @@ test("the card and provider paths share the coordinate helper", () => {
   assert.match(advance, /return resolvedEpisodeCoords\(i\);/);
   assert.match(provider, /return resolvedEpisodeCoords\(item\);/);
 });
+
+test("a merged Rings of Power library placeholder may use a corroborating local S3E1 checkpoint", () => {
+  const id = "tt7631058";
+  const library = {
+    ...item(id, {
+      season: 0, episode: 0, video_id: `${id}:3:1`,
+      timeOffset: 4_410_208, duration: 4_413_504, flaggedWatched: 1,
+    }),
+    removed: false, temp: false,
+  };
+  const local = {
+    ...item(id, {
+      season: 3, episode: 1, video_id: `${id}:3:1`,
+      timeOffset: 4_410_208, duration: 4_413_504, flaggedWatched: 1,
+    }),
+    local: true,
+  };
+  assert.deepEqual(resolvedEpisodeCoords({ ...library, cwMembers: [library, local] }),
+    { season: 3, episode: 1 },
+    "the actual played episode must be used for CW advancement");
+  assert.deepEqual(resolvedEpisodeCoords(library), { season: 0, episode: 0 },
+    "without independent local proof, 0:0 must retain its existing meaning");
+  assert.deepEqual(resolvedEpisodeCoords({
+    ...library, cwMembers: [library, {
+      ...local, _id: "tt9999999",
+    }],
+  }), { season: 0, episode: 0 }, "unrelated titles cannot supply playback identity");
+  assert.deepEqual(resolvedEpisodeCoords({
+    ...library, cwMembers: [library, {
+      ...local, state: { ...local.state!, video_id: `${id}:3:2` },
+    }],
+  }), { season: 0, episode: 0 }, "different episode checkpoint cannot corroborate the library row");
+});

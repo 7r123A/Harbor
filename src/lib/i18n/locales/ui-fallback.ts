@@ -1306,6 +1306,7 @@ const uiFallback: Record<string, string> = {
   "Mark as read": "Mark as read",
   "Paused on PublicMetaDB": "Paused on PublicMetaDB",
   "Airing soon": "Airing soon",
+  "Caught up": "Caught up",
   "in {days}d {hours}h": "in {days}d {hours}h",
   "in {hours}h {minutes}m": "in {hours}h {minutes}m",
   "in {minutes}m": "in {minutes}m",

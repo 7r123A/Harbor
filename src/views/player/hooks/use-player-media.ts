@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import { useAuth } from "@/lib/auth";
 import { downloadText } from "@/lib/download-text";
 import { getCuesAnySource, subtitleDownloadError } from "@/lib/subtitles/extract";
@@ -33,6 +33,7 @@ import type { PlayerSrc } from "@/lib/view";
 import { useExitSnapshot } from "./use-exit-snapshot";
 import { usePowerInhibit } from "./use-power-inhibit";
 import { useResumeAutosave } from "./use-resume-autosave";
+import { useLiveScrobbleResolution } from "@/lib/identity/use-live-scrobble";
 import { useActualPlayback } from "./use-actual-playback";
 import { useStremioSync } from "./use-stremio-sync";
 import { useSubDrop } from "./use-sub-drop";
@@ -356,9 +357,21 @@ export function usePlayerMedia(params: {
     seekPreviewEnabled: settings.seekPreviewEnabled,
   });
 
-  useTraktScrobble({ src, snap });
-  useSimklScrobble({ src, snap });
-  usePublicMetaDbScrobble({ src, snap });
+  // Resolve once per playback identity, then share the proof with all five
+  // providers. Never change the player's own resume/library source metadata.
+  const liveScrobble = useLiveScrobbleResolution({
+    src,
+    enabledSetting: settings.animeIdentityEnabled && settings.animeIdentityLiveScrobbleEnabled,
+  });
+  const trackerSrc = useMemo(
+    () => liveScrobble.proof
+      ? { ...src, episode: liveScrobble.proof.episode }
+      : src,
+    [src, liveScrobble.proof],
+  );
+  useTraktScrobble({ src: trackerSrc, snap, liveScrobble });
+  useSimklScrobble({ src: trackerSrc, snap, liveScrobble });
+  usePublicMetaDbScrobble({ src: trackerSrc, snap, liveScrobble });
   useMediaServerProgress({ src, snap });
   useNuvioScrobble({ src, snap, season, episode });
   const download = useVideoDownload({
@@ -420,7 +433,7 @@ export function usePlayerMedia(params: {
   ]);
 
   useActualPlayback(src, snap);
-  useResumeAutosave({ src, snap, season, episode, resolvedImdbId, resolvedImdbVerified });
+  useResumeAutosave({ src, snap, season, episode, resolvedImdbId, resolvedImdbVerified, liveScrobble });
   useStremioSync({
     src,
     snap,

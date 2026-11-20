@@ -20,7 +20,6 @@ import { hasPageRowChanges, resetPageRows, usePageRows } from "@/lib/page-rows";
 import { useSettings } from "@/lib/settings";
 import {
   ANIME_CLOUD_ID,
-  cwSortKey,
   isAnimeCwItem,
   isCwMember,
   library,
@@ -34,6 +33,7 @@ import {
   manualWatchedVersion,
   subscribeManualWatched,
 } from "@/lib/manual-watched";
+import { sortCwFinal } from "@/lib/cw-order";
 import { useCwAdvance } from "./home/hooks/use-cw-advance";
 import { useScrollMemory } from "@/lib/view";
 import { buildShowHero, bucketCopy } from "./shows/hero-curation";
@@ -180,18 +180,15 @@ export function Shows({ active = true }: { active?: boolean }) {
   const localCwVer = useSyncExternalStore(subscribeLocalCw, localCwVersion);
   const continueWatching = useMemo(
     () =>
-      (hideSharedCw ? listLocalCw(true).map(localToLibraryItem) : items)
-        .filter(
+      sortCwFinal(
+        (hideSharedCw ? listLocalCw(true).map(localToLibraryItem) : items).filter(
           (i) =>
             i.type === "series" &&
             !ANIME_CLOUD_ID.test(i._id) &&
             isCwMember(i) &&
             !isCwDismissed(i),
-        )
-        .map((i) => ({ i, k: cwSortKey(i) }))
-        .sort((a, b) => b.k - a.k)
-        .map((e) => e.i)
-        .slice(0, 16),
+        ),
+      ).slice(0, 16),
     [items, cwVersion, hideSharedCw, localCwVer, activeProfile?.id],
   );
 

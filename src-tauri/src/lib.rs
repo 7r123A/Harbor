@@ -24,6 +24,8 @@ mod http_redirect;
 mod local_lib;
 mod log_privacy;
 mod media_server;
+#[cfg(desktop)]
+mod identity;
 #[cfg(windows)]
 mod native_context_menu;
 #[cfg(windows)]
@@ -1122,6 +1124,9 @@ pub fn run() {
         .manage(discord_rp::DiscordState::new())
         .manage(download::DownloadState::new());
 
+    #[cfg(desktop)]
+    let app_builder = app_builder.manage(identity::IdentityState::default());
+
     #[cfg(feature = "music")]
     let app_builder = if install_features::music_enabled() {
         app_builder.manage(music::MusicState::new())
@@ -1369,6 +1374,13 @@ pub fn run() {
             }
         })
         .invoke_handler(desktop_invoke_handler(tauri::generate_handler![
+            identity::commands::identity_status,
+            identity::commands::identity_ensure_pack,
+            identity::commands::identity_lookup_batch,
+            identity::commands::identity_entry_bundle,
+            identity::commands::identity_card_hints,
+            identity::commands::identity_window_owners,
+            identity::commands::identity_clear_data,
             #[cfg(feature = "games")]
             games::games_pokemon,
             #[cfg(feature = "games")]

@@ -184,12 +184,47 @@ export async function hasActiveSimklPlayback(
   return false;
 }
 
-export const SIMKL_PLAYBACK_CACHE_KEY = "harbor.simkl.playback_items";
-let memorySimklPlaybackCache: LibraryItem[] | null = null;
+const SIMKL_PLAYBACK_CACHE_PREFIX = "harbor.simkl.playback_items.v2.";
+const SIMKL_LEGACY_PLAYBACK_CACHE_KEY = "harbor.simkl.playback_items";
+const SIMKL_WATCHING_MAX_AGE_MS = 365 * 864e5;
+
+export type SimklPlaybackResult = { items: LibraryItem[]; fresh: boolean };
+
+function simklCacheKeyFor(username?: string | null): string | null {
+  const value = username?.trim().toLowerCase();
+  return value ? `${SIMKL_PLAYBACK_CACHE_PREFIX}${encodeURIComponent(value)}` : null;
+}
+
+function simklAccountCacheKey(): string | null {
+  return simklCacheKeyFor(getSession()?.username);
+}
+
+const memorySimklPlaybackCache = new Map<string, LibraryItem[]>();
+
+/**
+ * The old cache was a single global key that cannot be attributed to an
+ * account. It is never read by the account-scoped implementation, so remove it
+ * instead of leaving another account's progress on disk.
+ */
+function dropLegacySimklPlaybackCache(): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(SIMKL_LEGACY_PLAYBACK_CACHE_KEY);
+  } catch {}
+}
 
 function isValidSimklPlaybackItem(item: LibraryItem): boolean {
   if (!item || item.external !== "simkl" || !item.state) return false;
-  if (item.upNext || item.waitingForAir) return true;
+  if (item.upNext || item.waitingForAir) {
+    // A cached anchor must not outlive the same recency cap used for a live
+    // fetch; old Watching entries otherwise reappear from the offline cache.
+    const lastWatched = Date.parse(item.state.lastWatched ?? "");
+    return (
+      Number.isFinite(lastWatched) &&
+      lastWatched > 0 &&
+      Date.now() - lastWatched <= SIMKL_WATCHING_MAX_AGE_MS
+    );
+  }
   const offset = item.state.timeOffset ?? 0;
   const dur = item.state.duration ?? 0;
   if (offset <= 0 || (item.state.flaggedWatched ?? 0) > 0) return false;
@@ -198,20 +233,24 @@ function isValidSimklPlaybackItem(item: LibraryItem): boolean {
 }
 
 export function readCachedSimklPlaybackItems(): LibraryItem[] {
-  if (memorySimklPlaybackCache && memorySimklPlaybackCache.length > 0) {
-    return memorySimklPlaybackCache.filter(isValidSimklPlaybackItem);
+  dropLegacySimklPlaybackCache();
+  const key = simklAccountCacheKey();
+  if (!key) return [];
+  const memory = memorySimklPlaybackCache.get(key);
+  if (memory && memory.length > 0) {
+    return memory.filter(isValidSimklPlaybackItem);
   }
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(SIMKL_PLAYBACK_CACHE_KEY);
+    const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
         const valid = parsed.filter(isValidSimklPlaybackItem);
-        memorySimklPlaybackCache = valid;
+        memorySimklPlaybackCache.set(key, valid);
         if (valid.length !== parsed.length) {
           try {
-            localStorage.setItem(SIMKL_PLAYBACK_CACHE_KEY, JSON.stringify(valid));
+            localStorage.setItem(key, JSON.stringify(valid));
           } catch {}
         }
         return valid;
@@ -222,18 +261,40 @@ export function readCachedSimklPlaybackItems(): LibraryItem[] {
 }
 
 export function writeCachedSimklPlaybackItems(items: LibraryItem[]): void {
-  memorySimklPlaybackCache = items;
+  dropLegacySimklPlaybackCache();
+  const key = simklAccountCacheKey();
+  if (!key) return;
+  memorySimklPlaybackCache.set(key, items);
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(SIMKL_PLAYBACK_CACHE_KEY, JSON.stringify(items));
+    localStorage.setItem(key, JSON.stringify(items));
   } catch {}
 }
 
-export function clearCachedSimklPlaybackItems(): void {
-  memorySimklPlaybackCache = null;
+export function clearCachedSimklPlaybackItems(username?: string | null): void {
+  const target = username === undefined ? null : simklCacheKeyFor(username);
+  if (target) {
+    memorySimklPlaybackCache.delete(target);
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.removeItem(target);
+    } catch {}
+    return;
+  }
+  memorySimklPlaybackCache.clear();
   if (typeof window === "undefined") return;
   try {
-    localStorage.removeItem(SIMKL_PLAYBACK_CACHE_KEY);
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (
+        key &&
+        (key.startsWith(SIMKL_PLAYBACK_CACHE_PREFIX) || key === SIMKL_LEGACY_PLAYBACK_CACHE_KEY)
+      ) {
+        keys.push(key);
+      }
+    }
+    for (const key of keys) localStorage.removeItem(key);
   } catch {}
 }
 
@@ -339,24 +400,24 @@ async function itemsFromRaw(
   return items;
 }
 
-export async function fetchSimklPlaybackItems(fresh = false): Promise<LibraryItem[]> {
+export async function fetchSimklPlaybackItems(force = false): Promise<SimklPlaybackResult> {
   const owner = getSession();
-  if (!owner) return [];
+  if (!owner) return { items: [], fresh: false };
   let raw: RawSession[];
   try {
     raw = await simklRequest<RawSession[]>("/sync/playback?hide_watched=true&limit=40");
   } catch (e) {
     if (e instanceof SimklApiError && e.status === 404) {
       writeCachedSimklPlaybackItems([]);
-      return [];
+      return { items: [], fresh: true };
     }
-    if (fresh) throw e;
+    if (force) throw e;
     const cached = readCachedSimklPlaybackItems();
-    if (cached.length > 0) return cached;
+    if (cached.length > 0) return { items: cached, fresh: false };
     throw e;
   }
   if (getSession() !== owner) throw new Error("SIMKL session changed");
-  if (!Array.isArray(raw)) return [];
+  if (!Array.isArray(raw)) return { items: [], fresh: true };
 
   const items = await itemsFromRaw(raw, true);
   const seenSeries = new Set<string>();
@@ -375,8 +436,10 @@ export async function fetchSimklPlaybackItems(fresh = false): Promise<LibraryIte
           if (!comp || !comp._id) return false;
           const status = progress.statuses.get(comp._id);
           const mtime = Date.parse(comp._mtime);
-          const isRecent = Number.isFinite(mtime) && Date.now() - mtime < 90 * 86400 * 1000;
-          return status === "watching" || (status === "completed" && isRecent);
+          if (!Number.isFinite(mtime)) return false;
+          const age = Date.now() - mtime;
+          if (status === "watching") return age <= SIMKL_WATCHING_MAX_AGE_MS;
+          return status === "completed" && age < 90 * 86400 * 1000;
         })
         .sort((a, b) => Date.parse(b._mtime) - Date.parse(a._mtime))
         .slice(0, 40);
@@ -402,5 +465,5 @@ export async function fetchSimklPlaybackItems(fresh = false): Promise<LibraryIte
   } catch {}
 
   writeCachedSimklPlaybackItems(items);
-  return items;
+  return { items, fresh: true };
 }
