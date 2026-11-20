@@ -812,6 +812,11 @@ async fn spawn_continuous_ffmpeg(job: &CastJob, temp_dir: &std::path::Path) -> R
     {
         cmd.creation_flags(0x0800_0000);
     }
+    // FFmpeg places the fMP4 init file next to the playlist only when it finds a '/' in the
+    // playlist's path; a Windows path has backslashes, so it went to the working directory instead
+    // (shared by every session, possibly not writable) and receivers never got it. Run in the
+    // session folder, where a bare init file name lands either way.
+    cmd.current_dir(temp_dir);
     cmd.kill_on_drop(true)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -828,6 +833,128 @@ async fn spawn_continuous_ffmpeg(job: &CastJob, temp_dir: &std::path::Path) -> R
         watch_stderr(stderr, job.stats.clone(), "cast-hls");
     }
     Ok(child)
+}
+
+/// End to end through FFmpeg and the HLS server: films made on the spot are probed, planned and
+/// served the way a receiver gets them, and what is served is checked against what it announces.
+/// Needs FFmpeg with libx264 and libx265; run with `cargo test --lib live_hls -- --ignored
+/// --nocapture`.
+#[cfg(test)]
+mod live_hls_tests {
+    use super::*;
+    use crate::cast_transcode::{build_plan, CastOptions, DeviceLimits, PlanInput};
+
+    fn make(ffmpeg: &std::path::Path, out: &std::path::Path, args: &[&str]) {
+        let status = std::process::Command::new(ffmpeg)
+            .args(["-hide_banner", "-loglevel", "error", "-y"])
+            .args(args)
+            .arg(out)
+            .status()
+            .expect("ffmpeg");
+        assert!(status.success(), "could not make {}", out.display());
+    }
+
+    fn ffprobe_json(target: &str, entries: &str) -> serde_json::Value {
+        let ffprobe = crate::transcode::locate_ffprobe().expect("ffprobe");
+        let out = std::process::Command::new(ffprobe)
+            .args(["-v", "error", "-show_entries", entries, "-of", "json", "-i", target])
+            .output()
+            .expect("ffprobe");
+        serde_json::from_slice(&out.stdout).unwrap_or_default()
+    }
+
+    async fn get(client: &reqwest::Client, url: &str) -> String {
+        client.get(url).send().await.expect("request").text().await.expect("body")
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn live_hls_serves_what_it_announces() {
+        let ffmpeg = crate::transcode::locate_ffmpeg().expect("ffmpeg");
+        let dir = std::env::temp_dir().join(format!("harbor-live-hls-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let tone = ["-f", "lavfi", "-i", "sine=f=440:d=85"];
+        // Constrained Baseline in MPEG-TS, a keyframe every 40 s (segments longer than 30 s).
+        let baseline = dir.join("baseline_gop40.ts");
+        let mut args = vec!["-f", "lavfi", "-i", "testsrc2=s=640x360:r=24:d=85"];
+        args.extend(tone);
+        args.extend([
+            "-c:v", "libx264", "-profile:v", "baseline", "-level", "3.0", "-g", "960", "-keyint_min", "960",
+            "-sc_threshold", "0", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+        ]);
+        make(&ffmpeg, &baseline, &args);
+        // Main in Matroska without any sound.
+        let silent = dir.join("silent_main.mkv");
+        make(&ffmpeg, &silent, &["-f", "lavfi", "-i", "testsrc2=s=640x360:r=24:d=12", "-c:v", "libx264", "-profile:v", "main", "-pix_fmt", "yuv420p"]);
+        // H.265 Main 10, High tier, in MP4.
+        let hevc = dir.join("main10_high.mp4");
+        let mut args = vec!["-f", "lavfi", "-i", "testsrc2=s=640x360:r=24:d=12"];
+        args.extend(["-f", "lavfi", "-i", "sine=f=440:d=12"]);
+        args.extend([
+            "-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-x265-params", "log-level=error:high-tier=1:level-idc=51",
+            "-c:a", "aac", "-shortest",
+        ]);
+        make(&ffmpeg, &hevc, &args);
+
+        let state = HlsState::new();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let app = router(state.clone());
+        tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+        let client = reqwest::Client::new();
+        let caps = crate::cast_transcode::caps().await;
+
+        let cases = [
+            (&baseline, CastOptions::default(), "avc1.42C01E,mp4a.40.2", "Constrained Baseline", true),
+            (&silent, CastOptions::default(), "avc1.4D401E", "Main", false),
+            (&hevc, CastOptions { hevc_native: true, ..Default::default() }, "hvc1.2.4.H153.90,mp4a.40.2", "Main 10", true),
+        ];
+        for (film, options, codecs, profile, has_audio) in cases {
+            let name = film.file_name().unwrap().to_string_lossy().to_string();
+            let source = film.to_string_lossy().to_string();
+            let probe = crate::cast_transcode::probe(&source, &HashMap::new()).await.expect("probe");
+            let plan = build_plan(
+                &PlanInput { probe: Some(&probe), options: &options, audio_ordinal: 0, burn_sub: None, burn_bitmap: None, force_video_encode: false, limits: DeviceLimits::default() },
+                &caps,
+            );
+            assert_eq!(plan.summary.video, "copy", "{name}: {:?}", plan.summary.reasons);
+            let job = CastJob { url: source, headers: HashMap::new(), seek_sec: 0.0, fast_seek: false, plan, stats: Default::default() };
+            let id = state.register_job(job).await.expect("register");
+            let base = format!("http://127.0.0.1:{port}/cast/hls/{id}");
+            let master = get(&client, &format!("{base}/master.m3u8")).await;
+            eprintln!("[live-hls] {name}\n{master}");
+            assert!(master.contains(&format!("CODECS=\"{codecs}\"")), "{name}: {master}");
+
+            // Wait for the whole film, then check every playlist rule against what was served.
+            let deadline = Instant::now() + Duration::from_secs(120);
+            let variant = loop {
+                let variant = get(&client, &format!("{base}/variant.m3u8")).await;
+                if variant.contains("#EXT-X-ENDLIST") || Instant::now() > deadline {
+                    break variant;
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            };
+            eprintln!("[live-hls] {name}\n{variant}");
+            assert!(variant.contains("#EXT-X-ENDLIST"), "{name}: the conversion did not finish");
+            let target: u32 = variant
+                .lines()
+                .find_map(|l| l.strip_prefix("#EXT-X-TARGETDURATION:"))
+                .and_then(|v| v.trim().parse().ok())
+                .expect("target duration");
+            assert!(longest_segment(&variant) <= target, "{name}: a segment is longer than {target}s\n{variant}");
+
+            // What the receiver decodes is what was announced.
+            let served = ffprobe_json(&format!("{base}/variant.m3u8"), "stream=codec_type,profile");
+            let streams = served["streams"].as_array().cloned().unwrap_or_default();
+            let video = streams.iter().find(|s| s["codec_type"] == "video").expect("video");
+            assert_eq!(video["profile"], profile, "{name}");
+            assert_eq!(streams.iter().any(|s| s["codec_type"] == "audio"), has_audio, "{name}: {streams:?}");
+            state.stop_session(&id).await;
+        }
+        // The fMP4 init file lands in the session folder, never in the working directory.
+        assert!(!std::env::current_dir().unwrap().join(FMP4_INIT).exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 #[cfg(test)]
