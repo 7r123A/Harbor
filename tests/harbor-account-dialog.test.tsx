@@ -34,6 +34,7 @@ async function fixture(
   fromMenu = false,
   deferred = false,
   configureDom?: (dom: JSDOM) => void,
+  storageBlocked = false,
 ) {
   const dom = new JSDOM("<button id='opener'>Account</button><div id='root'></div>", {
     url: "https://fixture.invalid",
@@ -72,6 +73,13 @@ async function fixture(
         key.replace(/\{(\w+)\}/g, (_, name) => String(values?.[name] ?? name)),
     },
     "@/lib/config/endpoints": { HARBOR_API_BASE: "https://fixture.invalid" },
+    "@/lib/storage-recovery": {
+      persistCritical: (key: string, value: string) => {
+        if (storageBlocked) return false;
+        localStorage.setItem(key, value);
+        return true;
+      },
+    },
     "@/lib/safe-fetch": {
       safeFetch: async (path: string, init: RequestInit) => {
         requests.push({ path, body: JSON.parse(String(init.body)) });
@@ -350,6 +358,23 @@ for (const useObserver of [true, false]) {
     if (useObserver) assert.equal(disconnected, true);
   });
 }
+
+test("an unsaved Harbor session stays on the login form with an actionable storage error", async () => {
+  const f = await fixture(false, false, false, undefined, true);
+  try {
+    await f.input("Username", "captain");
+    await f.input("Password", "password123");
+    await f.click(document.querySelector("button[type='submit']")!);
+    assert.match(
+      document.querySelector("[role='alert']")!.textContent!,
+      /Could not save your Harbor sign-in/,
+    );
+    assert.equal(f.closes(), 0);
+    assert.equal(f.auth.currentAuthor(), null);
+  } finally {
+    await f.close();
+  }
+});
 
 test("login failures remain visible without closing the dialog", async () => {
   const f = await fixture(true);
