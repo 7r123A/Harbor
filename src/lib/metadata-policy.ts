@@ -1,3 +1,14 @@
+import type { MetadataSourceChain } from "./metadata-sources";
+
+type MetadataSettings = {
+  addonOnlyMetadata?: boolean;
+  searchTmdbTopMatch?: boolean;
+  cinemetaEnabled?: boolean;
+  metadataSources?: MetadataSourceChain;
+};
+
+const defaults: Readonly<MetadataSettings> = {};
+
 // Cards, addon requests and meta lookups read these flags many times per render
 // pass, and each read used to JSON.parse the whole settings blob. The parse is
 // kept per raw string, so any change to the stored settings is still seen at once.
@@ -26,19 +37,19 @@ export function readSettingsMirror(key = "harbor.settings"): Record<string, unkn
   return value;
 }
 
-/** Read the active profile's settings mirror without importing the React settings provider. */
-export function addonOnlyMetadata(): boolean {
+/** Read the profile mirror without running settings migrations on the artwork path. */
+export function readMetadataSettings(): Readonly<MetadataSettings> {
   try {
-    return readSettingsMirror()?.addonOnlyMetadata === true;
+    return (readSettingsMirror() as MetadataSettings | null) ?? defaults;
   } catch {
-    return false;
+    return defaults;
   }
 }
 
+export function addonOnlyMetadata(): boolean {
+  return readMetadataSettings().addonOnlyMetadata === true;
+}
+
 export function useTmdbTopMatch(): boolean {
-  try {
-    return readSettingsMirror()?.searchTmdbTopMatch !== false;
-  } catch {
-    return true;
-  }
+  return readMetadataSettings().searchTmdbTopMatch !== false;
 }

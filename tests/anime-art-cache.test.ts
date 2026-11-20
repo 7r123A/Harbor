@@ -18,25 +18,36 @@ let writes = 0;
 const cache = await import("../src/lib/providers/anime-art-cache.ts");
 
 test("unchanged anime art is not rewritten", () => {
-  cache.saveAnimeArt("same", { logo: "https://img.example/logo.png", backdrops: ["a", "b"] });
+  cache.saveAnimeArt("same", "tv", { logo: "https://img.example/logo.png", backdrops: ["a", "b"] });
   const before = writes;
-  cache.saveAnimeArt("same", { logo: "https://img.example/logo.png", backdrops: ["a", "b"] });
+  cache.saveAnimeArt("same", "tv", { logo: "https://img.example/logo.png", backdrops: ["a", "b"] });
   assert.equal(writes, before);
 });
 
 test("a failed anime art write is retried by the next save of unchanged art", () => {
   failWrites = true;
-  cache.saveAnimeArt("retry", { logo: "https://img.example/retry.png" });
+  cache.saveAnimeArt("retry", "tv", { logo: "https://img.example/retry.png" });
   assert.equal(JSON.parse(store.get("harbor.anime.art.v2") ?? "{}").map?.retry, undefined);
 
   failWrites = false;
-  cache.saveAnimeArt("retry", { logo: "https://img.example/retry.png" });
+  cache.saveAnimeArt("retry", "tv", { logo: "https://img.example/retry.png" });
   assert.equal(
     JSON.parse(store.get("harbor.anime.art.v2") ?? "{}").map?.retry?.logo,
     "https://img.example/retry.png",
   );
 
   const before = writes;
-  cache.saveAnimeArt("retry", { logo: "https://img.example/retry.png" });
+  cache.saveAnimeArt("retry", "tv", { logo: "https://img.example/retry.png" });
   assert.equal(writes, before);
+});
+
+test("unchanged movie art is not rewritten, but a change of kind is", () => {
+  cache.saveAnimeArt("film", "movie", { logo: "https://img.example/film.png" });
+  const before = writes;
+  cache.saveAnimeArt("film", "movie", { logo: "https://img.example/film.png" });
+  assert.equal(writes, before);
+
+  cache.saveAnimeArt("film", "tv", { logo: "https://img.example/film.png" });
+  assert.equal(writes, before + 1);
+  assert.equal(JSON.parse(store.get("harbor.anime.art.v2") ?? "{}").map?.film?.kind, "tv");
 });

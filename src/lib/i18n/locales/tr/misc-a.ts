@@ -74,6 +74,7 @@ const miscA: Record<string, string> = {
   "64 neurons": "64 nöron",
   "70s": "70'ler",
   "8 seconds": "8 saniye",
+  "10 seconds": "10 saniye",
   "8-0-4-1. Half the passes, kinder to weaker cards.":
     "8-0-4-1. Geçiş sayısı yarıya indiği için daha zayıf ekran kartlarını daha az zorlar.",
   "80s": "80'ler",

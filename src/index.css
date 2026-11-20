@@ -4500,6 +4500,17 @@ html[data-theme-card="crunch"][dir="rtl"] .harbor-profile-dropdown {
 .harbor-poster[data-loaded] .harbor-shimmer {
   display: none;
 }
+/* Active scrolling: a 300ms fade and an infinite shimmer cannot be perceived
+   while the content moves, but each fading image becomes a compositing layer and
+   each mounted card starts an animation. The first fast scroll of Home revealed
+   dozens at once and was the largest source of double-vsync frames, so pause both
+   for the duration of the gesture. They return as soon as scrolling settles. */
+html[data-scrolling] .harbor-poster-img {
+  transition: none;
+}
+html[data-scrolling] .harbor-shimmer::after {
+  animation: none;
+}
 /* Idle shimmer off-screen: the poster sets data-idle on its root rather than on the shimmer, so
    the visibility observer can toggle it without a React render. */
 .harbor-poster[data-idle] .harbor-shimmer::after {
@@ -4509,9 +4520,9 @@ html[data-theme-card="crunch"][dir="rtl"] .harbor-profile-dropdown {
   opacity: 1;
   transition: none;
 }
-.harbor-row-track[data-far] {
-  overflow-x: hidden;
-}
+/* Row tracks keep overflow-x: auto for their whole life. Toggling it while rows scroll in and
+   out of view made WebKit add a scrollbar mid-scroll, which crashes the macOS WebContent process
+   (null deref in ScrollAnimationMomentum::updateScrollExtents). */
 /* Discover mounts ~49 rows and shows one. Skipping the rest spares Blink their style, layout
    and paint until they are scrolled near; the auto keyword remembers each real height after
    its first pass, so the scrollbar settles instead of guessing forever. */
@@ -4520,6 +4531,13 @@ html[data-theme-card="crunch"][dir="rtl"] .harbor-profile-dropdown {
   contain-intrinsic-size: auto 280px;
   /* Paint containment must leave room for the outset arrows and card hovers. */
   overflow-clip-margin: 64px;
+}
+/* Keep `auto` when a row becomes near. Switching it to `visible` pulls the row's
+   style, layout and paint into the frame that is already mounting its cards; on
+   Discover's smooth-wheel session that showed as 14% missed frames, against 0.3%
+   with `auto`. */
+.harbor-row-shell[data-row-near] {
+  content-visibility: auto;
 }
 .harbor-preview-img {
   background-color: var(--color-raised);

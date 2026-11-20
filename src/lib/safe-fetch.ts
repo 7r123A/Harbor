@@ -76,6 +76,8 @@ const PROXY_HOSTS = new Set([
   "openlibrary.org",
   "covers.openlibrary.org",
   "graphql.anilist.co",
+  "graphql.imdb.com",
+  "api.graphql.imdb.com",
   "www.googleapis.com",
   "www.wikidata.org",
   "api.deepseek.com",
@@ -113,6 +115,8 @@ const DEV_PROXY_HOSTS = new Set([
   "partner.steamgames.com",
   "help.steampowered.com",
   "graphql.anilist.co",
+  "graphql.imdb.com",
+  "api.graphql.imdb.com",
   "openlibrary.org",
   "covers.openlibrary.org",
   "www.googleapis.com",
@@ -168,8 +172,14 @@ function rewriteForWeb(url: string, init?: RequestInit): { url: string; init?: R
     PROXY_HOSTS.has(parsed.hostname) || PROXY_SUFFIXES.some((s) => parsed.hostname.endsWith(s));
   if (!proxiable) return { url, init };
   const localDev = /^(?:localhost|127\.0\.0\.1)$/i.test(window.location.hostname);
-  if (!webProxyAvailable() && !(localDev && DEV_PROXY_HOSTS.has(parsed.hostname)))
-    return { url, init };
+  const isHarborStremio = /(^|\.)harborstremio\.com$/i.test(window.location.hostname);
+  const isImdbGraphql =
+    parsed.hostname === "api.graphql.imdb.com" || parsed.hostname === "graphql.imdb.com";
+  const proxyAllowed =
+    webProxyAvailable() ||
+    (localDev && DEV_PROXY_HOSTS.has(parsed.hostname)) ||
+    (isHarborStremio && isImdbGraphql);
+  if (!proxyAllowed) return { url, init };
 
   const proxied = `/api-proxy/${parsed.hostname}${parsed.pathname}${parsed.search}`;
   if (!init?.headers) return { url: proxied, init };
@@ -506,6 +516,7 @@ function directAttempt(host: string, input: string, init?: RequestInit): Promise
 }
 
 function tauriStringFetch(input: string, init?: RequestInit, timeoutMs = 30000): Promise<Response> {
+  if (init?.signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
   const deadlineMs = timeoutMs + 5_000;
   const directHost = hasSensitiveRequestHeaders(init?.headers) ? null : directHostFor(input);
   if (directHost) {
@@ -514,7 +525,7 @@ function tauriStringFetch(input: string, init?: RequestInit, timeoutMs = 30000):
   }
   const exec = isIdempotent(init?.method)
     ? tauriHarborFetch(input, init, undefined, timeoutMs).catch((e: unknown) => {
-        if (isCancellation(e)) throw e;
+        if (init?.signal?.aborted || isCancellation(e)) throw e;
         if (!shouldFallbackToPluginHttp(e, init)) throw e;
         return pluginHttpFetch(input, init);
       })

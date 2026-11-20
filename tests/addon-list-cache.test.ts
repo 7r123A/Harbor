@@ -15,6 +15,7 @@ const store = new Map<string, string>();
 const addons = await import("../src/lib/addons.ts");
 const catalogCache = await import("../src/lib/addon-catalog-cache.ts");
 const policy = await import("../src/lib/metadata-policy.ts");
+const bpEntries = await import("../src/views/big-picture/addons/bp-addon-entries.ts");
 
 const requestUrl = (input: RequestInfo | URL): string =>
   typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -130,6 +131,21 @@ function mockHeldStremioApi(list: { current: string[] }) {
 }
 
 const ids = (list: { manifest: { id: string } }[]) => list.map((a) => a.manifest.id);
+
+test("the Big Picture addon row follows the shared cache invalidation", async () => {
+  addons.invalidateUserAddons();
+  const api = mockStremioApi();
+  try {
+    await bpEntries.loadCloudAddons("key");
+    await bpEntries.loadCloudAddons("key");
+    assert.equal(reads(api.calls), 1);
+    events.dispatchEvent(new Event("harbor:addons-changed"));
+    await bpEntries.loadCloudAddons("key");
+    assert.equal(reads(api.calls), 2);
+  } finally {
+    api.restore();
+  }
+});
 
 test("a read that overlaps a write is not kept", async () => {
   addons.invalidateUserAddons();

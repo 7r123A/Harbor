@@ -369,8 +369,23 @@ const uiFallback: Record<string, string> = {
     "The cursor fades away when you stop moving the stick. Move it again to bring it back.",
   "{n} s": "{n} s",
   "In the manga reader.": "In the manga reader.",
-  "Choose whether the content advisory appears in full color or a restrained monochrome tone.":
-    "Choose whether the content advisory appears in full color or a restrained monochrome tone.",
+  "Choose whether the content advisory appears in full color or a restrained monochrome tone. Also affects the Content Advisory section on detail pages.":
+    "Choose whether the content advisory appears in full color or a restrained monochrome tone. Also affects the Content Advisory section on detail pages.",
+  "Showing {shown} of {total} notes": "Showing {shown} of {total} notes",
+  "Keep this section expanded by default on future titles":
+    "Keep this section expanded by default on future titles",
+  "Keep expanded": "Keep expanded",
+  "Loading Content Advisory…": "Loading Content Advisory…",
+  "Failed to load Content Advisory.": "Failed to load Content Advisory.",
+  "No detailed content advisory submitted for this title on IMDb.":
+    "No detailed content advisory submitted for this title on IMDb.",
+  "Content Advisory is unavailable for this title (no verified IMDb ID).":
+    "Content Advisory is unavailable for this title (no verified IMDb ID).",
+  "{votedFor} of {totalVotes} users rated {severity}":
+    "{votedFor} of {totalVotes} users rated {severity}",
+  "{count} spoiler entry hidden — SHOW": "{count} spoiler entry hidden — SHOW",
+  "No detailed notes submitted for this category.":
+    "No detailed notes submitted for this category.",
   "Content advisory theme": "Content advisory theme",
   Monochrome: "Monochrome",
   "#": "#",
