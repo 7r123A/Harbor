@@ -1,11 +1,15 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { Loader2, Search, SlidersHorizontal, UsersRound, X } from "lucide-react";
+import { Loader2, UsersRound, X } from "lucide-react";
 import { ModalShell, useModalExit } from "@/components/modal-shell";
 import { useT } from "@/lib/i18n";
 import { useView } from "@/lib/view";
 import { currentAuthor, subscribeAuthor } from "@/lib/theme-auth";
 import { fetchFriends } from "@/lib/social/friends";
-import type { DiscoverySort } from "@/lib/social/user-discovery";
+import {
+  DiscoveryControls,
+  DEFAULT_DISCOVERY_OPTIONS,
+  type DiscoveryOptions,
+} from "./user-discovery/discovery-controls";
 import { useUserDiscovery } from "./user-discovery/use-user-discovery";
 import { DiscoveryUserCard } from "./user-discovery/user-card";
 
@@ -14,17 +18,22 @@ export function UserDiscoveryView({ onClose }: { onClose: () => void }) {
   const { openProfile } = useView();
   const { closing, close } = useModalExit(onClose);
   const viewer = useSyncExternalStore(subscribeAuthor, currentAuthor, currentAuthor);
-  const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<DiscoverySort>("newest");
-  const [rated, setRated] = useState(false);
-  const [match, setMatch] = useState(false);
-  const [minMatch, setMinMatch] = useState(50);
-  const [minShared, setMinShared] = useState(10);
-  const [minRatings, setMinRatings] = useState(1);
-  const [canvas, setCanvas] = useState(false);
+  const [options, setOptions] = useState<DiscoveryOptions>(DEFAULT_DISCOVERY_OPTIONS);
+  const [seed, setSeed] = useState(() => crypto.randomUUID());
   const [friends, setFriends] = useState<Set<string>>(new Set());
   const d = useUserDiscovery(
-    { query, sort, rated, canvas, minRatings, match, minMatch, minShared },
+    {
+      query: options.query,
+      sort: options.orders[0] ?? "random",
+      orders: options.orders,
+      seed,
+      rated: options.minRatings > 0,
+      canvas: false,
+      minRatings: options.minRatings || 1,
+      match: !!viewer && options.minMatch != null,
+      minMatch: options.minMatch ?? 50,
+      minShared: options.minShared,
+    },
     viewer?.id,
   );
   useEffect(() => {
@@ -39,16 +48,7 @@ export function UserDiscoveryView({ onClose }: { onClose: () => void }) {
         .catch(() => {});
     return () => controller.abort();
   }, [viewer?.id]);
-  const clear = () => {
-    setQuery("");
-    setSort("newest");
-    setRated(false);
-    setCanvas(false);
-    setMatch(false);
-    setMinMatch(50);
-    setMinShared(10);
-    setMinRatings(1);
-  };
+  const clear = () => setOptions(DEFAULT_DISCOVERY_OPTIONS);
   return (
     <ModalShell closing={closing} onDismiss={close} width={960} labelledBy="user-discovery-title">
       <div className="min-h-0 overflow-x-hidden overflow-y-auto bg-canvas">
@@ -77,119 +77,13 @@ export function UserDiscoveryView({ onClose }: { onClose: () => void }) {
               {t("Explore Harbor profiles, find new friends, and discover what they rate.")}
             </p>
           </header>
-          <section
-            aria-label={t("Discover people filters")}
-            className="mb-7 rounded-2xl bg-surface p-4 ring-1 ring-edge-soft"
-          >
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <label className="flex min-w-0 flex-1 items-center gap-3 rounded-xl bg-canvas px-4 ring-1 ring-edge-soft focus-within:ring-edge">
-                <Search size={17} className="text-ink-subtle" />
-                <input
-                  aria-label={t("Search people")}
-                  placeholder={t("Search by name or @handle")}
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  className="h-12 min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-subtle"
-                />
-              </label>
-              <label className="flex items-center gap-3 rounded-xl bg-canvas px-4 text-xs text-ink-muted ring-1 ring-edge-soft">
-                <SlidersHorizontal size={15} />
-                {t("Sort by")}
-                <select
-                  aria-label={t("Sort people")}
-                  value={sort}
-                  onChange={(event) => setSort(event.target.value as DiscoverySort)}
-                  className="h-12 bg-canvas text-sm text-ink outline-none"
-                >
-                  <option value="newest">{t("Newest members")}</option>
-                  <option value="oldest">{t("Oldest members")}</option>
-                  <option value="username">{t("Alphabetical")}</option>
-                </select>
-              </label>
-            </div>
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              {[
-                {
-                  label: t("Has ratings"),
-                  active: rated,
-                  toggle: () => setRated(!rated),
-                  description: undefined,
-                },
-                {
-                  label: t("Match score"),
-                  active: match,
-                  toggle: () => setMatch(!match),
-                  description: !viewer
-                    ? t("Sign in to compare your ratings.")
-                    : t("Compare scores on titles you both rated."),
-                },
-                {
-                  label: t("Custom profile"),
-                  active: canvas,
-                  toggle: () => setCanvas(!canvas),
-                  description: t(
-                    "Profiles with a custom HTML/CSS layout enabled or saved. Choosing a theme alone does not count.",
-                  ),
-                },
-              ].map((filter) => (
-                <button
-                  key={filter.label}
-                  type="button"
-                  title={filter.description}
-                  disabled={filter.label === t("Match score") && !viewer}
-                  aria-pressed={filter.active}
-                  onClick={filter.toggle}
-                  className={`min-h-9 rounded-full px-4 text-xs font-medium ring-1 transition-colors ${filter.active ? "bg-accent/15 text-accent ring-accent/50" : "bg-canvas text-ink-muted ring-edge-soft hover:bg-elevated"}`}
-                >
-                  {filter.label}
-                </button>
-              ))}
-              {(query || rated || canvas || match || sort !== "newest") && (
-                <button
-                  type="button"
-                  onClick={clear}
-                  className="min-h-9 px-2 text-xs text-ink-subtle hover:text-ink"
-                >
-                  {t("Clear filters")}
-                </button>
-              )}
-            </div>
-            {(rated || match) && (
-              <div className="mt-4 grid gap-4 sm:grid-cols-2">
-                {rated && (
-                  <DiscoverySlider
-                    label={t("Minimum ratings")}
-                    value={minRatings}
-                    min={1}
-                    max={1000}
-                    onChange={setMinRatings}
-                  />
-                )}
-                {match && (
-                  <>
-                    <DiscoverySlider
-                      label={t("Minimum match")}
-                      value={minMatch}
-                      min={0}
-                      max={100}
-                      suffix="%"
-                      onChange={setMinMatch}
-                    />
-                    <DiscoverySlider
-                      label={t("Minimum shared titles")}
-                      value={minShared}
-                      min={1}
-                      max={500}
-                      onChange={setMinShared}
-                    />
-                    <p className="text-xs text-ink-subtle">
-                      {t("Only show matches based on at least this many titles you both rated.")}
-                    </p>
-                  </>
-                )}
-              </div>
-            )}
-          </section>
+          <DiscoveryControls
+            options={options}
+            onChange={setOptions}
+            onRefresh={() => setSeed(crypto.randomUUID())}
+            signedIn={!!viewer}
+            loading={d.loading}
+          />
           {d.shortQuery ? (
             <p className="py-14 text-center text-sm text-ink-muted">
               {t("Enter at least 2 characters to search.")}
@@ -266,42 +160,5 @@ export function UserDiscoveryView({ onClose }: { onClose: () => void }) {
         </main>
       </div>
     </ModalShell>
-  );
-}
-
-function DiscoverySlider({
-  label,
-  value,
-  min,
-  max,
-  suffix = "",
-  onChange,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  suffix?: string;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <label className="grid gap-2 text-xs text-ink-muted">
-      <span className="flex justify-between gap-3">
-        <span>{label}</span>
-        <span className="tabular-nums text-ink">
-          {value}
-          {suffix}
-        </span>
-      </span>
-      <input
-        type="range"
-        aria-label={label}
-        min={min}
-        max={max}
-        value={value}
-        onChange={(event) => onChange(Number(event.target.value))}
-        className="w-full accent-accent"
-      />
-    </label>
   );
 }

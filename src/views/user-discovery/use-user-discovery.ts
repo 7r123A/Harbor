@@ -14,7 +14,8 @@ export function useUserDiscovery(filters: UserDiscoveryFilters, viewer: string |
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const request = useRef<AbortController | null>(null);
-  const { query, sort, rated, canvas, minRatings, match, minMatch, minShared } = filters;
+  const { query, sort, rated, canvas, minRatings, match, minMatch, minShared, seed } = filters;
+  const orderKey = filters.orders?.join(",") ?? "";
   const shortQuery = [...query.trim().replace(/^@+/, "")].length === 1;
 
   useEffect(() => {
@@ -29,7 +30,18 @@ export function useUserDiscovery(filters: UserDiscoveryFilters, viewer: string |
     const timer = window.setTimeout(() => {
       if (shortQuery) return;
       fetchDiscoveredUsers(
-        { query, sort, rated, canvas, minRatings, match, minMatch, minShared },
+        {
+          query,
+          sort,
+          rated,
+          canvas,
+          minRatings,
+          match,
+          minMatch,
+          minShared,
+          seed,
+          orders: orderKey ? (orderKey.split(",") as UserDiscoveryFilters["orders"]) : undefined,
+        },
         controller.signal,
       )
         .then((page) => {
@@ -53,6 +65,8 @@ export function useUserDiscovery(filters: UserDiscoveryFilters, viewer: string |
   }, [
     query,
     sort,
+    seed,
+    orderKey,
     rated,
     canvas,
     minRatings,

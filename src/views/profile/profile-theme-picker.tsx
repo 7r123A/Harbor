@@ -20,8 +20,6 @@ import {
 import { CANVAS_DEFAULT } from "./customization/customization-types";
 import type { ProfileSummary } from "./profile-types";
 
-import { ProfileThemePreview } from "./profile-theme-preview";
-
 type Busy = "palette" | "glass" | "gradient" | null;
 
 const CUSTOM_SLOTS: Array<{ key: keyof CustomProfileColors; label: string }> = [
@@ -91,12 +89,10 @@ function CustomThemeEditor({
   colors,
   busy,
   onApply,
-  onPreview,
 }: {
   colors: CustomProfileColors;
   busy: boolean;
   onApply: (colors: CustomProfileColors) => void;
-  onPreview: (colors: CustomProfileColors) => void;
 }) {
   const t = useT();
   const [draft, setDraft] = useState<CustomProfileColors>(colors);
@@ -106,14 +102,6 @@ function CustomThemeEditor({
   const set = (key: keyof CustomProfileColors, value: string) => {
     const next = { ...draft, [key]: value };
     setDraft(next);
-    onPreview(
-      Object.fromEntries(
-        CUSTOM_SLOTS.map((slot) => [
-          slot.key,
-          normalizeHexColor(next[slot.key]) ?? colors[slot.key],
-        ]),
-      ) as CustomProfileColors,
-    );
   };
 
   const apply = () => {
@@ -190,11 +178,9 @@ export function ProfileThemePicker({
 }) {
   const t = useT();
   const [theme, setTheme] = useState<ProfileTheme>(() => parseProfileTheme(summary.customCss));
-  const [previewTheme, setPreviewTheme] = useState(theme);
   useEffect(() => {
     const current = parseProfileTheme(summary.customCss);
     setTheme(current);
-    setPreviewTheme(current);
   }, [summary.customCss]);
   const [busy, setBusy] = useState<Busy>(null);
   const [busyPalette, setBusyPalette] = useState<ProfilePaletteId | null>(null);
@@ -213,7 +199,6 @@ export function ProfileThemePicker({
         : (next.savedCustomColors ??
           (theme.palette === "custom" ? theme.colors : (theme.savedCustomColors ?? theme.colors)));
     const saved = retainedColors ? { ...next, savedCustomColors: retainedColors } : next;
-    setPreviewTheme(saved);
     setBusy(kind);
     setBusyPalette(kind === "palette" ? next.palette : null);
     setError(null);
@@ -269,8 +254,6 @@ export function ProfileThemePicker({
         {t("Colours visitors see on your profile. The rest of the app keeps their own theme.")}
       </div>
 
-      <ProfileThemePreview summary={summary} theme={previewTheme} />
-
       <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
         {PROFILE_PALETTE_ORDER.map((id) => {
           const palette = paletteFor(id);
@@ -321,7 +304,6 @@ export function ProfileThemePicker({
           key={JSON.stringify(theme.colors)}
           colors={theme.colors ?? DEFAULT_CUSTOM_COLORS}
           busy={!!busy}
-          onPreview={(colors) => setPreviewTheme({ ...theme, colors })}
           onApply={(colors) =>
             void apply({ ...theme, colors, savedCustomColors: colors }, "palette")
           }

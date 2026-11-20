@@ -3399,6 +3399,18 @@ const uiFallback: Record<string, string> = {
   "Profile appearance": "Profile appearance",
   "Hours watched": "Hours watched",
   "No ratings yet": "No ratings yet",
+  "Recent activity": "Recent activity",
+  "Written reviews": "Written reviews",
+  "Based on at least {n} shared ratings": "Based on at least {n} shared ratings",
+  "{score}% Match & above": "{score}% Match & above",
+  Customize: "Customize",
+  "Filter by match score": "Filter by match score",
+  "Match filters use titles you both rated. A minimum of 0 total ratings includes all accounts.":
+    "Match filters use titles you both rated. A minimum of 0 total ratings includes all accounts.",
+  "Sorts apply in selection order.": "Sorts apply in selection order.",
+  "Shuffle matching people. Selected sorts stay applied.":
+    "Shuffle matching people. Selected sorts stay applied.",
+  Refresh: "Refresh",
 };
 
 export default uiFallback;
