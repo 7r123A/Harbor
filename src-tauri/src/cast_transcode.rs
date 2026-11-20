@@ -112,7 +112,11 @@ pub struct VideoInfo {
     pub hdr: bool,
     pub dolby_vision: Option<u32>,
     pub interlaced: bool,
+    /// Average bits per second (the stream's own field, or Matroska's BPS tag); 0 when unknown.
     pub bitrate: u64,
+    /// The peak bits per second the stream declares (MP4 `btrt`/`esds` maxBitrate, as ffprobe's
+    /// `max_bit_rate`); 0 when it declares none. Only this bounds what a copied picture can reach.
+    pub max_bitrate: u64,
     /// Sample (pixel) aspect ratio when it is not square, e.g. 16:15 for a PAL DVD.
     pub sar: Option<(u32, u32)>,
     /// The level the stream declares (H.264: 41 for 4.1; H.265: general_level_idc, 153 for 5.1).
@@ -265,6 +269,8 @@ struct ProbeStream {
     #[serde(default)]
     bit_rate: Option<String>,
     #[serde(default)]
+    max_bit_rate: Option<String>,
+    #[serde(default)]
     tags: HashMap<String, String>,
     #[serde(default)]
     disposition: HashMap<String, i64>,
@@ -344,6 +350,7 @@ pub(crate) fn parse_probe(json: &str) -> Result<MediaProbe, String> {
                     dolby_vision,
                     interlaced: matches!(field_order, "tt" | "bb" | "tb" | "bt"),
                     bitrate: stream_bitrate(s.bit_rate.as_deref(), &s.tags),
+                    max_bitrate: s.max_bit_rate.as_deref().and_then(|b| b.trim().parse().ok()).unwrap_or(0),
                     sar: parse_sar(s.sample_aspect_ratio.as_deref()),
                     level: s.level.and_then(|l| u32::try_from(l).ok()).filter(|l| *l > 0),
                 });
@@ -684,9 +691,9 @@ fn peak_kbps(target_kbps: u32, device_kbps: Option<u32>) -> u32 {
     device_kbps.map_or(peak, |limit| peak.min(limit))
 }
 
-/// The highest rate the picture can have: its own reported rate, or the whole file's less every
-/// audio track's known rate. 0 when neither is known.
-fn video_rate_bound(probe: Option<&MediaProbe>, video: &VideoInfo) -> u64 {
+/// The picture's average rate: its own reported rate, or else the whole file's less every audio
+/// track's known rate (an average too, never a peak). 0 when neither is known.
+fn video_average_rate(probe: Option<&MediaProbe>, video: &VideoInfo) -> u64 {
     if video.bitrate > 0 {
         return video.bitrate;
     }
@@ -741,15 +748,24 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
             reasons.push(format!("{}p above {}p", v.height, max_height));
             encode_video = true;
         }
-        // Under a receiver's bit rate limit the picture is copied only when its rate is known to fit:
-        // the stream's own rate, or else the whole file's less the audio, which can only be higher.
+        // Under a receiver's bit rate limit the picture is copied only when its declared peak fits.
+        // An average (the stream's rate, Matroska's BPS tag, the file's rate) says nothing about
+        // the peaks: a 720p stream averaging 2.5 Mbit/s can reach 6 Mbit/s. Without a declared
+        // peak the picture is encoded with the capped maxrate instead.
         if let Some(limit) = device_kbps {
-            let source_kbps = video_rate_bound(input.probe, v) / 1000;
-            if source_kbps == 0 {
-                reasons.push(format!("unknown bit rate, receiver limit {limit} kbit/s"));
-                encode_video = true;
-            } else if source_kbps > u64::from(limit) {
-                reasons.push(format!("{source_kbps} kbit/s above {limit} kbit/s"));
+            let average_kbps = video_average_rate(input.probe, v) / 1000;
+            let peak_kbps = v.max_bitrate / 1000;
+            let reason = if average_kbps > u64::from(limit) {
+                Some(format!("{average_kbps} kbit/s above {limit} kbit/s"))
+            } else if peak_kbps > u64::from(limit) {
+                Some(format!("{peak_kbps} kbit/s peak above {limit} kbit/s"))
+            } else if peak_kbps == 0 {
+                Some(format!("peak bit rate unknown, receiver limit {limit} kbit/s"))
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                reasons.push(reason);
                 encode_video = true;
             }
         }
@@ -1028,7 +1044,11 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
     } else if encode_video {
         u64::from(peak_kbps(target_kbps, device_kbps)) * 1000
     } else {
-        video.map(|v| video_rate_bound(input.probe, v)).filter(|b| *b > 0).unwrap_or(8_000_000)
+        // The declared peak when there is one; otherwise the average is the best estimate known.
+        video
+            .map(|v| if v.max_bitrate > 0 { v.max_bitrate } else { video_average_rate(input.probe, v) })
+            .filter(|b| *b > 0)
+            .unwrap_or(8_000_000)
     };
     let bandwidth = video_bps.saturating_add(audio_bps).saturating_mul(11) / 10;
     CastPlan {
@@ -1475,7 +1495,7 @@ mod tests {
     }
 
     #[test]
-    fn a_copied_picture_must_be_known_to_fit_the_receiver_limit() {
+    fn a_copied_picture_must_declare_a_peak_within_the_receiver_limit() {
         let limits = DeviceLimits { max_height: Some(1080), max_video_kbps: Some(3_000), ..Default::default() };
         let film = |video_extra: &str, format_extra: &str| {
             parse_probe(&format!(
@@ -1484,24 +1504,39 @@ mod tests {
             ))
             .unwrap()
         };
-        // MKV keeps the rate in mkvmerge's statistics tag, under either name.
-        for tag in [r#","tags":{"BPS-eng":"2500000"}"#, r#","tags":{"BPS":"2500000"}"#] {
-            let probe = film(tag, "");
-            assert_eq!(probe.video.as_ref().unwrap().bitrate, 2_500_000);
-            let p = plan_with(&probe, &CastOptions::default(), limits);
-            assert_eq!(p.summary.video, "copy", "{tag}");
-            assert_eq!(p.bandwidth, (2_500_000 + 192_000) * 11 / 10);
+        let reasons = |p: &CastPlan| p.summary.reasons.clone();
+        // A declared peak within the limit (MP4's maxBitrate) allows the copy, and BANDWIDTH
+        // announces that peak, not the average.
+        let p = plan_with(&film(r#","bit_rate":"2500000","max_bit_rate":"2800000""#, ""), &CastOptions::default(), limits);
+        assert_eq!(p.summary.video, "copy", "{:?}", reasons(&p));
+        assert_eq!(p.bandwidth, (2_800_000 + 192_000) * 11 / 10);
+        // A 720p stream averaging 2.5 Mbit/s that peaks at 6 Mbit/s is encoded to the capped rate.
+        let p = plan_with(&film(r#","bit_rate":"2500000","max_bit_rate":"6000000""#, ""), &CastOptions::default(), limits);
+        assert!(reasons(&p).iter().any(|r| r == "6000 kbit/s peak above 3000 kbit/s"), "{:?}", reasons(&p));
+        assert!(p.output.join(" ").contains("-maxrate 3000k"), "{:?}", p.output);
+        // An average below the limit proves nothing about the peaks: the stream's own rate, MKV's
+        // statistics tag under either name, or the file's rate less its audio.
+        for (video, format) in [
+            (r#","bit_rate":"2500000""#, ""),
+            (r#","tags":{"BPS-eng":"2500000"}"#, ""),
+            (r#","tags":{"BPS":"2500000"}"#, ""),
+            ("", r#","bit_rate":"2800000""#),
+            ("", ""),
+        ] {
+            let p = plan_with(&film(video, format), &CastOptions::default(), limits);
+            assert_ne!(p.summary.video, "copy", "{video} {format}");
+            assert!(reasons(&p).iter().any(|r| r == "peak bit rate unknown, receiver limit 3000 kbit/s"), "{:?}", reasons(&p));
+            assert!(p.output.join(" ").contains("-maxrate 3000k"), "{:?}", p.output);
         }
-        // With no stream rate, the file's rate less its audio bounds the picture's.
-        let p = plan_with(&film("", r#","bit_rate":"2800000""#), &CastOptions::default(), limits);
-        assert_eq!(p.summary.video, "copy", "{:?}", p.summary.reasons);
+        // An average already above the limit says so.
         let p = plan_with(&film("", r#","bit_rate":"9000000""#), &CastOptions::default(), limits);
-        assert!(p.summary.reasons.iter().any(|r| r == "8808 kbit/s above 3000 kbit/s"), "{:?}", p.summary.reasons);
-        // Nothing known at all: a receiver with a limit is not sent a picture that may exceed it.
-        let p = plan_with(&film("", ""), &CastOptions::default(), limits);
-        assert_ne!(p.summary.video, "copy");
-        assert!(p.summary.reasons.iter().any(|r| r == "unknown bit rate, receiver limit 3000 kbit/s"), "{:?}", p.summary.reasons);
-        // Without a limit, an unknown rate changes nothing.
+        assert!(reasons(&p).iter().any(|r| r == "8808 kbit/s above 3000 kbit/s"), "{:?}", reasons(&p));
+        // Without a limit nothing is required: the film is copied, its MKV tag only feeds BANDWIDTH.
+        let tagged = film(r#","tags":{"BPS-eng":"2500000"}"#, "");
+        assert_eq!(tagged.video.as_ref().unwrap().bitrate, 2_500_000);
+        let p = plan_with(&tagged, &CastOptions::default(), DeviceLimits::default());
+        assert_eq!(p.summary.video, "copy");
+        assert_eq!(p.bandwidth, (2_500_000 + 192_000) * 11 / 10);
         assert_eq!(plan_with(&film("", ""), &CastOptions::default(), DeviceLimits::default()).summary.video, "copy");
     }
 
