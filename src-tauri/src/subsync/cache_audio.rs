@@ -284,7 +284,7 @@ fn verified_start(
             .filter(|v| v.is_finite())
             .ok_or_else(|| "cache-audio-timeline-invalid".into())
     }
-    fn validate(timeline: &PacketTimeline) -> Result<(), String> {
+    fn validate(timeline: &PacketTimeline, label: &str) -> Result<(), String> {
         let mut previous_end: Option<f64> = None;
         for p in &timeline.packets {
             let pts = number(&p.pts_time)?;
@@ -300,8 +300,13 @@ fn verified_start(
             {
                 return Err("cache-audio-timeline-invalid".into());
             }
-            if previous_end.is_some_and(|v| (pts - v).abs() > 0.002) {
-                return Err("cache-audio-timeline-discontinuous".into());
+            // ffprobe prints microseconds. Compare at that precision so an
+            // exact 2 ms timestamp difference survives binary rounding.
+            if previous_end.is_some_and(|v| ((pts - v).abs() * 1_000_000.0).round() > 2_000.0) {
+                // Keep a strict continuity gate, but identify which cache cut
+                // failed so release logs can distinguish packet gaps from a
+                // disagreement between otherwise continuous captures.
+                return Err(format!("cache-audio-timeline-discontinuous:{label}-gap"));
             }
             previous_end = Some(pts + duration);
         }
@@ -321,8 +326,8 @@ fn verified_start(
     {
         return Err("cache-audio-timeline-invalid".into());
     }
-    validate(cached)?;
-    validate(anchor)?;
+    validate(cached, "main")?;
+    validate(anchor, "anchor")?;
     let mut hashes: HashMap<&str, Option<&Packet>> = HashMap::new();
     for p in &cached.packets {
         if let Some(hash) = p.data_hash.as_deref() {
@@ -348,7 +353,7 @@ fn verified_start(
     }
     offsets.sort_by(f64::total_cmp);
     if offsets.last().unwrap() - offsets[0] > 0.002 {
-        return Err("cache-audio-timeline-discontinuous".into());
+        return Err("cache-audio-timeline-discontinuous:overlap-shift".into());
     }
     let last = cached.packets.last().unwrap();
     let marker = anchor.packets.last().unwrap();
@@ -451,5 +456,47 @@ mod tests {
             }
             assert!(verified_start(&cached, &timeline(1900, 225, 60.0), 70.0, 68.0).is_err());
         }
+    }
+
+    #[test]
+    fn packet_gap_accepts_two_milliseconds_but_rejects_one_more_microsecond() {
+        let mut main = timeline(625, 1563, 20.0);
+        let anchor = timeline(1900, 225, 60.0);
+        main.packets[10].duration_time = Some("0.030000".into());
+        assert!(verified_start(&main, &anchor, 70.0, 68.0).is_ok());
+        main.packets[10].duration_time = Some("0.029999".into());
+        assert_eq!(
+            verified_start(&main, &anchor, 70.0, 68.0).unwrap_err(),
+            "cache-audio-timeline-discontinuous:main-gap"
+        );
+    }
+
+    #[test]
+    fn timestamp_rejection_identifies_the_failed_capture_without_loosening_checks() {
+        let good_main = timeline(625, 1563, 20.0);
+        let good_anchor = timeline(1900, 225, 60.0);
+        let mut bad_main = timeline(625, 1563, 20.0);
+        bad_main.packets[10].duration_time = Some("0.04".into());
+        assert_eq!(
+            verified_start(&bad_main, &good_anchor, 70.0, 68.0).unwrap_err(),
+            "cache-audio-timeline-discontinuous:main-gap"
+        );
+        let mut bad_anchor = timeline(1900, 225, 60.0);
+        bad_anchor.packets[10].duration_time = Some("0.04".into());
+        assert_eq!(
+            verified_start(&good_main, &bad_anchor, 70.0, 68.0).unwrap_err(),
+            "cache-audio-timeline-discontinuous:anchor-gap"
+        );
+        let mut drifting_anchor = timeline(1900, 225, 60.0);
+        for (index, packet) in drifting_anchor.packets.iter_mut().enumerate() {
+            let time = packet.pts_time.as_deref().unwrap().parse::<f64>().unwrap()
+                + index as f64 * 0.00002;
+            packet.pts_time = Some(time.to_string());
+            packet.dts_time = Some(time.to_string());
+        }
+        assert_eq!(
+            verified_start(&good_main, &drifting_anchor, 70.0, 68.0).unwrap_err(),
+            "cache-audio-timeline-discontinuous:overlap-shift"
+        );
     }
 }

@@ -88,6 +88,12 @@ import { matchPlaybackVad } from "@/lib/subtitles/autosync/playback-vad";
 import { isLikelyDialogueCue } from "@/lib/subtitles/autosync/dialogue-matches";
 import {
   hasSavedAutoSyncCorrection,
+import {
+  cacheCaptureAttemptPath,
+  cacheCaptureRetryReason,
+  cacheCaptureScenePath,
+  MAX_CACHE_CAPTURE_ATTEMPTS,
+} from "@/lib/subtitles/autosync/playback-cache-retry";
   readSavedAutoSyncCorrection,
   shouldRestoreAutoSyncCorrection,
   saveAutoSyncCorrection,
@@ -1998,48 +2004,102 @@ export function useAutoSync(params: {
               playbackStageRef.current = "verify";
               setAnalysisRevision((revision) => revision + 1);
               setReason("Reading buffered audio and checking its timestamps");
-              await invoke("mpv_command", {
-                cmd: [
-                  "dump-cache",
-                  startAt.toFixed(3),
-                  endAt.toFixed(3),
-                  recordPath.replace(/\\/g, "/"),
-                ],
-              }).catch(() => {
-                throw new Error("cache-audio-dump-command-failed");
-              });
-              if (aborted || !isCurrentAutoSyncScope(scope)) return;
-              // A second, earlier cut establishes the cache's movie-time origin
-              // without reopening the remote source. Both cuts must agree.
-              const anchorEndSec = endAt - 2;
-              await invoke("mpv_command", {
-                cmd: [
-                  "dump-cache",
-                  (anchorEndSec - 3).toFixed(3),
-                  anchorEndSec.toFixed(3),
-                  anchorPath.replace(/\\/g, "/"),
-                ],
-              });
-              if (aborted || !isCurrentAutoSyncScope(scope)) return;
-              // dump-cache has completed. Validate actual decoded samples; the
-              // container byte count cannot tell us how much audio it contains.
-              // mpv remuxes selected tracks only, so the selected audio is 0:a:0
-              // in this clip even when it was a later stream in the movie.
-              const prepared = await invoke<{
+              // A cache dump can occasionally contain an incomplete packet
+              // timeline despite the same scene being fully buffered. Capture
+              // one fresh pair before giving up; never reuse a failed dump or
+              // bypass the independent timestamp/packet-hash verification.
+              type PreparedCacheAudio = {
                 path: string;
                 durationSec: number;
                 startSec: number;
                 subtitleIntervals?: Array<[number, number]>;
-              }>("subsync_prepare_cache_audio", {
-                input: recordPath.replace(/\\/g, "/"),
-                mapSpec: "0:a:0",
-                sessionId: nativeTapId,
-                anchorInput: anchorPath.replace(/\\/g, "/"),
-                requestedEndSec: Number(endAt.toFixed(3)),
-                anchorEndSec: Number(anchorEndSec.toFixed(3)),
-                embeddedSubtitles: embeddedPlayback,
-              });
-              cleanupFiles.push(() => fs.remove(prepared.path));
+              };
+              let prepared: PreparedCacheAudio | null = null;
+              const anchorEndSec = endAt - 2;
+              // A second dialogue scene must not reuse the first scene's dump or anchor.
+              const sceneCapturePath = cacheCaptureScenePath(
+                recordPath,
+                retryAfterStartSec === null ? 1 : 2,
+              );
+              const sceneAnchorPath =
+                retryAfterStartSec === null
+                  ? anchorPath
+                  : sceneCapturePath.replace(/\.mkv$/, "-anchor.mkv");
+              if (retryAfterStartSec !== null) {
+                cleanupFiles.push(() => fs.remove(sceneCapturePath));
+                cleanupFiles.push(() => fs.remove(sceneAnchorPath));
+              }
+              for (let attempt = 1; attempt <= MAX_CACHE_CAPTURE_ATTEMPTS; attempt++) {
+                const capturePath = cacheCaptureAttemptPath(sceneCapturePath, attempt);
+                const captureAnchorPath =
+                  attempt === 1 ? sceneAnchorPath : capturePath.replace(/\.mkv$/, "-anchor.mkv");
+                if (attempt > 1) {
+                  cleanupFiles.push(() => fs.remove(capturePath));
+                  cleanupFiles.push(() => fs.remove(captureAnchorPath));
+                }
+                // Remove even a partially decoded WAV if validation fails.
+                cleanupFiles.push(() => fs.remove(capturePath.replace(/\.mkv$/, ".wav")));
+                try {
+                  await invoke("mpv_command", {
+                    cmd: [
+                      "dump-cache",
+                      startAt.toFixed(3),
+                      endAt.toFixed(3),
+                      capturePath.replace(/\\/g, "/"),
+                    ],
+                  }).catch(() => {
+                    throw new Error("cache-audio-dump-command-failed");
+                  });
+                  if (aborted || !isCurrentAutoSyncScope(scope)) return;
+                  // A second, earlier cut establishes the cache's movie-time
+                  // origin without reopening the source. Both cuts must agree.
+                  await invoke("mpv_command", {
+                    cmd: [
+                      "dump-cache",
+                      (anchorEndSec - 3).toFixed(3),
+                      anchorEndSec.toFixed(3),
+                      captureAnchorPath.replace(/\\/g, "/"),
+                    ],
+                  }).catch(() => {
+                    throw new Error("cache-audio-dump-command-failed");
+                  });
+                  if (aborted || !isCurrentAutoSyncScope(scope)) return;
+                  // The selected track is remuxed as 0:a:0. A valid timeline
+                  // and sufficient decoded WAV duration are mandatory.
+                  prepared = await invoke<PreparedCacheAudio>("subsync_prepare_cache_audio", {
+                    input: capturePath.replace(/\\/g, "/"),
+                    mapSpec: "0:a:0",
+                    sessionId: nativeTapId,
+                    anchorInput: captureAnchorPath.replace(/\\/g, "/"),
+                    requestedEndSec: Number(endAt.toFixed(3)),
+                    anchorEndSec: Number(anchorEndSec.toFixed(3)),
+                    embeddedSubtitles: embeddedPlayback,
+                  });
+                  void invoke("mpv_command", {
+                    cmd: [
+                      "print-text",
+                      `[harbor/subsync] cache-capture=verified attempt=${attempt}`,
+                    ],
+                  }).catch(() => {});
+                  break;
+                } catch (error) {
+                  if (aborted || !isCurrentAutoSyncScope(scope)) return;
+                  const transientCode = cacheCaptureRetryReason(error);
+                  const retry = transientCode !== null && attempt < MAX_CACHE_CAPTURE_ATTEMPTS;
+                  void invoke("mpv_command", {
+                    cmd: [
+                      "print-text",
+                      `[harbor/subsync] cache-capture=${retry ? "retry" : "rejected"} attempt=${attempt} reason=${transientCode ?? playbackTimelineFailure(error)?.code ?? "other"}`,
+                    ],
+                  }).catch(() => {});
+                  if (!retry) throw error;
+                  setReason("Rechecking buffered audio with a fresh cache capture");
+                  setAnalysisRevision((revision) => revision + 1);
+                  await sleep(250);
+                  if (aborted || !isCurrentAutoSyncScope(scope)) return;
+                }
+              }
+              if (!prepared) throw new Error("cache-audio-timeline-unverified");
               const requestedStartSec = startAt;
               startAt = prepared.startSec;
               if (embeddedPlayback) {
