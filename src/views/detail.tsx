@@ -454,9 +454,15 @@ function DetailContent({
   const { toggle: toggleFavorite } = useMediaFavorites();
   const isFav = useIsFavorite(meta.id, [detail?.imdbId]);
   const inSession = roomSnapshot.state === "joined" && roomSnapshot.participants.length >= 2;
-  useScrollMemory(`meta:${meta.id}`, scrollRef, settings.resumeDetailScroll || metaHasSeasonScroll, true, {
-    followLayout: true,
-  });
+  useScrollMemory(
+    `meta:${meta.id}`,
+    scrollRef,
+    settings.resumeDetailScroll || metaHasSeasonScroll,
+    true,
+    {
+      followLayout: true,
+    },
+  );
 
   useEffect(() => {
     if (!meta.id.startsWith("simkl:")) return;
@@ -571,8 +577,12 @@ function DetailContent({
   }, [detectedKitsu]);
   // The episode panel can switch a catalog/franchise page to the native entry
   // that owns the selected season. The airing banner must follow that entry.
-  const anilistExtra = useAnimeAnilistDetails(animeCanonicalId, isAnime);
-  const seasonDetails = useAnimeAnilistDetails(seasonCanonicalId, isAnime);
+  const anilistExtra = useAnimeAnilistDetails(animeCanonicalId, isAnime, meta.id);
+  const seasonDetails = useAnimeAnilistDetails(
+    seasonCanonicalId,
+    isAnime,
+    seasonCanonicalId === animeCanonicalId ? meta.id : undefined,
+  );
   const nextAiring =
     seasonTrackerSelection.requiresOwner && !seasonCanonicalId
       ? null
@@ -2921,15 +2931,23 @@ function DetailContent({
                     onWatched={markThisMovieWatched}
                     showSync={actionStage >= 2}
                     listItem={listSeed}
-                    simkl={listTrackerId ? {
-                      harborId: listTrackerId,
-                      type: meta.type === "movie" ? "movie" : "series",
-                    } : null}
+                    simkl={
+                      listTrackerId
+                        ? {
+                            harborId: listTrackerId,
+                            type: meta.type === "movie" ? "movie" : "series",
+                          }
+                        : null
+                    }
                     anilist={isAnime && animeTrackerId ? { harborId: animeTrackerId } : null}
-                    pmdb={listTrackerId ? {
-                      harborId: listTrackerId,
-                      type: meta.type === "movie" ? "movie" : "series",
-                    } : null}
+                    pmdb={
+                      listTrackerId
+                        ? {
+                            harborId: listTrackerId,
+                            type: meta.type === "movie" ? "movie" : "series",
+                          }
+                        : null
+                    }
                   />
                 ) : (
                   <>
