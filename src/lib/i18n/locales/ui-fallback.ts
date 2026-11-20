@@ -3396,6 +3396,9 @@ const uiFallback: Record<string, string> = {
     "Text colors adjust automatically when needed to stay readable.",
   "Name, handle and other text colors adjust automatically when needed to stay readable.":
     "Name, handle and other text colors adjust automatically when needed to stay readable.",
+  "Profile appearance": "Profile appearance",
+  "Hours watched": "Hours watched",
+  "No ratings yet": "No ratings yet",
 };
 
 export default uiFallback;

@@ -1,4 +1,3 @@
-import { mixHex, readablePalette } from "./color-contrast";
 /**
  * Profile themes are colour-only skins for a profile page. The owner picks one and every
  * visitor sees it on that profile, while the rest of the app keeps the viewer's own theme.
@@ -414,8 +413,8 @@ export type ProfileThemeScope = {
 };
 
 const GRADIENT_WASH =
-  "radial-gradient(130% 100% at 15% 0%, color-mix(in oklab, var(--profile-wash-color, var(--color-accent)) 100%, transparent) 0%, transparent 58%), " +
-  "radial-gradient(90% 70% at 90% 8%, color-mix(in oklab, var(--profile-wash-color, var(--color-accent)) 100%, transparent) 0%, transparent 62%)";
+  "radial-gradient(130% 100% at 15% 0%, color-mix(in oklab, var(--color-accent) 26%, transparent) 0%, transparent 58%), " +
+  "radial-gradient(90% 70% at 90% 8%, color-mix(in oklab, var(--color-accent) 14%, transparent) 0%, transparent 62%)";
 
 /** Background declarations for a themed root; an explicit owner background always wins. */
 export function profileThemeBackground(
@@ -432,7 +431,8 @@ export function profileThemeBackground(
 /** Tokens built from the owner's own colours; the extra shades are mixed from them. */
 export function customProfileTokens(colors: CustomProfileColors): Record<string, string> {
   const { canvas, surface, accent, ink } = colors;
-  const mix = (a: string, _aPct: number, b: string, bPct: number) => mixHex(a, b, bPct / 100);
+  const mix = (a: string, aPct: number, b: string, bPct: number) =>
+    `color-mix(in oklab, ${a} ${aPct}%, ${b} ${bPct}%)`;
   return {
     "--color-canvas": canvas,
     "--color-surface": surface,
@@ -471,29 +471,6 @@ export function profileThemeScope(theme: ProfileTheme): ProfileThemeScope {
       : palette === "auto"
         ? null
         : { ...PROFILE_PALETTES[palette].tokens };
-  if (source) {
-    const surfaces = Object.fromEntries(
-      ["--color-canvas", "--color-surface", "--color-elevated", "--color-raised"].map((key) => [
-        key,
-        source[key],
-      ]),
-    );
-    if (theme.gradient)
-      surfaces.wash = mixHex(source["--color-canvas"], source["--color-accent"], 0.4);
-    const safe = readablePalette(
-      surfaces,
-      Object.fromEntries(
-        ["--color-ink", "--color-ink-muted", "--color-ink-subtle", "--color-accent"].map((key) => [
-          key,
-          source[key],
-        ]),
-      ),
-    );
-    for (const key of Object.keys(surfaces))
-      if (key !== "wash") source[key] = safe.backgrounds[key];
-    if (theme.gradient) source["--profile-wash-color"] = safe.backgrounds.wash;
-    Object.assign(source, safe.text);
-  }
   const vars: Record<string, string> = {};
   if (source) {
     for (const [key, value] of Object.entries(source)) {

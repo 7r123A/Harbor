@@ -269,7 +269,9 @@ export function ProfileThemePicker({
         {t("Colours visitors see on your profile. The rest of the app keeps their own theme.")}
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <ProfileThemePreview summary={summary} theme={previewTheme} />
+
+      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
         {PROFILE_PALETTE_ORDER.map((id) => {
           const palette = paletteFor(id);
           return (
@@ -356,8 +358,6 @@ export function ProfileThemePicker({
           {t("Gradient wash")}
         </button>
       </div>
-
-      <ProfileThemePreview summary={summary} theme={previewTheme} />
 
       {hiddenCustomization && (
         <p className="mt-3 text-[12px] leading-relaxed text-ink-subtle">

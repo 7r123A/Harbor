@@ -1,4 +1,3 @@
-import { readablePalette, mixHex } from "@/lib/color-contrast";
 import { authToken, captureSessionScope } from "@/lib/theme-auth";
 import { HARBOR_API_BASE } from "@/lib/config/endpoints";
 import { socialPatch } from "./client";
@@ -117,32 +116,32 @@ export function profileCardStyle(look?: ProfileCardAppearance): CSSProperties {
     !look?.textColor
   )
     return {};
-  const from = preset?.from ?? "#17171f",
-    to = preset?.to ?? from;
-  const safe = readablePalette(
-    { from, to, elevated: mixHex(to, "#ffffff", 0.12), raised: mixHex(to, "#ffffff", 0.22) },
-    {
-      name: look?.nameColor ?? "#f7f7fa",
-      handle: look?.handleColor ?? "#a5a5b4",
-      other: look?.textColor ?? "#c6c6d0",
-    },
-  );
   return {
-    backgroundImage:
-      "linear-gradient(135deg, " + safe.backgrounds.from + ", " + safe.backgrounds.to + ")",
-    "--color-canvas": safe.backgrounds.to,
-    "--color-surface": safe.backgrounds.to,
-    "--color-elevated": safe.backgrounds.elevated,
-    "--color-raised": safe.backgrounds.raised,
-    "--color-ink": safe.text.other,
-    "--color-ink-muted": safe.text.other,
-    "--color-ink-subtle": safe.text.other,
-    "--color-edge": "#ffffff30",
-    "--color-edge-soft": "#ffffff1f",
-    colorScheme: "dark",
-    "--profile-card-name": safe.text.name,
-    "--profile-card-handle": safe.text.handle,
-    "--profile-card-bio": look?.bioColor ?? safe.text.other,
+    ...(preset ? { backgroundImage: `linear-gradient(135deg, ${preset.from}, ${preset.to})` } : {}),
+    ...(preset
+      ? {
+          "--color-canvas": preset.to,
+          "--color-surface": preset.to,
+          "--color-elevated": `color-mix(in srgb, ${preset.to} 88%, #fff)`,
+          "--color-raised": `color-mix(in srgb, ${preset.to} 78%, #fff)`,
+          "--color-ink": "#f7f7fa",
+          "--color-ink-muted": "#c6c6d0",
+          "--color-ink-subtle": "#a5a5b4",
+          "--color-edge": "#ffffff30",
+          "--color-edge-soft": "#ffffff1f",
+          colorScheme: "dark",
+        }
+      : {}),
+    ...(look?.textColor
+      ? {
+          "--color-ink": look.textColor,
+          "--color-ink-muted": look.textColor,
+          "--color-ink-subtle": look.textColor,
+        }
+      : {}),
+    "--profile-card-name": look?.nameColor ?? "var(--color-ink)",
+    "--profile-card-handle": look?.handleColor ?? "var(--color-ink-subtle)",
+    "--profile-card-bio": look?.bioColor ?? "var(--color-ink-muted)",
     ...(accent
       ? {
           "--color-accent": accent,
