@@ -101,8 +101,10 @@ test("player load preserves an explicit short position and rejects an actor swap
   const dependencies: Record<string, unknown> = {
     react: React,
     "@/lib/stremio": { cloudWriteId: () => "fixture" },
+    "@/lib/perf/playback-trace": { markPlaybackTrace() {} },
     "@/lib/player/resume-start": {
       isResumeStartReady: () => false,
+      prefetchResumeStart: () => {},
       resolveStartMs: () => resolveResume(),
     },
     "./use-stremio-sync": { videoIdFor: () => "fixture" },

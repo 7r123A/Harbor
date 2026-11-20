@@ -176,16 +176,18 @@ export function HeroActionOverflow({
               <>
                 {simkl && (
                   <SimklMenuItems
+                    key={`simkl:${simkl.harborId}`}
                     harborId={simkl.harborId}
                     type={simkl.type}
                     onAction={() => setMenu(null)}
                   />
                 )}
                 {anilist && (
-                  <AnilistMenuItems harborId={anilist.harborId} onAction={() => setMenu(null)} />
+                  <AnilistMenuItems key={`anilist:${anilist.harborId}`} harborId={anilist.harborId} onAction={() => setMenu(null)} />
                 )}
                 {pmdb && (
                   <PmdbMenuItems
+                    key={`pmdb:${pmdb.harborId}`}
                     harborId={pmdb.harborId}
                     type={pmdb.type}
                     onAction={() => setMenu(null)}

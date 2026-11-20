@@ -48,7 +48,7 @@ export async function restAbout(
 
 export async function restSources(client: SuwayomiClient): Promise<SuwayomiSource[]> {
   const res = await restSourceList(client);
-  if (!res) return [];
+  if (!res) throw new Error("suwayomi_rest_sources_unavailable");
   return res
     .filter((s) => s?.id != null)
     .map((s) => ({

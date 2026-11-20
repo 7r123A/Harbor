@@ -10,8 +10,11 @@ const KEY = "harbor.anime.art.v2";
 const MOVIE_BACKDROP_VERSION = 1;
 const CAP = 1000;
 const TTL = 60 * 24 * 60 * 60 * 1000;
+const RESTAMP_MS = 24 * 60 * 60 * 1000;
 const mem = new Map<string, Entry>();
 let loaded = false;
+// Set when the last write failed, so the next save writes again even when its art is unchanged.
+let unsaved = false;
 
 registerCache("anime:art", () => mem.size);
 registerEvictable("anime-art", (aggressive) => {
@@ -45,20 +48,32 @@ function persist(): void {
     entries.length > CAP ? entries.sort((a, b) => b[1].t - a[1].t).slice(0, CAP) : entries;
   try {
     localStorage.setItem(KEY, JSON.stringify({ map: Object.fromEntries(trimmed) }));
+    unsaved = false;
   } catch {
-    /* ignore */
+    unsaved = true;
   }
+}
+
+// Callers rebuild the backdrop array on every resolve, so an identity check
+// treated unchanged art as new and rewrote the whole 1000-entry blob each time.
+function sameList(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  return a.every((v, i) => v === b[i]);
+}
+
+function entryFor(key: string, kind: AnimeArtworkKind): Entry | undefined {
+  ensure();
+  const entry = mem.get(key);
+  // Legacy records lack provenance and may hold the parent series' art for a film.
+  return (entry?.kind ?? "tv") === kind ? entry : undefined;
 }
 
 export function peekAnimeArt(
   key: string | undefined | null,
   kind: AnimeArtworkKind,
 ): AnimeArt | undefined {
-  if (!key) return undefined;
-  ensure();
-  const entry = mem.get(key);
-  // Legacy records lack provenance and may hold the parent series' art for a film.
-  return (entry?.kind ?? "tv") === kind ? entry : undefined;
+  return key ? entryFor(key, kind) : undefined;
 }
 
 export function saveAnimeArt(
@@ -67,7 +82,7 @@ export function saveAnimeArt(
   art: AnimeArt,
 ): void {
   if (!key || (!art.bg && !art.logo && !art.backdrops?.length)) return;
-  const prev = peekAnimeArt(key, kind);
+  const prev = entryFor(key, kind);
   const next: Entry = {
     kind,
     backdropVersion: kind === "movie" ? MOVIE_BACKDROP_VERSION : undefined,
@@ -76,7 +91,17 @@ export function saveAnimeArt(
     backdrops: art.backdrops?.length ? art.backdrops : prev?.backdrops,
     t: Date.now(),
   };
-  if (prev && next.bg === prev.bg && next.logo === prev.logo && next.backdrops === prev.backdrops)
+  // Unchanged art is still re-stamped once a day, so artwork in use keeps its
+  // TTL on the next load without a write on every resolve.
+  if (
+    prev &&
+    !unsaved &&
+    next.t - prev.t < RESTAMP_MS &&
+    next.backdropVersion === prev.backdropVersion &&
+    next.bg === prev.bg &&
+    next.logo === prev.logo &&
+    sameList(next.backdrops, prev.backdrops)
+  )
     return;
   mem.set(key, next);
   persist();

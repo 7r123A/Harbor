@@ -1,6 +1,15 @@
-import { crossLanguagePlaybackOffset } from "./drift-dsp";
+import { crossLanguagePlaybackOffset, type SpeechTimingDiagnostic } from "./drift-dsp";
+import {
+  sameLanguagePlaybackOffset,
+  type PlaybackLexicalDiagnostic,
+  type TimedSubtitleText,
+} from "./playback-lexical";
 import { normalizeLang } from "../language";
-import { resolveMoonshineLanguage, moonshineMissingModelError } from "./moonshine-models";
+import {
+  resolveMoonshineLanguage,
+  moonshineMissingModelError,
+  moonshineMissingModelLanguage,
+} from "./moonshine-models";
 
 type Window = {
   startSec: number;
@@ -37,13 +46,34 @@ export type MoonshineTimingDiagnostic = {
   acceptedIntervals: number;
 };
 
+class PlaybackSpeechError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+/** Never export arbitrary native errors: they can contain paths or media URLs. */
+export function playbackSpeechFailureCode(error: unknown): string {
+  if (error instanceof PlaybackSpeechError) return error.code;
+  if (moonshineMissingModelLanguage(error)) return "model-missing";
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === "subsync-scene-timeout") return "timeout";
+  if (message === "Sync cancelled.") return "cancelled";
+  return "native-error";
+}
+
 /** The short prepared playback audio is transcribed in an isolated Moonshine worker. */
 export async function matchPlaybackSpeech(
   input: {
     path: string;
     durationSec: number;
     cues: Array<[number, number]>;
+    textCues?: TimedSubtitleText[];
     audioLanguage?: string;
+    audioTrackTitle?: string;
     subtitleLanguage?: string;
     modelLanguage?: string;
     enabled: boolean;
@@ -54,12 +84,28 @@ export async function matchPlaybackSpeech(
   progress: (message: string) => void,
   isCurrent: () => boolean,
   diagnose?: (value: MoonshineTimingDiagnostic) => void,
+  diagnoseFit?: (value: SpeechTimingDiagnostic) => void,
+  diagnoseLexical?: (value: PlaybackLexicalDiagnostic) => void,
 ): Promise<{ offsetSec: number; confidence: number }> {
   if (!input.enabled)
-    throw new Error(
+    throw new PlaybackSpeechError(
+      "disabled",
       "Moonshine was not used. Enable Smart resync with speech recognition in Auto sync settings.",
     );
-  const audio = normalizeLang(input.audioLanguage ?? "");
+  const modelLanguage = resolveMoonshineLanguage(
+    input.modelLanguage,
+    input.audioLanguage,
+    input.audioTrackTitle,
+  );
+  const taggedAudio = normalizeLang(input.audioLanguage ?? "");
+  // A manual override corrects an incorrectly tagged audio track for both
+  // recognition and matching eligibility. Auto mode still trusts audio metadata.
+  const audio =
+    input.modelLanguage && input.modelLanguage !== "auto"
+      ? (modelLanguage ?? "")
+      : taggedAudio && !["und", "mul", "zxx", "mis"].includes(taggedAudio)
+        ? taggedAudio
+        : (modelLanguage ?? "");
   const subtitle = normalizeLang(input.subtitleLanguage ?? "");
   if (
     audio &&
@@ -69,13 +115,14 @@ export async function matchPlaybackSpeech(
     audio !== subtitle &&
     !input.crossLanguage
   ) {
-    throw new Error(
+    throw new PlaybackSpeechError(
+      "cross-language-off",
       "Cross-language matching is off. Enable Match subtitles across languages in Auto sync settings.",
     );
   }
-  const modelLanguage = resolveMoonshineLanguage(input.modelLanguage, input.audioLanguage);
   if (!modelLanguage) {
-    throw new Error(
+    throw new PlaybackSpeechError(
+      "language-unsupported",
       input.modelLanguage && input.modelLanguage !== "auto"
         ? "Moonshine does not support the chosen override language. Silero remains available."
         : "Moonshine cannot select a supported model from this audio track. Silero remains available; you can choose a language manually in Settings.",
@@ -88,9 +135,15 @@ export async function matchPlaybackSpeech(
   }>("moonshine_model_status", { language: modelLanguage });
   if (!isCurrent()) throw new Error("Sync cancelled.");
   if (!status.supported)
-    throw new Error("Moonshine testing requires Python 3. Install Python first.");
+    throw new PlaybackSpeechError(
+      "python-missing",
+      "Moonshine testing requires Python 3. Install Python first.",
+    );
   if (!status.runtimeInstalled)
-    throw new Error("Install the Moonshine testing runtime in Auto sync settings first.");
+    throw new PlaybackSpeechError(
+      "runtime-missing",
+      "Install the Moonshine testing runtime in Auto sync settings first.",
+    );
   if (!status.installed) throw moonshineMissingModelError(modelLanguage);
   progress("Recognizing buffered dialogue with Moonshine");
   const windows = await invoke<Window[]>("moonshine_transcribe_windows", {
@@ -150,24 +203,49 @@ export async function matchPlaybackSpeech(
   diagnose?.(totals);
   if (!speech.length) {
     if (totals.audioPeak < 0.002 && totals.windows > 0) {
-      throw new Error(
+      throw new PlaybackSpeechError(
+        "audio-silent",
         "The extracted playback audio is nearly silent. Play a scene with audible dialogue and try again.",
       );
     }
     if (totals.recognizedLines + totals.retryRecognizedLines === 0) {
-      throw new Error(
+      throw new PlaybackSpeechError(
+        "no-speech",
         "Moonshine did not recognize speech in the sampled audio. Check that its selected language matches the audio track, or try a different dialogue scene.",
       );
     }
-    throw new Error(
+    throw new PlaybackSpeechError(
+      "timestamps-missing",
       "Moonshine recognized some dialogue but could not provide reliable word or phrase timestamps for this sample. Try another dialogue scene.",
     );
   }
   progress("Comparing Moonshine speech timestamps with subtitles");
-  const offsetSec = crossLanguagePlaybackOffset(speech, input.cues, windows, 30);
-  if (offsetSec === null)
-    throw new Error(
-      "Moonshine processed the audio, but the speech and subtitle timing did not agree on a reliable shift. Try another dialogue scene or Manual offset.",
-    );
-  return { offsetSec, confidence: 0.65 };
+  const timingOffset = crossLanguagePlaybackOffset(speech, input.cues, windows, 30, diagnoseFit);
+  if (timingOffset !== null) return { offsetSec: timingOffset, confidence: 0.65 };
+
+  // Subtitle display intervals often outlast the spoken words. Unique exact
+  // dialogue anchors can recover the same-language case when occupancy fails.
+  // Untagged local SRT files are allowed: the matching words themselves must
+  // prove the language. A *known* different subtitle language still blocks
+  // lexical matching, and fabricated embedded-cue labels are never eligible.
+  const unknownSubtitleLanguage =
+    !subtitle || ["und", "mul", "zxx", "mis"].includes(subtitle);
+  const textOffset =
+    audio &&
+    (unknownSubtitleLanguage || audio.split("-")[0] === subtitle.split("-")[0]) &&
+    input.textCues?.length
+      ? sameLanguagePlaybackOffset(
+          windows.flatMap((window) => window.tokens),
+          input.textCues,
+          input.durationSec,
+          30,
+          diagnoseLexical,
+        )
+      : null;
+  if (textOffset !== null) return { offsetSec: textOffset, confidence: 0.65 };
+
+  throw new PlaybackSpeechError(
+    "alignment-rejected",
+    "Moonshine processed the audio, but neither speech timing nor matching dialogue established a reliable shift. Try another dialogue scene or Manual offset.",
+  );
 }

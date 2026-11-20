@@ -230,6 +230,7 @@ export type Frame =
       liveContext?: boolean;
       episodeHint?: { season: number; episode: number };
       seasonEntryId?: string;
+      seasonScrollTop?: number;
     }
   | { kind: "addon-collection"; meta: Meta }
   | {
@@ -309,12 +310,14 @@ type ViewValue = {
   metaLiveContext: boolean;
   metaEpisodeHint: { season: number; episode: number } | null;
   metaSeasonEntryId: string | null;
+  metaHasSeasonScroll: boolean;
   openMeta: (
     m: Meta | null,
     opts?: {
       liveContext?: boolean;
       episodeHint?: { season: number; episode: number };
       seasonEntryId?: string;
+      seasonScrollTop?: number;
       exact?: boolean;
     },
   ) => void;
@@ -684,6 +687,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
   const meta = metaFrame && metaFrame.kind === "meta" ? metaFrame.meta : null;
   const metaLiveContext =
     metaFrame && metaFrame.kind === "meta" ? metaFrame.liveContext === true : false;
+  const metaHasSeasonScroll = metaFrame?.kind === "meta" && metaFrame.seasonScrollTop != null;
   const metaEpisodeHint =
     metaFrame && metaFrame.kind === "meta" ? (metaFrame.episodeHint ?? null) : null;
   const metaSeasonEntryId =
@@ -1057,6 +1061,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
         liveContext?: boolean;
         episodeHint?: { season: number; episode: number };
         seasonEntryId?: string;
+        seasonScrollTop?: number;
         exact?: boolean;
       },
     ) => {
@@ -1092,9 +1097,13 @@ export function ViewProvider({ children }: { children: ReactNode }) {
             liveContext: opts?.liveContext,
             episodeHint: opts?.episodeHint,
             seasonEntryId: seasonEntryId ?? opts?.seasonEntryId,
+            seasonScrollTop: opts?.seasonScrollTop,
           });
         });
       };
+      if (opts?.seasonScrollTop != null) {
+        rememberScroll(`meta:${m.id}`, { delta: 0, fallback: opts.seasonScrollTop });
+      }
       push(m);
     },
     [setNavStack],
@@ -1576,6 +1585,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
       meta,
       metaLiveContext,
       metaEpisodeHint,
+      metaHasSeasonScroll,
       metaSeasonEntryId,
       openMeta,
       promoteMetaToRoot,
@@ -1664,6 +1674,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
       meta,
       metaLiveContext,
       metaEpisodeHint,
+      metaHasSeasonScroll,
       metaSeasonEntryId,
       promoteMetaToRoot,
       personId,

@@ -131,7 +131,15 @@ test("selected details cannot become a different Steam launch or an inferred off
     catalogSteamId: undefined,
     igdbId: undefined,
   };
-  assert.equal(resolveDetailEdition(local, null, atlas, match).steamLinkId, undefined);
+  const localEdition = resolveDetailEdition(local, null, atlas, match);
+  assert.equal(localEdition.steamLinkId, undefined);
+  assert.equal(localEdition.guideSteamId, 999, "reviewed IGDB metadata can supply guides without a store or launch link");
+  assert.equal(localEdition.portableGame.steamId, undefined);
+  assert.equal(
+    resolveDetailEdition(local, null, { ...atlas, igdbId: 124 }, match).guideSteamId,
+    undefined,
+    "an unrelated IGDB record must never supply a Steam guides ID",
+  );
 });
 test("custom library matching leaves launch configuration and the exact copy intact", () => {
   const local = {

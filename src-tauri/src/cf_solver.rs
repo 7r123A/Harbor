@@ -8,6 +8,7 @@ use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBui
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
 const SOLVER_LABEL: &str = "harbor-cf-solver";
+const IMAGE_SOLVER_LABEL: &str = "harbor-image-solver";
 const CF_TTL: Duration = Duration::from_secs(20 * 60);
 const SOLVER_RETRY_COOLDOWN: Duration = Duration::from_secs(30);
 
@@ -78,6 +79,9 @@ pub fn cf_clear_browser_failure(host: &str) {
 }
 
 pub fn cf_security_page_reason(body: &str) -> Option<&'static str> {
+    if crate::source_challenge::is_dle_guard_page(body) {
+        return Some("DLE Guard verification");
+    }
     // Security-page signatures belong near the document start. Limit scanning
     // to avoid misclassifying ordinary articles *mentioning* these challenges.
     let prefix = &body[..body
@@ -120,6 +124,20 @@ pub fn cf_browser_ready_for(app: &AppHandle, host: &str) -> bool {
             .get_webview_window(SOLVER_LABEL)
             .and_then(|window| window.url().ok())
             .is_some_and(|url| window_is_on_host(&url, host))
+}
+
+// While a verified image window navigates back to the source to preserve
+// Referer, its current URL is not on the image host. Only image fetches may
+// use this readiness state, and the returned image is independently verified.
+fn image_session_owner() -> &'static Mutex<Option<String>> {
+    static OWNER: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    OWNER.get_or_init(|| Mutex::new(None))
+}
+
+pub fn cf_image_browser_ready_for(app: &AppHandle, host: &str) -> bool {
+    cf_browser_ready(host)
+        && image_session_owner().lock().unwrap().as_deref() == Some(host)
+        && app.get_webview_window(IMAGE_SOLVER_LABEL).is_some()
 }
 
 fn browser_sessions() -> &'static Mutex<HashMap<String, BrowserSession>> {
@@ -170,10 +188,10 @@ fn clear_solver_cooldown(host: &str) {
     solver_cooldown().lock().unwrap().remove(host);
 }
 
-// A bot-management cookie is not clearance; only Cloudflare's clearance cookie
-// establishes that a challenge has been passed.
+// Bot-management cookies alone are not clearance. DLE Guard uses its own
+// trust cookie independently of Cloudflare.
 fn is_clearance_cookie(name: &str) -> bool {
-    name == "cf_clearance"
+    name == "cf_clearance" || name == "__guard_trust"
 }
 
 pub fn cf_cached(host: &str) -> Option<(String, String)> {
@@ -189,6 +207,10 @@ pub fn cf_invalidate(host: &str) {
     cf_cache().lock().unwrap().remove(host);
 }
 
+fn solver_starts_visible(label: &str) -> bool {
+    label != IMAGE_SOLVER_LABEL
+}
+
 /// Must already be on the main thread. Topmost is set before the window is shown
 /// because Windows refuses SetForegroundWindow to a process that does not own the
 /// current foreground window, which left the check sitting behind Harbor.
@@ -199,19 +221,22 @@ fn raise_window(w: &tauri::WebviewWindow) {
     let _ = w.set_focus();
 }
 
-struct SolverDismiss(AppHandle);
+struct SolverDismiss(AppHandle, bool, &'static str);
 
 impl Drop for SolverDismiss {
     fn drop(&mut self) {
-        if let Some(w) = self.0.get_webview_window(SOLVER_LABEL) {
+        if !self.1 {
+            return;
+        }
+        if let Some(w) = self.0.get_webview_window(self.2) {
             let _ = w.set_always_on_top(false);
             let _ = w.hide();
         }
     }
 }
 
-fn harvest(app: &AppHandle, url: &str, ua: &str) -> bool {
-    let Some(win) = app.get_webview_window(SOLVER_LABEL) else {
+fn harvest(app: &AppHandle, label: &str, url: &str, ua: &str, require_guard: bool) -> bool {
+    let Some(win) = app.get_webview_window(label) else {
         return false;
     };
     let Ok(parsed) = Url::parse(url) else {
@@ -232,14 +257,16 @@ fn harvest(app: &AppHandle, url: &str, ua: &str) -> bool {
     };
     let mut parts: Vec<String> = Vec::new();
     let mut has_clearance = false;
+    let mut has_guard = false;
     for c in cookies {
         let name = c.name();
+        has_guard |= name == "__guard_trust" && !c.value().is_empty();
         if is_clearance_cookie(name) && !c.value().is_empty() {
             has_clearance = true;
         }
         parts.push(format!("{}={}", name, c.value()));
     }
-    if !has_clearance {
+    if !has_clearance || (require_guard && !has_guard) {
         return false;
     }
     let cookie = parts.join("; ");
@@ -270,11 +297,15 @@ const PROBE_SCRIPT: &str = r#"(() => {
   const denied = (anubis && sample.includes('access denied')) ||
     (title.includes('oh noes') && sample.includes('access denied')) ||
     (sample.includes('sorry, you have been blocked') &&
-     title.includes('access denied'));
+     title.includes('access denied')) ||
+    (title.includes('error 403 (forbidden)') && sample.includes('permission to access'));
   const securityPage =
     denied || (anubis && (sample.includes('making sure you') ||
                           sample.includes('proof of work')));
+  const navigationStatus = performance.getEntriesByType('navigation')[0]?.responseStatus || 0;
   const challenged =
+    (navigationStatus >= 400 && navigationStatus !== 401) ||
+    (markup.includes('pow_nonce') && (markup.includes('/_c') || markup.includes('/_v'))) ||
     securityPage ||
     title.includes('just a moment') || title.includes('attention required') ||
     title.includes('access denied') || title.includes('403 forbidden') ||
@@ -284,7 +315,9 @@ const PROBE_SCRIPT: &str = r#"(() => {
     present('#challenge-form, #challenge-running, #cf-challenge-running, #cf-please-wait') ||
     (present('.cf-turnstile') && !!document.querySelector('#challenge-form, #challenge-running'));
   // An empty/placeholder document is not evidence of a successful challenge.
-  const usable = !!(document.body && document.documentElement?.outerHTML.length >= 200);
+  const usable = !!(document.body && (document.documentElement?.outerHTML.length >= 200 ||
+    (document.contentType?.startsWith('image/') &&
+     !!document.querySelector('img')?.naturalWidth)));
   return {
     host: location.hostname || '',
     protocol: location.protocol || '',
@@ -292,6 +325,7 @@ const PROBE_SCRIPT: &str = r#"(() => {
     challenged: !!challenged,
     denied: !!denied,
     usable,
+    authentication_required: (performance.getEntriesByType('navigation')[0]?.responseStatus === 401),
     user_agent: navigator.userAgent || ''
   };
 })()"#;
@@ -304,6 +338,7 @@ struct PageProbe {
     challenged: bool,
     denied: bool,
     usable: bool,
+    authentication_required: bool,
     user_agent: String,
 }
 
@@ -314,6 +349,7 @@ fn probe_is_ready(probe: &PageProbe, target: &Url) -> bool {
         && probe.protocol == target.scheme().to_string() + ":"
         && probe.ready == "complete"
         && !probe.challenged
+        && !probe.authentication_required
         && probe.usable
         && !probe.user_agent.is_empty()
 }
@@ -380,14 +416,25 @@ async fn browser_navigation_fetch(
     if target.scheme() != "https" || current.origin() != target.origin() {
         return Ok(None);
     }
-    window
-        .navigate(target.clone())
-        .map_err(|error| format!("browser navigate: {error}"))?;
+    // A verified document can work even when fetch/reloading is rejected.
+    // Keep it intact when it is already the exact requested resource.
+    if current != *target {
+        window
+            .navigate(target.clone())
+            .map_err(|error| format!("browser navigate: {error}"))?;
+    } else {
+    }
     let read = format!(
         r#"(() => {{
           if (location.href !== {} || document.readyState !== 'complete') return null;
           const title = (document.title || '').toLowerCase();
           const text = (document.body?.innerText || '').slice(0, 1200).toLowerCase();
+          const navigationStatus = performance.getEntriesByType('navigation')[0]?.responseStatus || 0;
+          if (title.includes('401 unauthorized') || title === 'unauthorized' ||
+              title === 'authentication required')
+            return {{state:'error',reason:'navigation-unauthorized-title'}};
+          if (navigationStatus >= 400)
+            return {{state:'error',reason:'navigation-http-' + navigationStatus}};
           if (title.includes('just a moment') || title.includes('attention required') ||
               title.includes('access denied') || text.includes('sorry, you have been blocked') ||
               text.includes('error code: 1020') || text.includes('error 1015') ||
@@ -434,11 +481,16 @@ async fn browser_navigation_fetch(
             Ok(Ok(body)) => body,
             _ => continue,
         };
+        let result = serde_json::from_str::<Option<BrowserRead>>(&raw);
+        if let Ok(Some(BrowserRead::Error { .. })) = &result {
+
+            return Ok(None);
+        }
         if let Ok(Some(BrowserRead::Ready {
             status,
             body,
             content_type,
-        })) = serde_json::from_str::<Option<BrowserRead>>(&raw)
+        })) = result
         {
             if status == 200 && body.len() <= MAX_BROWSER_TEXT_BYTES {
                 if let Some(reason) = cf_security_page_reason(&body) {
@@ -462,9 +514,13 @@ async fn browser_navigation_fetch(
 
 pub async fn cf_browser_fetch(
     app: &AppHandle,
-    url: &str,
-    accept: Option<&str>,
+    args: &crate::http_fetch::HarborFetchArgs,
+    _request_id: uuid::Uuid,
 ) -> Result<Option<BrowserTextResponse>, String> {
+    let Some(request) = crate::http_fetch::browser_request(args) else {
+        return Ok(None);
+    };
+    let url = args.url.as_str();
     let target = Url::parse(url).map_err(|error| format!("url: {error}"))?;
     if target.scheme() != "https" || target.username() != "" || target.password().is_some() {
         return Ok(None);
@@ -474,6 +530,10 @@ pub async fn cf_browser_fetch(
         return Ok(None);
     }
     let _browser_guard = browser_request_lock().lock().await;
+    // Requests queued before a failed recovery must observe its cooldown too.
+    if cf_browser_cooling_down(host) {
+        return Err("source browser request is cooling down after a failed verification".into());
+    }
     let Some(window) = app.get_webview_window(SOLVER_LABEL) else {
         return Ok(None);
     };
@@ -501,7 +561,8 @@ pub async fn cf_browser_fetch(
         const key = {};
         const address = {};
         const cap = {};
-        const accept = {};
+        const request = {};
+        const allowNavigation = {};
         const results = window.__harborCfBrowserResults ||= Object.create(null);
         results[key] = null;
         (async () => {{
@@ -510,15 +571,19 @@ pub async fn cf_browser_fetch(
           try {{
             if (new URL(address).origin !== location.origin) throw Error('origin');
             const response = await fetch(address, {{
+              ...request,
               credentials: 'include',
               redirect: 'error',
               cache: 'no-store',
-              signal: controller.signal,
-              headers: {{ Accept: accept }}
+              signal: controller.signal
             }});
-            if (!response.ok || response.headers.get('cf-mitigated') === 'challenge')
+            if (response.headers.get('cf-mitigated') === 'challenge')
               throw Error('challenged');
             const contentType = (response.headers.get('content-type') || '').toLowerCase();
+            if (response.status === 204) {{
+              results[key] = {{state: 'ready', status: 204, content_type: contentType, body: ''}};
+              return;
+            }}
             if (!(/text\/|json|xml|javascript/.test(contentType)))
               throw Error('non-text');
             if (Number(response.headers.get('content-length') || 0) > cap)
@@ -562,8 +627,11 @@ pub async fn cf_browser_fetch(
                (start.includes('access denied') || start.includes('making sure you') ||
                 start.includes('proof of work')));
             const pageReady = document.readyState === 'complete' && !protectedPage &&
+              (performance.getEntriesByType('navigation')[0]?.responseStatus || 0) < 400 &&
+              !title.includes('401 unauthorized') && title !== 'unauthorized' &&
+              title !== 'authentication required' &&
               !document.querySelector('#challenge-form, #challenge-running, #cf-please-wait');
-            if (pageReady && location.href === address && html.length > 200 && html.length <= cap)
+            if (allowNavigation && pageReady && location.href === address && html.length > 200 && html.length <= cap)
               results[key] = {{state: 'ready', status: 200, content_type: 'text/html; charset=utf-8', body: html}};
             else results[key] = {{state: 'error', reason: String(error?.message || 'browser fetch failed').slice(0, 48)}};
           }} finally {{ clearTimeout(timer); }}
@@ -573,8 +641,8 @@ pub async fn cf_browser_fetch(
         serde_json::to_string(&id).map_err(|e| e.to_string())?,
         serde_json::to_string(url).map_err(|e| e.to_string())?,
         MAX_BROWSER_TEXT_BYTES,
-        serde_json::to_string(accept.unwrap_or("text/html, application/json, text/plain, */*"))
-            .map_err(|error| error.to_string())?
+        serde_json::to_string(&request).map_err(|error| error.to_string())?,
+        request.allows_navigation()
     );
     window
         .eval(&script)
@@ -610,17 +678,25 @@ pub async fn cf_browser_fetch(
                 status,
                 body,
                 content_type,
-            })) if (200..300).contains(&status) && body.len() <= MAX_BROWSER_TEXT_BYTES => {
+            })) if (200..600).contains(&status) && body.len() <= MAX_BROWSER_TEXT_BYTES => {
+                // HTML fetches may be denied even when top-level browsing works.
+                // Preserve the original error if navigation cannot verify content;
+                // API requests must never be replaced with a document response.
+                if request.recovers_html_status(status, &content_type) {
+                    if let Ok(Some(document)) = browser_navigation_fetch(&window, &target).await {
+                        return Ok(Some(document));
+                    }
+                }
                 if content_type.contains("html") {
                     if let Some(reason) = cf_security_page_reason(&body) {
                         eprintln!("[cf] browser fetch produced another protection page: {reason}");
                         return Ok(None);
                     }
                 }
-                eprintln!(
-                    "[cf] browser fallback returned verified text ({} bytes)",
-                    body.len()
-                );
+
+                if matches!(status, 401 | 403) {
+                    cf_note_browser_failure(host);
+                }
                 return Ok(Some(BrowserTextResponse {
                     status,
                     body,
@@ -631,9 +707,7 @@ pub async fn cf_browser_fetch(
                 eprintln!("[cf] browser fetch unavailable: {reason}");
                 // Only HTML-compatible requests can be fulfilled by browsing to
                 // the destination. Never turn a JSON/API request into HTML.
-                let html =
-                    accept.is_none_or(|value| value.contains("text/html") || value.contains("*/*"));
-                if html
+                if request.allows_navigation()
                     && (reason == "challenged" || reason == "protected-page" || reason == "empty")
                 {
                     return browser_navigation_fetch(&window, &target).await;
@@ -648,16 +722,276 @@ pub async fn cf_browser_fetch(
     Ok(None)
 }
 
-fn open_solver(app: &AppHandle, url: &str) -> Result<(), String> {
-    if let Some(existing) = app.get_webview_window(SOLVER_LABEL) {
+// Only chapter images explicitly opted into recovery can be read through the
+// verified same-origin WebView. Remote pages never receive Harbor IPC rights.
+// Image documents on signed CDNs often allow a top-level navigation from the
+// source site while rejecting a JS fetch from the image host itself. Keep the
+// verification and per-page navigation in a dedicated WebView, never in Harbor's
+// privileged app window or the unrelated text-source solver.
+const IMAGE_READ_TTL: Duration = Duration::from_secs(75);
+const MAX_CACHED_IMAGE_BYTES: usize = 48 * 1024 * 1024;
+const MAX_IMAGE_CACHE_ENTRIES: usize = 8;
+
+fn image_request_lock() -> &'static AsyncMutex<()> {
+    static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| AsyncMutex::new(()))
+}
+
+struct CachedBrowserImage {
+    at: Instant,
+    content_type: String,
+    body: String,
+    bytes: usize,
+}
+
+fn browser_image_cache() -> &'static Mutex<HashMap<String, CachedBrowserImage>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, CachedBrowserImage>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn image_response(url: &str, content_type: String, body: String) -> crate::http_fetch::HarborFetchResponse {
+    crate::http_fetch::HarborFetchResponse {
+        status: 200,
+        ok: true,
+        body,
+        asset_path: None,
+        content_type: Some(content_type.clone()),
+        headers: HashMap::from([("content-type".to_string(), content_type)]),
+        url: Some(url.to_string()),
+    }
+}
+
+fn cached_browser_image(url: &str, cap: u64) -> Option<crate::http_fetch::HarborFetchResponse> {
+    let mut cache = browser_image_cache().lock().unwrap();
+    cache.retain(|_, entry| entry.at.elapsed() <= IMAGE_READ_TTL);
+    let entry = cache.get(url)?;
+    // Preserve the native image size contract even on cached Base64 responses.
+    if entry.bytes as u64 > cap {
+        return None;
+    }
+    Some(image_response(url, entry.content_type.clone(), entry.body.clone()))
+}
+
+fn cache_browser_image(response: &crate::http_fetch::HarborFetchResponse) {
+    if response.body.len() > MAX_CACHED_IMAGE_BYTES / 4 {
+        return;
+    }
+    let Some(url) = response.url.as_deref() else { return };
+    let mut cache = browser_image_cache().lock().unwrap();
+    cache.retain(|_, entry| entry.at.elapsed() <= IMAGE_READ_TTL);
+    let padding = response.body.as_bytes().iter().rev().take_while(|byte| **byte == b'=').count();
+    let bytes = (response.body.len() / 4) * 3 - padding;
+    cache.insert(url.to_owned(), CachedBrowserImage {
+        at: Instant::now(),
+        content_type: response.content_type.clone().unwrap_or_else(|| "image/png".into()),
+        body: response.body.clone(),
+        bytes,
+    });
+    // Bound memory usage, even if the user rapidly switches manga chapters.
+    while cache.len() > MAX_IMAGE_CACHE_ENTRIES
+        || cache.values().map(|entry| entry.body.len()).sum::<usize>() > MAX_CACHED_IMAGE_BYTES
+    {
+        let Some(oldest) = cache.iter().min_by_key(|(_, entry)| entry.at).map(|(key, _)| key.clone()) else { break };
+        cache.remove(&oldest);
+    }
+}
+
+async fn read_navigated_image(
+    window: &WebviewWindow,
+    target: &Url,
+    cap: u64,
+    _request_id: uuid::Uuid,
+) -> Result<Option<crate::http_fetch::HarborFetchResponse>, String> {
+    if window.url().ok().is_none_or(|address| address != *target) {
+        return Ok(None);
+    }
+    // Read only the exact image document already navigated to. Capturing its
+    // pixels avoids CORS and never allows remote pages to invoke Harbor IPC.
+    let script = r#"(() => {
+      const address = __ADDRESS__;
+      const cap = __CAP__;
+      try {
+        if (location.href !== address || !document.contentType?.startsWith('image/'))
+          return null;
+        const img = document.querySelector('img');
+        if (!img || !img.complete || !img.naturalWidth || !img.naturalHeight ||
+            img.naturalWidth * img.naturalHeight > 16000000)
+          return null;
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+        ctx.drawImage(img, 0, 0);
+        const data = canvas.toDataURL('image/png').split(',')[1];
+        if (!data || data.length > Math.ceil(cap / 3) * 4 + 8)
+          return null;
+        return { state: 'ready', status: 200, content_type: 'image/png', body: data };
+      } catch (_) { return null; }
+    })()"#
+        .replace("__ADDRESS__", &serde_json::to_string(target.as_str()).map_err(|e| e.to_string())?)
+        .replace("__CAP__", &cap.to_string());
+    let (sender, receiver) = oneshot::channel();
+    let sender = Mutex::new(Some(sender));
+    window.eval_with_callback(&script, move |raw| {
+        if let Ok(mut sender) = sender.lock() {
+            if let Some(sender) = sender.take() {
+                let _ = sender.send(raw);
+            }
+        }
+    }).map_err(|error| format!("image read: {error}"))?;
+    let raw = match tokio::time::timeout(Duration::from_secs(8), receiver).await {
+        Ok(Ok(raw)) => raw,
+        _ => return Ok(None),
+    };
+    let Ok(Some(BrowserRead::Ready { status: 200, body, content_type })) =
+        serde_json::from_str::<Option<BrowserRead>>(&raw)
+    else { return Ok(None) };
+    if content_type != "image/png" || body.len() > ((cap as usize + 2) / 3) * 4 + 8 {
+        return Ok(None);
+    }
+    let Ok(bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, body.as_bytes())
+    else { return Ok(None) };
+    if bytes.is_empty() || bytes.len() as u64 > cap
+        || image::guess_format(&bytes).ok() != Some(image::ImageFormat::Png)
+    {
+        return Ok(None);
+    }
+    Ok(Some(image_response(target.as_str(), content_type, body)))
+}
+
+async fn navigate_image_from_source(
+    window: &WebviewWindow,
+    target: &Url,
+    source: &Url,
+    _request_id: uuid::Uuid,
+) -> Result<bool, String> {
+    // Returning to the original page is necessary for a valid Referer:
+    // document-to-document navigation on the image CDN is not equivalent.
+    window.navigate(source.clone()).map_err(|error| format!("image referrer navigation: {error}"))?;
+    let start = Instant::now();
+    let mut source_ready = false;
+    while start.elapsed() < Duration::from_secs(12) {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        match probe_page(window).await {
+            Ok(Some(probe)) if probe_is_ready(&probe, source)
+                && window.url().ok().is_some_and(|address| address.origin() == source.origin()) =>
+            {
+                source_ready = true;
+                break;
+            }
+            Ok(Some(probe)) if probe.denied => break,
+            _ => {}
+        }
+    }
+    if !source_ready {
+        return Ok(false);
+    }
+    let address = serde_json::to_string(target.as_str()).map_err(|error| error.to_string())?;
+    let script = format!(
+        "(() => {{ const link = document.createElement('a'); link.href = {address}; link.referrerPolicy = 'no-referrer-when-downgrade'; document.body.appendChild(link); link.click(); }})()"
+    );
+    window.eval(&script).map_err(|error| format!("image browser link: {error}"))?;
+
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(14) {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        if window.url().ok().is_some_and(|address| address == *target) {
+            match probe_page(window).await {
+                Ok(Some(probe)) if probe_is_ready(&probe, target) => return Ok(true),
+                Ok(Some(probe)) if probe.denied => break,
+                _ => {}
+            }
+        }
+    }
+    Ok(false)
+}
+
+pub async fn cf_browser_fetch_image(
+    app: &AppHandle,
+    args: &crate::http_fetch::HarborFetchArgs,
+    request_id: uuid::Uuid,
+) -> Result<Option<crate::http_fetch::HarborFetchResponse>, String> {
+    let target = Url::parse(&args.url).map_err(|error| format!("image url: {error}"))?;
+    let host = target.host_str().ok_or("image URL has no host")?;
+    let cap = args.max_response_bytes.unwrap_or(0);
+    if target.scheme() != "https" || !target.username().is_empty() || target.password().is_some()
+        || args.allow_image_challenge != Some(true) || cap == 0 || cap > 32 * 1024 * 1024
+        || args.response_type.as_deref() != Some("base64")
+        || !args.method.as_deref().unwrap_or("GET").eq_ignore_ascii_case("GET")
+        || args.body.is_some() || args.body_base64.is_some()
+        || args.credential_handle.is_some() || args.allow_local_network == Some(true)
+        || args.public_network_only == Some(true) || args.follow_redirects == Some(false)
+    {
+        return Ok(None);
+    }
+    let referrer = args.headers.as_ref()
+        .and_then(|headers| headers.iter().find(|(name, _)| name.eq_ignore_ascii_case("referer")))
+        .and_then(|(_, value)| Url::parse(value).ok());
+    let Some(source) = referrer else { return Ok(None) };
+    if source.scheme() != "https" || !source.username().is_empty() || source.password().is_some() {
+        return Ok(None);
+    }
+    if let Some(response) = cached_browser_image(target.as_str(), cap) {
+        return Ok(Some(response));
+    }
+    if !cf_image_browser_ready_for(app, host) {
+        return Ok(None);
+    }
+    // The image WebView can be temporarily navigating through the source
+    // domain, so host-readiness must not depend on its current URL.
+    let _guard = image_request_lock().lock().await;
+    if let Some(response) = cached_browser_image(target.as_str(), cap) {
+        return Ok(Some(response));
+    }
+    if !cf_image_browser_ready_for(app, host) {
+        return Ok(None);
+    }
+    let Some(window) = app.get_webview_window(IMAGE_SOLVER_LABEL) else { return Ok(None) };
+    let current = window.url().map_err(|error| format!("image window address: {error}"))?;
+    // Only a source page belonging to this request may be used to navigate.
+    if current.origin() != target.origin() && current.origin() != source.origin() {
+        return Ok(None);
+    }
+    if let Some(response) = read_navigated_image(&window, &target, cap, request_id).await? {
+        cache_browser_image(&response);
+        return Ok(Some(response));
+    }
+    // This follows a caller-supplied referrer, not a server redirect. Validate
+    // its public destination before navigating the separate WebView.
+    if crate::http_fetch::public_http_client(&source).await.is_err() {
+        return Ok(None);
+    }
+    // The previously verified image URL is not proof that other signed image
+    // paths will accept a same-origin fetch. Re-enter from the source for each.
+    if !navigate_image_from_source(&window, &target, &source, request_id).await? {
+        return Ok(None);
+    }
+    let response = read_navigated_image(&window, &target, cap, request_id).await?;
+    if let Some(response) = response.as_ref() {
+        cache_browser_image(response);
+    }
+    Ok(response)
+}
+
+fn open_solver(app: &AppHandle, url: &str, label: &'static str) -> Result<(), String> {
+    if let Some(existing) = app.get_webview_window(label) {
         eprintln!("[cf] reusing solver window");
         let target = Url::parse(url).map_err(|error| format!("url: {error}"))?;
+        // Hide an earlier interactive image window before navigating to the
+        // next chapter host; do not flash its old contents over the reader.
+        if !solver_starts_visible(label) {
+            let w = existing.clone();
+            let _ = app.run_on_main_thread(move || { let _ = w.hide(); });
+        }
         // Native navigation still works if the challenge page has disabled scripts.
         existing
             .navigate(target)
             .map_err(|error| format!("solver navigation: {error}"))?;
-        let w = existing.clone();
-        let _ = app.run_on_main_thread(move || raise_window(&w));
+        if solver_starts_visible(label) {
+            let w = existing.clone();
+            let _ = app.run_on_main_thread(move || raise_window(&w));
+        }
         return Ok(());
     }
 
@@ -666,14 +1000,16 @@ fn open_solver(app: &AppHandle, url: &str) -> Result<(), String> {
     let (tx, rx) = mpsc::channel::<Result<(), String>>();
     app.run_on_main_thread(move || {
         let builder =
-            WebviewWindowBuilder::new(&app_main, SOLVER_LABEL, WebviewUrl::External(parsed))
+            WebviewWindowBuilder::new(&app_main, label, WebviewUrl::External(parsed))
                 .title("Harbor · checking source")
+                .incognito(false)
                 .inner_size(480.0, 640.0)
                 .center()
                 .resizable(true)
                 .decorations(true)
                 .shadow(true)
-                .focused(true)
+                .visible(solver_starts_visible(label))
+                .focused(solver_starts_visible(label))
                 .on_page_load(|_, payload| {
                     let phase =
                         if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
@@ -699,8 +1035,9 @@ fn open_solver(app: &AppHandle, url: &str) -> Result<(), String> {
                         }
                     }
                 });
-                raise_window(&window);
-                eprintln!("[cf] solver window built + shown");
+                if solver_starts_visible(label) {
+                    raise_window(&window);
+                }
                 let _ = tx.send(Ok(()));
             }
             Err(e) => {
@@ -715,22 +1052,78 @@ fn open_solver(app: &AppHandle, url: &str) -> Result<(), String> {
 }
 
 pub async fn cf_fetch(app: AppHandle, url: String) -> Result<(), String> {
+    cf_fetch_session(app, url, false).await
+}
+
+pub async fn cf_fetch_session(
+    app: AppHandle,
+    url: String,
+    require_guard: bool,
+) -> Result<(), String> {
+    source_session(app, url, require_guard, false, None).await
+}
+
+pub async fn cf_fetch_image_session(
+    app: AppHandle,
+    url: String,
+    referrer: String,
+    require_guard: bool,
+) -> Result<(), String> {
+    let origin = reqwest::Url::parse(&referrer).map_err(|_| "invalid image source referrer")?;
+    if origin.scheme() != "https" || !origin.username().is_empty() || origin.password().is_some() {
+        return Err("image source referrer must be a public HTTPS URL".into());
+    }
+    // A plugin must not cause verification to navigate into local-network addresses.
+    let _ = crate::http_fetch::public_http_client(&origin).await?;
+    source_session(app, url, require_guard, false, Some(referrer)).await
+}
+
+pub async fn cf_login_session(app: AppHandle, url: String) -> Result<(), String> {
+    source_session(app, url, false, true, None).await
+}
+
+async fn source_session(
+    app: AppHandle,
+    url: String,
+    require_guard: bool,
+    login: bool,
+    image_referrer: Option<String>,
+) -> Result<(), String> {
     let _guard = request_lock().lock().await;
     // A single WebView is shared by every verified source. A challenge
     // navigation must not interrupt a pending same-origin browser fetch.
     let _browser_guard = browser_request_lock().lock().await;
+    // The image WebView has its own navigation lock. Do not interrupt an
+    // in-flight page extraction when a second image host needs verification.
+    let _image_guard = if image_referrer.is_some() {
+        Some(image_request_lock().lock().await)
+    } else {
+        None
+    };
     let host = Url::parse(&url)
         .ok()
         .and_then(|parsed| parsed.host_str().map(|h| h.to_string()));
-    if let Some(host) = host.as_deref() {
-        if cf_cached(host).is_some() {
+    if let Some(host) = host.as_deref().filter(|_| !login) {
+        if cf_cached(host).is_some_and(|(cookie, _)| {
+            !require_guard
+                || cookie
+                    .split(';')
+                    .any(|pair| pair.trim().starts_with("__guard_trust="))
+        }) {
             eprintln!("[cf] clearance already cached for {host}");
             return Ok(());
         }
-        if cf_browser_ready_for(&app, host) {
+        if !require_guard
+            && (cf_browser_ready_for(&app, host)
+                || (image_referrer.is_some() && cf_image_browser_ready_for(&app, host)))
+        {
             eprintln!("[cf] verified browser session already available for {host}");
             return Ok(());
         }
+    }
+    if image_referrer.is_some() {
+        // The dedicated image window is about to be reused for a new host.
+        *image_session_owner().lock().unwrap() = None;
     }
     if solver_cooldown_active(host.as_deref().unwrap_or("")) {
         eprintln!("[cf] solver cooling down after a recent failed or closed attempt");
@@ -739,28 +1132,35 @@ pub async fn cf_fetch(app: AppHandle, url: String) -> Result<(), String> {
     let (tx, mut closed) = oneshot::channel::<()>();
     *PENDING.lock().unwrap() = Some(tx);
 
-    eprintln!("[cf] solving {}", url);
-    if let Err(error) = open_solver(&app, &url) {
+    let solver_label = if image_referrer.is_some() { IMAGE_SOLVER_LABEL } else { SOLVER_LABEL };
+    let initial_url = image_referrer.as_deref().unwrap_or(&url);
+    if let Err(error) = open_solver(&app, initial_url, solver_label) {
         PENDING.lock().unwrap().take();
         note_solver_cooldown(host.as_deref().unwrap_or(""));
         return Err(error);
     }
-    let _dismiss = SolverDismiss(app.clone());
-    let Some(window) = app.get_webview_window(SOLVER_LABEL) else {
+    let mut dismiss = SolverDismiss(app.clone(), true, solver_label);
+    let Some(window) = app.get_webview_window(solver_label) else {
         PENDING.lock().unwrap().take();
         note_solver_cooldown(host.as_deref().unwrap_or(""));
         return Err("cloudflare solver window missing".into());
     };
-    let window_raised = window.clone();
-    if let Err(error) = app.run_on_main_thread(move || raise_window(&window_raised)) {
-        eprintln!("[cf] could not raise solver window: {error}");
+    if solver_starts_visible(solver_label) {
+        let window_raised = window.clone();
+        let _ = app.run_on_main_thread(move || raise_window(&window_raised));
     }
 
     let target = Url::parse(&url).map_err(|error| format!("url: {error}"))?;
     let start = Instant::now();
     let mut stable_since: Option<Instant> = None;
+    let mut referrer_navigation_pending = image_referrer.is_some();
+    let mut wrong_origin_since: Option<Instant> = None;
     let mut last_stage = String::new();
     let mut last_diagnostic = Instant::now();
+    // Hidden WebViews can stall or encounter a challenge requiring user input.
+    // Keep image recovery silent while it succeeds automatically, but retain
+    // the existing interactive verification as a last resort.
+    let mut image_window_raised = false;
     loop {
         if start.elapsed() >= Duration::from_secs(90) {
             PENDING.lock().unwrap().take();
@@ -777,15 +1177,77 @@ pub async fn cf_fetch(app: AppHandle, url: String) -> Result<(), String> {
             }
             _ = tokio::time::sleep(Duration::from_millis(800)) => {}
         }
+        if image_referrer.is_some()
+            && !image_window_raised
+            && start.elapsed() >= Duration::from_secs(20)
+        {
+            let window_to_show = window.clone();
+            if app.run_on_main_thread(move || raise_window(&window_to_show)).is_ok() {
+                image_window_raised = true;
+            }
+        }
         match probe_page(&window).await {
             Ok(Some(probe)) => {
+                if image_referrer.is_some() && probe.authentication_required && !image_window_raised {
+                    let window_to_show = window.clone();
+                    if app.run_on_main_thread(move || raise_window(&window_to_show)).is_ok() {
+                        image_window_raised = true;
+                    }
+                }
+                // Image CDN challenges must be entered through a browser navigation
+                // carrying the source Referer. Native navigation to a signed image
+                // is rejected with an unrelated Google 403 on some CDNs.
+                if referrer_navigation_pending {
+                    if let Some(source) = image_referrer.as_ref().and_then(|value| Url::parse(value).ok()) {
+                        if probe_is_ready(&probe, &source) {
+                            let address = serde_json::to_string(&url).map_err(|error| error.to_string())?;
+                            let script = format!(
+                                "(() => {{ const a = document.createElement('a'); a.href = {address}; a.referrerPolicy = 'no-referrer-when-downgrade'; document.body.appendChild(a); a.click(); }})()"
+                            );
+                            window.eval(&script).map_err(|error| format!("image source navigation: {error}"))?;
+                            referrer_navigation_pending = false;
+                            stable_since = None;
+                            continue;
+                        }
+                    }
+                    if probe.denied {
+                        PENDING.lock().unwrap().take();
+                        note_solver_cooldown(host.as_deref().unwrap_or(""));
+                        return Err("image source referrer was denied".into());
+                    }
+                    continue;
+                }
                 if probe.denied {
                     PENDING.lock().unwrap().take();
                     note_solver_cooldown(host.as_deref().unwrap_or(""));
                     eprintln!("[cf] verification stopped: source returned an access-denied page");
                     return Err("source returned an access-denied page".into());
                 }
-                let stage = if probe.challenged {
+                // A completed redirect to a different host cannot verify this
+                // image. Stop instead of displaying a static error for 90 seconds.
+                if image_referrer.is_some()
+                    && probe.ready == "complete"
+                    && !probe.challenged
+                    && !probe.host.eq_ignore_ascii_case(target.host_str().unwrap_or(""))
+                {
+                    let since = wrong_origin_since.get_or_insert_with(Instant::now);
+                    if since.elapsed() >= Duration::from_secs(3) {
+                        PENDING.lock().unwrap().take();
+                        note_solver_cooldown(host.as_deref().unwrap_or(""));
+                        return Err("image host redirected away from its verification page".into());
+                    }
+                } else {
+                    wrong_origin_since = None;
+                }
+                if probe.authentication_required {
+                    // Keep sign-in available if the foreground request times out.
+                    // The site's persistent cookies remain in the WebView profile.
+                    dismiss.1 = false;
+                    let _ = window.set_title("Harbor - sign in to source, then retry if needed");
+                }
+                let stage = if probe.authentication_required {
+                    "sign-in-required"
+                } else if probe.challenged {
                     "challenge"
                 } else if probe.ready != "complete" {
                     "loading"
@@ -809,13 +1271,23 @@ pub async fn cf_fetch(app: AppHandle, url: String) -> Result<(), String> {
                 if probe_is_ready(&probe, &target) {
                     let stable = stable_since.get_or_insert_with(Instant::now);
                     if stable.elapsed() >= Duration::from_secs(2) {
-                        let has_cookie = harvest(&app, &url, &probe.user_agent);
+                        let has_cookie = harvest(&app, solver_label, &url, &probe.user_agent, require_guard);
+                        if require_guard && !has_cookie {
+                            // A DLE challenge needs its trust cookie; a loaded
+                            // homepage alone cannot establish native clearance.
+                            stable_since = None;
+                            continue;
+                        }
                         if let Some(host) = host.as_deref() {
                             cf_browser_mark_ready(host);
+                            if image_referrer.is_some() {
+                                *image_session_owner().lock().unwrap() = Some(host.to_string());
+                            }
                             if !has_cookie {
                                 eprintln!("[cf] browser page verified for {host}; no transferable clearance cookie; using browser-only session");
                             }
                         }
+                        dismiss.1 = true;
                         PENDING.lock().unwrap().take();
                         clear_solver_cooldown(host.as_deref().unwrap_or(""));
                         return Ok(());
@@ -846,6 +1318,30 @@ pub async fn cf_fetch(app: AppHandle, url: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chapter_image_solver_starts_hidden_but_other_sources_remain_visible() {
+        assert!(!solver_starts_visible(IMAGE_SOLVER_LABEL));
+        assert!(solver_starts_visible(SOLVER_LABEL));
+    }
+
+    #[test]
+    fn recovered_image_cache_is_scoped_to_url_and_byte_limit() {
+        let url = "https://img.batcave.biz/img/cache-test-unique.jpg?s=unit-test";
+        let original = image_response(
+            url,
+            "image/png".to_string(),
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, b"hello"),
+        );
+        cache_browser_image(&original);
+        let cached = cached_browser_image(url, 5).expect("expected cached image");
+        assert_eq!(cached.status, 200);
+        assert_eq!(cached.body, original.body);
+        assert!(cached_browser_image(url, 4).is_none());
+        assert!(cached_browser_image(
+            "https://img.batcave.biz/img/cache-test-different.jpg?s=unit-test", 5
+        ).is_none());
+    }
 
     #[test]
     fn browser_session_only_matches_its_current_origin() {
@@ -902,6 +1398,7 @@ mod tests {
     #[test]
     fn bot_management_cookie_alone_is_not_clearance() {
         assert!(is_clearance_cookie("cf_clearance"));
+        assert!(is_clearance_cookie("__guard_trust"));
         assert!(!is_clearance_cookie("__cf_bm"));
         assert!(!is_clearance_cookie("cf_chl_2"));
         assert!(!is_clearance_cookie("session"));
@@ -934,9 +1431,17 @@ mod tests {
             challenged: false,
             denied: false,
             usable: true,
+            authentication_required: false,
             user_agent: "Example browser".into(),
         };
         assert!(probe_is_ready(&valid, &target));
+        assert!(!probe_is_ready(
+            &PageProbe {
+                authentication_required: true,
+                ..valid.clone()
+            },
+            &target
+        ));
         assert!(!probe_is_ready(
             &PageProbe {
                 challenged: true,

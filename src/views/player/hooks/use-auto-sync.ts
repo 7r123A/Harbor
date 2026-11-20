@@ -75,7 +75,10 @@ import {
   SCENE_CLIP_SEC,
   selectPlaybackRetryScene,
 } from "@/lib/subtitles/autosync/scene-window";
-import { matchPlaybackSpeech } from "@/lib/subtitles/autosync/playback-asr";
+import {
+  matchPlaybackSpeech,
+  playbackSpeechFailureCode,
+} from "@/lib/subtitles/autosync/playback-asr";
 import {
   moonshineMissingModelLanguage,
   moonshineLanguageName,
@@ -84,6 +87,12 @@ import {
   type MoonshineModelStatus,
 } from "@/lib/subtitles/autosync/moonshine-models";
 import { playbackTimelineFailure } from "@/lib/subtitles/autosync/playback-timeline-error";
+import {
+  cacheCaptureAttemptPath,
+  cacheCaptureRetryReason,
+  cacheCaptureScenePath,
+  MAX_CACHE_CAPTURE_ATTEMPTS,
+} from "@/lib/subtitles/autosync/playback-cache-retry";
 import { matchPlaybackVad } from "@/lib/subtitles/autosync/playback-vad";
 import { isLikelyDialogueCue } from "@/lib/subtitles/autosync/dialogue-matches";
 import {
@@ -1939,9 +1948,9 @@ export function useAutoSync(params: {
           const directAttempted = false;
           let cacheAudioReady = false;
           let moonshineFailure: string | null = null;
+          let moonshineFailureCode = "none";
           let usedMoonshine = false;
           let usedSilero = false;
-          const directMoonshine = settingsRef.current.subtitleAutoSyncEngine === "moonshine";
           let needsFreshAudio = false;
           let retryAfterStartSec: number | null = null;
           let lastPosition = getPlaybackPosition();
@@ -1998,48 +2007,102 @@ export function useAutoSync(params: {
               playbackStageRef.current = "verify";
               setAnalysisRevision((revision) => revision + 1);
               setReason("Reading buffered audio and checking its timestamps");
-              await invoke("mpv_command", {
-                cmd: [
-                  "dump-cache",
-                  startAt.toFixed(3),
-                  endAt.toFixed(3),
-                  recordPath.replace(/\\/g, "/"),
-                ],
-              }).catch(() => {
-                throw new Error("cache-audio-dump-command-failed");
-              });
-              if (aborted || !isCurrentAutoSyncScope(scope)) return;
-              // A second, earlier cut establishes the cache's movie-time origin
-              // without reopening the remote source. Both cuts must agree.
-              const anchorEndSec = endAt - 2;
-              await invoke("mpv_command", {
-                cmd: [
-                  "dump-cache",
-                  (anchorEndSec - 3).toFixed(3),
-                  anchorEndSec.toFixed(3),
-                  anchorPath.replace(/\\/g, "/"),
-                ],
-              });
-              if (aborted || !isCurrentAutoSyncScope(scope)) return;
-              // dump-cache has completed. Validate actual decoded samples; the
-              // container byte count cannot tell us how much audio it contains.
-              // mpv remuxes selected tracks only, so the selected audio is 0:a:0
-              // in this clip even when it was a later stream in the movie.
-              const prepared = await invoke<{
+              // A cache dump can occasionally contain an incomplete packet
+              // timeline despite the same scene being fully buffered. Capture
+              // one fresh pair before giving up; never reuse a failed dump or
+              // bypass the independent timestamp/packet-hash verification.
+              type PreparedCacheAudio = {
                 path: string;
                 durationSec: number;
                 startSec: number;
                 subtitleIntervals?: Array<[number, number]>;
-              }>("subsync_prepare_cache_audio", {
-                input: recordPath.replace(/\\/g, "/"),
-                mapSpec: "0:a:0",
-                sessionId: nativeTapId,
-                anchorInput: anchorPath.replace(/\\/g, "/"),
-                requestedEndSec: Number(endAt.toFixed(3)),
-                anchorEndSec: Number(anchorEndSec.toFixed(3)),
-                embeddedSubtitles: embeddedPlayback,
-              });
-              cleanupFiles.push(() => fs.remove(prepared.path));
+              };
+              let prepared: PreparedCacheAudio | null = null;
+              const anchorEndSec = endAt - 2;
+              // A second dialogue scene must not reuse the first scene's dump or anchor.
+              const sceneCapturePath = cacheCaptureScenePath(
+                recordPath,
+                retryAfterStartSec === null ? 1 : 2,
+              );
+              const sceneAnchorPath =
+                retryAfterStartSec === null
+                  ? anchorPath
+                  : sceneCapturePath.replace(/\.mkv$/, "-anchor.mkv");
+              if (retryAfterStartSec !== null) {
+                cleanupFiles.push(() => fs.remove(sceneCapturePath));
+                cleanupFiles.push(() => fs.remove(sceneAnchorPath));
+              }
+              for (let attempt = 1; attempt <= MAX_CACHE_CAPTURE_ATTEMPTS; attempt++) {
+                const capturePath = cacheCaptureAttemptPath(sceneCapturePath, attempt);
+                const captureAnchorPath =
+                  attempt === 1 ? sceneAnchorPath : capturePath.replace(/\.mkv$/, "-anchor.mkv");
+                if (attempt > 1) {
+                  cleanupFiles.push(() => fs.remove(capturePath));
+                  cleanupFiles.push(() => fs.remove(captureAnchorPath));
+                }
+                // Remove even a partially decoded WAV if validation fails.
+                cleanupFiles.push(() => fs.remove(capturePath.replace(/\.mkv$/, ".wav")));
+                try {
+                  await invoke("mpv_command", {
+                    cmd: [
+                      "dump-cache",
+                      startAt.toFixed(3),
+                      endAt.toFixed(3),
+                      capturePath.replace(/\\/g, "/"),
+                    ],
+                  }).catch(() => {
+                    throw new Error("cache-audio-dump-command-failed");
+                  });
+                  if (aborted || !isCurrentAutoSyncScope(scope)) return;
+                  // A second, earlier cut establishes the cache's movie-time
+                  // origin without reopening the source. Both cuts must agree.
+                  await invoke("mpv_command", {
+                    cmd: [
+                      "dump-cache",
+                      (anchorEndSec - 3).toFixed(3),
+                      anchorEndSec.toFixed(3),
+                      captureAnchorPath.replace(/\\/g, "/"),
+                    ],
+                  }).catch(() => {
+                    throw new Error("cache-audio-dump-command-failed");
+                  });
+                  if (aborted || !isCurrentAutoSyncScope(scope)) return;
+                  // The selected track is remuxed as 0:a:0. A valid timeline
+                  // and sufficient decoded WAV duration are mandatory.
+                  prepared = await invoke<PreparedCacheAudio>("subsync_prepare_cache_audio", {
+                    input: capturePath.replace(/\\/g, "/"),
+                    mapSpec: "0:a:0",
+                    sessionId: nativeTapId,
+                    anchorInput: captureAnchorPath.replace(/\\/g, "/"),
+                    requestedEndSec: Number(endAt.toFixed(3)),
+                    anchorEndSec: Number(anchorEndSec.toFixed(3)),
+                    embeddedSubtitles: embeddedPlayback,
+                  });
+                  void invoke("mpv_command", {
+                    cmd: [
+                      "print-text",
+                      `[harbor/subsync] cache-capture=verified attempt=${attempt}`,
+                    ],
+                  }).catch(() => {});
+                  break;
+                } catch (error) {
+                  if (aborted || !isCurrentAutoSyncScope(scope)) return;
+                  const transientCode = cacheCaptureRetryReason(error);
+                  const retry = transientCode !== null && attempt < MAX_CACHE_CAPTURE_ATTEMPTS;
+                  void invoke("mpv_command", {
+                    cmd: [
+                      "print-text",
+                      `[harbor/subsync] cache-capture=${retry ? "retry" : "rejected"} attempt=${attempt} reason=${transientCode ?? playbackTimelineFailure(error)?.code ?? "other"}`,
+                    ],
+                  }).catch(() => {});
+                  if (!retry) throw error;
+                  setReason("Rechecking buffered audio with a fresh cache capture");
+                  setAnalysisRevision((revision) => revision + 1);
+                  await sleep(250);
+                  if (aborted || !isCurrentAutoSyncScope(scope)) return;
+                }
+              }
+              if (!prepared) throw new Error("cache-audio-timeline-unverified");
               const requestedStartSec = startAt;
               startAt = prepared.startSec;
               if (embeddedPlayback) {
@@ -2069,69 +2132,68 @@ export function useAutoSync(params: {
               const comparisonSessionId = newAnalysisSessionId();
               activeSceneSessionId = comparisonSessionId;
               try {
-                if (!directMoonshine)
-                  result = await boundedNativeProbe(
-                    async () => {
-                      setReason("Detecting buffered dialogue with Silero");
-                      const detected = await matchPlaybackVad(
-                        {
-                          path: prepared.path.replace(/\\/g, "/"),
-                          cues: sourceCues
-                            .filter((cue) => isLikelyDialogueCue(cue.text))
-                            .map((cue) => [cue.start - startAt, cue.end - startAt]),
-                          sessionId: comparisonSessionId,
-                        },
-                        invoke,
-                        () => !aborted && isCurrentAutoSyncScope(scope),
-                        (diagnostic) => {
-                          void invoke("mpv_command", {
-                            cmd: [
-                              "print-text",
-                              `[harbor/subsync] silero-fit ${JSON.stringify({
-                                ...diagnostic,
-                                requestedStartSec: startAt,
-                                playbackSec: position,
-                                cueCount: sourceCues.length,
-                                currentDelaySec: snap.subDelaySec,
-                              })}`,
-                            ],
-                          }).catch(() => {});
-                        },
-                      );
-                      void invoke("mpv_command", {
-                        cmd: [
-                          "print-text",
-                          `[harbor/subsync] playback-silero=${detected === undefined ? "unsupported" : detected === null ? "no-match" : "matched"}`,
-                        ],
-                      }).catch(() => {});
-                      if (detected !== undefined) {
-                        usedSilero = detected !== null;
-                        return detected;
-                      }
-                      setReason("Comparing buffered speech with subtitle timing");
-                      return invoke<{ offsetSec: number; confidence: number } | null>(
-                        "sync_subtitle",
-                        {
-                          url: prepared.path.replace(/\\/g, "/"),
-                          headers: null,
-                          cues: sourceCues
-                            .filter((cue) => isLikelyDialogueCue(cue.text))
-                            .map((cue) => [cue.start - startAt, cue.end - startAt]),
-                          durationSec: clipSec,
-                          infoHash: null,
-                          confMin: null,
-                          mapSpec: "0:a:0",
-                          sessionId: comparisonSessionId,
-                          playbackClip: true,
-                          // The prepared WAV starts at zero; use Harbor's speech VAD.
-                          fromStart: false,
-                          reportFailures: true,
-                        },
-                      );
-                    },
-                    () => cancelNativeAnalysis(comparisonSessionId),
-                    30_000,
-                  );
+                result = await boundedNativeProbe(
+                  async () => {
+                    setReason("Detecting buffered dialogue with Silero");
+                    const detected = await matchPlaybackVad(
+                      {
+                        path: prepared.path.replace(/\\/g, "/"),
+                        cues: sourceCues
+                          .filter((cue) => isLikelyDialogueCue(cue.text))
+                          .map((cue) => [cue.start - startAt, cue.end - startAt]),
+                        sessionId: comparisonSessionId,
+                      },
+                      invoke,
+                      () => !aborted && isCurrentAutoSyncScope(scope),
+                      (diagnostic) => {
+                        void invoke("mpv_command", {
+                          cmd: [
+                            "print-text",
+                            `[harbor/subsync] silero-fit ${JSON.stringify({
+                              ...diagnostic,
+                              requestedStartSec: startAt,
+                              playbackSec: position,
+                              cueCount: sourceCues.length,
+                              currentDelaySec: snap.subDelaySec,
+                            })}`,
+                          ],
+                        }).catch(() => {});
+                      },
+                    );
+                    void invoke("mpv_command", {
+                      cmd: [
+                        "print-text",
+                        `[harbor/subsync] playback-silero=${detected === undefined ? "unsupported" : detected === null ? "no-match" : "matched"}`,
+                      ],
+                    }).catch(() => {});
+                    if (detected !== undefined) {
+                      usedSilero = detected !== null;
+                      return detected;
+                    }
+                    setReason("Comparing buffered speech with subtitle timing");
+                    return invoke<{ offsetSec: number; confidence: number } | null>(
+                      "sync_subtitle",
+                      {
+                        url: prepared.path.replace(/\\/g, "/"),
+                        headers: null,
+                        cues: sourceCues
+                          .filter((cue) => isLikelyDialogueCue(cue.text))
+                          .map((cue) => [cue.start - startAt, cue.end - startAt]),
+                        durationSec: clipSec,
+                        infoHash: null,
+                        confMin: null,
+                        mapSpec: "0:a:0",
+                        sessionId: comparisonSessionId,
+                        playbackClip: true,
+                        // The prepared WAV starts at zero; use Harbor's speech VAD.
+                        fromStart: false,
+                        reportFailures: true,
+                      },
+                    );
+                  },
+                  () => cancelNativeAnalysis(comparisonSessionId),
+                  30_000,
+                );
               } catch (error) {
                 cacheError = error;
               } finally {
@@ -2141,7 +2203,6 @@ export function useAutoSync(params: {
               if (aborted || !isCurrentAutoSyncScope(scope)) return;
               if (
                 !result &&
-                !directMoonshine &&
                 retryAfterStartSec === null &&
                 selectPlaybackRetryScene(bufferedScenes, focusSec, startAt)
               ) {
@@ -2167,8 +2228,25 @@ export function useAutoSync(params: {
                           cues: sourceCues
                             .filter((cue) => isLikelyDialogueCue(cue.text))
                             .map((cue) => [cue.start - startAt, cue.end - startAt]),
-                          audioLanguage: snap.audioTracks.find((track) => track.selected)?.lang,
-                          subtitleLanguage: snap.subtitleTracks.find((track) => track.selected)
+                          // Only genuine external subtitle text can anchor spoken
+                          // words. Embedded cache cues have fabricated labels.
+                          textCues: embeddedPlayback
+                            ? undefined
+                            : sourceCues
+                                .filter((cue) => isLikelyDialogueCue(cue.text))
+                                .map((cue) => ({
+                                  start: cue.start - startAt,
+                                  end: cue.end - startAt,
+                                  text: cue.text,
+                                })),
+                          // Read the active track at recognition time: the stream
+                          // can start in French and then switch to English.
+                          // Some MKVs specify "English" only in the audio title.
+                          audioLanguage: liveSnapRef.current.audioTracks.find((track) => track.selected)
+                            ?.lang,
+                          audioTrackTitle: liveSnapRef.current.audioTracks.find((track) => track.selected)
+                            ?.title,
+                          subtitleLanguage: liveSnapRef.current.subtitleTracks.find((track) => track.selected)
                             ?.lang,
                           enabled: settingsRef.current.subtitleAutoSyncAsr === true,
                           modelLanguage: settingsRef.current.subtitleMoonshineLanguage,
@@ -2196,12 +2274,30 @@ export function useAutoSync(params: {
                             ],
                           }).catch(() => {});
                         },
+                        (diagnostic) => {
+                          void invoke("mpv_command", {
+                            cmd: [
+                              "print-text",
+                              `[harbor/subsync] moonshine-fit ${JSON.stringify(diagnostic)}`,
+                            ],
+                          }).catch(() => {});
+                        },
+                        (diagnostic) => {
+                          // Numeric evidence only; no transcript or subtitle text.
+                          void invoke("mpv_command", {
+                            cmd: [
+                              "print-text",
+                              `[harbor/subsync] moonshine-lexical ${JSON.stringify(diagnostic)}`,
+                            ],
+                          }).catch(() => {});
+                        },
                       ),
                     () => cancelNativeAnalysis(asrSessionId),
                     90_000,
                   );
                   usedMoonshine = true;
                 } catch (error) {
+                  moonshineFailureCode = playbackSpeechFailureCode(error);
                   const missingLanguage = moonshineMissingModelLanguage(error);
                   if (missingLanguage) {
                     if (!moonshinePromptedRef.current.has(missingLanguage)) {
@@ -2259,7 +2355,7 @@ export function useAutoSync(params: {
             void invoke("mpv_command", {
               cmd: [
                 "print-text",
-                `[harbor/subsync] live failed cache=${reportCode(cacheError)} direct=${reportCode(directError)} attempted=${directAttempted} decoded=${cacheAudioReady}`,
+                `[harbor/subsync] live failed cache=${reportCode(cacheError)} direct=${reportCode(directError)} attempted=${directAttempted} decoded=${cacheAudioReady} moonshine=${moonshineFailureCode}`,
               ],
             }).catch(() => {});
             throw new Error(

@@ -1,4 +1,5 @@
 import { AuroraBokeh } from "@/components/aurora-bokeh";
+import { useEffect } from "react";
 import { useSettings } from "@/lib/settings";
 import { getThemeById } from "@/lib/theme";
 import { useThemePreview } from "@/lib/theme-preview";
@@ -9,11 +10,20 @@ export function ThemeBackdrop() {
   const { player, view } = useView();
   const preview = useThemePreview();
 
-  if (player) return null;
-
   const preset = settings.theme.preset !== "custom" ? getThemeById(settings.theme.preset) : null;
   const wantsBokeh = (preview ? preview.bokeh : !!preset?.bokeh) && view !== "addons";
   const img = settings.theme.backgroundImage ?? preset?.background?.image ?? null;
+
+  // The image is painted at a negative z-index, under the opaque body/#root
+  // canvas macOS needs; drop that paint while the image is up.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.toggleAttribute("data-harbor-backdrop", !!img && !player);
+    return () => root.removeAttribute("data-harbor-backdrop");
+  }, [img, player]);
+
+  if (player) return null;
+
   const dim = Math.max(
     0,
     Math.min(1, settings.theme.backgroundDim ?? preset?.background?.dim ?? 0.65),

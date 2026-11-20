@@ -2,6 +2,7 @@ import {
   getAnimeCanonicalId,
   getAnimeCwId,
   getAnilistMalAlias,
+  recordAnilistMalAlias,
   recordAnimeCwId,
   notifyAnimeCwIds,
 } from "@/lib/anime-cw-ids";
@@ -13,6 +14,7 @@ import {
 import { resolveAnimeEntry } from "@/lib/providers/anime-entry";
 import { animeKitsuMeta, type AnimeKitsuMeta } from "@/lib/providers/anime-kitsu-addon";
 import { resolveTrackerAnimeEntry } from "@/lib/anime-tracker-entry";
+import { anilistAnimeEntry } from "@/lib/anilist/entry";
 
 const KITSU_ID = /^kitsu:[1-9]\d*$/;
 const KITSU_STREAM = /^kitsu:([1-9]\d*):[1-9]\d*$/;
@@ -58,6 +60,47 @@ type CwIdentityItem = {
   cwMembers?: CwIdentityItem[];
 };
 
+/** Identity inputs that can change the proof without changing the checkpoint. */
+export type CwWarmIdentityItem = {
+  _id?: string;
+  id?: string;
+  type?: string;
+  isAnime?: boolean;
+  videoId?: string | null;
+  season?: number;
+  episode?: number;
+  imdb_id?: string | null;
+  altIds?: string[];
+  state?: {
+    video_id?: string | null;
+    season?: number;
+    episode?: number;
+    imdb_id?: string | null;
+  };
+  cwMembers?: CwWarmIdentityItem[];
+};
+
+export function cwWarmIdentityKey(item: CwWarmIdentityItem, depth = 0): string {
+  const state = item.state;
+  // shortcut: nested CW groups stop at four levels; current dedupe output is shallower.
+  const members =
+    depth < 4
+      ? (item.cwMembers ?? []).map((member) => cwWarmIdentityKey(member, depth + 1)).join(",")
+      : "";
+  return [
+    item._id ?? "",
+    item.id ?? "",
+    item.type ?? "",
+    item.isAnime ? "1" : "0",
+    item.videoId ?? state?.video_id ?? "",
+    item.season ?? state?.season ?? "",
+    item.episode ?? state?.episode ?? "",
+    item.imdb_id ?? state?.imdb_id ?? "",
+    [...(item.altIds ?? [])].sort().join(","),
+    members,
+  ].join("|");
+}
+
 const resolvedCatalogImdb = new Map<string, string>();
 
 function proofKey(id: string, videoId: string | null | undefined, coords: CwAnimeCoords): string {
@@ -101,6 +144,22 @@ export function getCachedCatalogImdb(id: string): string | null {
 const catalogProofs = new Map<string, { identity: string | null; expiresAt: number }>();
 const warmInflight = new Map<string, Promise<void>>();
 const warmCache = new Map<string, { identity: string | null; expiresAt: number }>();
+const WARM_NOTIFY_QUIET_MS = 50;
+const WARM_NOTIFY_MAX_MS = 200;
+let warmNotifyTimer: ReturnType<typeof setTimeout> | null = null;
+let warmNotifyDeadline = 0;
+
+/** Coalesce identity notifications into a short window without waiting for the whole batch. */
+function scheduleWarmNotify(): void {
+  const now = Date.now();
+  if (warmNotifyTimer == null) warmNotifyDeadline = now + WARM_NOTIFY_MAX_MS;
+  else clearTimeout(warmNotifyTimer);
+  const delay = Math.max(0, Math.min(WARM_NOTIFY_QUIET_MS, warmNotifyDeadline - now));
+  warmNotifyTimer = setTimeout(() => {
+    warmNotifyTimer = null;
+    notifyAnimeCwIds();
+  }, delay);
+}
 const nativeInflight = new Map<string, Promise<string | null>>();
 const nativeCache = new Map<string, { identity: string | null; expiresAt: number }>();
 let activeJobs = 0;
@@ -162,6 +221,27 @@ export function cwAnimeIdentityKey(
   return null;
 }
 
+export type CwIdentityProofInput = {
+  _id?: string;
+  id?: string;
+  videoId?: string | null;
+  altIds?: string[];
+  imdb_id?: string | null;
+  state?: CwIdentityItem["state"];
+  season?: number;
+  episode?: number;
+};
+
+/** The verified checkpoint identity, using the same proof key as `warmOne`. */
+export function provenCwAnimeIdentity(item: CwIdentityProofInput): string | null {
+  const id = item._id ?? item.id ?? "";
+  const videoId = item.videoId ?? item.state?.video_id;
+  if (!id) return null;
+  if (nativeEntry.test(id) || KITSU_ID.test(id)) return cwAnimeIdentityKey(id, videoId);
+  if (!catalogEntry.test(id)) return null;
+  return cwAnimeIdentityKey(id, videoId, checkpointCoords(item, id, videoId));
+}
+
 async function resolveNative(id: string): Promise<string | null> {
   const cached = nativeCache.get(id);
   if (cached && cached.expiresAt > Date.now()) return cached.identity;
@@ -184,7 +264,7 @@ async function resolveNative(id: string): Promise<string | null> {
         expiresAt: Date.now() + (identity ? POSITIVE_TTL : NEGATIVE_TTL),
       });
       if (identity) {
-        recordAnimeCwId(id, identity);
+        recordAnimeCwId(id, identity, false);
       }
       return identity;
     })
@@ -301,6 +381,9 @@ async function warmOne(item: CwIdentityItem, tmdbKey = ""): Promise<void> {
   if (existing) return existing;
 
   const task = (async () => {
+    // The effective CW identity of a native row comes from the alias maps, not
+    // from the warm cache, so that is what a notification has to be based on.
+    const beforeNative = isNative ? (getAnimeCwId(id) ?? getAnimeCanonicalId(id)) : null;
     try {
       if (!isNative) {
         const stored = await animeDbReadProvider<{
@@ -331,11 +414,16 @@ async function warmOne(item: CwIdentityItem, tmdbKey = ""): Promise<void> {
             expiresAt: stored.expiresAt,
           });
           if (stored.value.identity) {
-            boundedSet(catalogProofs, proofKey(id, videoId, coords), {
+            const key = proofKey(id, videoId, coords);
+            const known = catalogProofs.get(key);
+            const effective = known && known.expiresAt > Date.now() ? known.identity : null;
+            boundedSet(catalogProofs, key, {
               identity: stored.value.identity,
               expiresAt: stored.expiresAt,
             });
-            notifyAnimeCwIds();
+            // Restoring an identity the row already had does not change what CW
+            // renders, so it must not invalidate the row.
+            if (effective !== stored.value.identity) scheduleWarmNotify();
           }
           return;
         }
@@ -345,8 +433,17 @@ async function warmOne(item: CwIdentityItem, tmdbKey = ""): Promise<void> {
         : limited(() => resolveCatalog(id, item, coords)));
       const expiresAt = Date.now() + (identity ? POSITIVE_TTL : NEGATIVE_TTL);
       boundedSet(warmCache, snapshotKey, { identity, expiresAt });
+      let identityChanged = true;
       if (identity && !isNative) {
-        boundedSet(catalogProofs, proofKey(id, videoId, coords), { identity, expiresAt });
+        const key = proofKey(id, videoId, coords);
+        const known = catalogProofs.get(key);
+        identityChanged =
+          (known && known.expiresAt > Date.now() ? known.identity : null) !== identity;
+        boundedSet(catalogProofs, key, { identity, expiresAt });
+      } else if (identity && isNative) {
+        identityChanged = (getAnimeCwId(id) ?? getAnimeCanonicalId(id)) !== beforeNative;
+      }
+      if (identity && !isNative) {
         await animeDbWriteProvider({
           key: snapshotKey,
           value: {
@@ -363,7 +460,7 @@ async function warmOne(item: CwIdentityItem, tmdbKey = ""): Promise<void> {
           fetchedAt: Date.now(),
         });
       }
-      if (identity) notifyAnimeCwIds();
+      if (identity && identityChanged) scheduleWarmNotify();
     } catch {
       boundedSet(warmCache, snapshotKey, { identity: null, expiresAt: Date.now() + NEGATIVE_TTL });
     } finally {
@@ -376,7 +473,8 @@ async function warmOne(item: CwIdentityItem, tmdbKey = ""): Promise<void> {
 
 const MOVIE_ID = /^(?:tt\d+|tmdb:movie:[1-9]\d*)$/;
 
-function movieIds(item: CwIdentityItem): string[] {
+/** Verified movie IDs and warmed cross-catalog aliases; never derives identity from title. */
+export function movieIdentityIds(item: CwIdentityItem): string[] {
   const id = item._id ?? item.id ?? "";
   if (item.type !== "movie" || item.isAnime || !MOVIE_ID.test(id)) return [];
   const cached = warmCache.get(`movie:${id}`);
@@ -389,6 +487,8 @@ function movieIds(item: CwIdentityItem): string[] {
     ),
   ];
 }
+
+const movieIds = movieIdentityIds;
 
 async function warmMovie(item: CwIdentityItem, tmdbKey: string): Promise<void> {
   const id = item._id ?? item.id ?? "";
@@ -426,7 +526,7 @@ async function warmMovie(item: CwIdentityItem, tmdbKey: string): Promise<void> {
         identity,
         expiresAt: Date.now() + (identity ? POSITIVE_TTL : NEGATIVE_TTL),
       });
-      if (identity) notifyAnimeCwIds();
+      if (identity) scheduleWarmNotify();
     })
     .catch(() => {
       boundedSet(warmCache, key, { identity: null, expiresAt: Date.now() + NEGATIVE_TTL });
@@ -434,6 +534,110 @@ async function warmMovie(item: CwIdentityItem, tmdbKey: string): Promise<void> {
     .finally(() => warmInflight.delete(key));
   warmInflight.set(key, task);
   return task;
+}
+
+/**
+ * A newly airing anime may have AniList and MAL IDs but no Kitsu entry yet.
+ * Resolve AniList -> MAL only when both types are already present in this CW
+ * cohort. Never infer identity from translated or romanized titles.
+ *
+ * AniList entry results use the existing media cache; accepted links use the
+ * persisted, notifying anime ID alias map so both rooms update automatically.
+ */
+async function warmAnilistMalCwAliases(items: CwIdentityItem[]): Promise<void> {
+  const malIds = new Set(
+    items
+      .map((item) => item._id ?? item.id ?? "")
+      .filter((id) => /^mal:[1-9]\d*$/.test(id)),
+  );
+  if (malIds.size === 0) return;
+  const anilistIds = [...new Set(
+    items
+      .map((item) => item._id ?? item.id ?? "")
+      .filter((id) => /^anilist:[1-9]\d*$/.test(id) && !getAnilistMalAlias(id)),
+  )];
+  if (anilistIds.length === 0) return;
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(MAX_CONCURRENT, anilistIds.length) }, async () => {
+      while (cursor < anilistIds.length) {
+        const id = anilistIds[cursor++];
+        const number = Number(id.slice("anilist:".length));
+        const entry = await anilistAnimeEntry(number, "anilist").catch(() => null);
+        if (
+          !entry ||
+          entry.id !== number ||
+          !Number.isSafeInteger(entry.idMal) ||
+          entry.idMal == null ||
+          entry.idMal <= 0 ||
+          !malIds.has("mal:" + entry.idMal)
+        ) continue;
+        recordAnilistMalAlias(number, entry.idMal);
+      }
+    }),
+  );
+}
+/**
+ * The Kitsu addon can publish exact IMDb episode coordinates for a MAL entry
+ * before AniZip publishes its IMDb/Kitsu IDs. Use that episode-level evidence
+ * to bridge a catalog CW checkpoint to an existing native anime CW member.
+ * Never infer this relationship from names or a series-wide IMDb ID alone.
+ */
+async function warmNativeCatalogCwProofs(items: CwIdentityItem[]): Promise<void> {
+  const catalog = items.flatMap((item) => {
+    const id = item._id ?? item.id ?? "";
+    if (!catalogEntry.test(id) || item.type === "movie") return [];
+    const videoId = item.videoId ?? item.state?.video_id;
+    const coords = checkpointCoords(item, id, videoId);
+    const imdbId = sourceImdbFor(item, id);
+    if (
+      !imdbId || !/^tt\d+$/.test(imdbId) ||
+      !Number.isInteger(coords.season) || coords.season! < 1 ||
+      !Number.isInteger(coords.episode) || coords.episode! < 1 ||
+      cwAnimeIdentityKey(id, videoId, coords)
+    ) return [];
+    return [{ id, videoId, coords, imdbId }];
+  });
+  if (catalog.length === 0) return;
+  const nativeIds = [...new Set(
+    items.filter((item) => item.type !== "movie")
+      .map((item) => item._id ?? item.id ?? "")
+      .filter((id) => nativeEntry.test(id) || KITSU_ID.test(id)),
+  )];
+  if (nativeIds.length === 0) return;
+
+  const metas = await Promise.all(
+    nativeIds.map((id) => limited(() => animeKitsuMeta(id).catch(() => null))),
+  );
+  for (const entry of catalog) {
+    const identities = new Set<string>();
+    for (const meta of metas) {
+      if (!meta || meta.type !== "series" || !KITSU_ID.test(meta.id)) continue;
+      const found = meta.videos.some(
+        (video) =>
+          video.id.startsWith(`${meta.id}:`) &&
+          /^kitsu:[1-9]\d*:[1-9]\d*$/.test(video.id) &&
+          video.imdb_id === entry.imdbId &&
+          video.imdbSeason === entry.coords.season &&
+          video.imdbEpisode === entry.coords.episode,
+      );
+      if (found) identities.add(meta.id);
+    }
+    // Two entries claiming the same IMDb checkpoint are ambiguous, not proof.
+    if (identities.size !== 1) continue;
+    const identity = identities.values().next().value!;
+    const key = proofKey(entry.id, entry.videoId, entry.coords);
+    const previous = catalogProofs.get(key);
+    if (previous && previous.expiresAt > Date.now()) {
+      if (previous.identity && previous.identity !== identity) continue;
+      if (previous.identity === identity) continue;
+    }
+    boundedSet(catalogProofs, key, {
+      identity,
+      expiresAt: Date.now() + POSITIVE_TTL,
+    });
+    scheduleWarmNotify();
+  }
 }
 
 /** Resolve checkpoint snapshots with bounded concurrency shared across all callers. */
@@ -450,14 +654,16 @@ export async function warmCwAnimeIdentities(
     item.cwMembers?.forEach(flatten);
   };
   items.forEach(flatten);
-  await Promise.all(
-    snapshots.map((item) =>
+  await Promise.all([
+    warmAnilistMalCwAliases(snapshots),
+    warmNativeCatalogCwProofs(snapshots),
+    ...snapshots.map((item) =>
       (movieIds(item).length > 0
         ? warmMovie(item, options.tmdbKey ?? "")
         : warmOne(item, options.tmdbKey ?? "")
       ).catch(() => undefined),
     ),
-  );
+  ]);
 }
 
 function memberKey(item: CwIdentityItem): string {
@@ -490,6 +696,24 @@ function rootOf(parents: Map<string, string>, id: string): string {
     id = next;
   }
   return current;
+}
+
+function newerAnimePlayback(incoming: CwIdentityItem, existing: CwIdentityItem): boolean {
+  const timestamp = (item: CwIdentityItem) => {
+    const value = item.lastWatched ?? item.state?.lastWatched;
+    return typeof value === "number" ? value : Date.parse(value ?? "");
+  };
+  const incomingAt = timestamp(incoming);
+  const existingAt = timestamp(existing);
+  // Row ordering also includes library maintenance and resume-import times.
+  // Only explicit playback timestamps may override that order for an alias.
+  return (
+    Number.isFinite(incomingAt) &&
+    incomingAt > 0 &&
+    Number.isFinite(existingAt) &&
+    existingAt > 0 &&
+    incomingAt > existingAt
+  );
 }
 
 function mergeCwMembers<T extends CwIdentityItem>(existing: T, item: T): T {
@@ -605,7 +829,11 @@ export function dedupeAnimeCw<T extends CwIdentityItem>(items: T[]): T[] {
       output.push(item);
       continue;
     }
-    output[index] = mergeCwMembers(output[index], item);
+    const existing = output[index];
+    output[index] =
+      animeIdentity && newerAnimePlayback(item, existing)
+        ? mergeCwMembers(item, existing)
+        : mergeCwMembers(existing, item);
   }
 
   // A manual-watched or local row can carry the playback id while the real

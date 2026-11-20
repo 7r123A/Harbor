@@ -81,6 +81,11 @@ test("isCwMember keeps a manual Continue Watching card for a marked series", () 
   assert.equal(api.isCwMember(series({}, { manualWatched: true })), true);
 });
 
+test("isCwMember keeps a neutral caught-up display card", () => {
+  const api = cwApi(new Set());
+  assert.equal(api.isCwMember(series({}, { caughtUp: true })), true);
+});
+
 test("isCwMember keeps unwatched series progression and finished movies unchanged", () => {
   const api = cwApi(new Set());
   // Unwatched episode, mid-series: the original "series progression" branch.
@@ -165,6 +170,83 @@ test("removed temp records stay in CW only when a real checkpoint exists", () =>
       ),
     ),
     true,
+  );
+});
+
+test("Phase 4C hides a finished removed temporary JoJo source without discarding it", () => {
+  const api = cwApi(new Set());
+  const staleJoJo = series(
+    {
+      season: 0,
+      episode: 0,
+      video_id: "tt2359704:6:7",
+      flaggedWatched: 1,
+      timeOffset: 1_496_078,
+      duration: 1_504_171,
+    },
+    {
+      _id: "tt2359704",
+      name: "Steel Ball Run: JoJo's Bizarre Adventure",
+      removed: true,
+      temp: true,
+    },
+  );
+  assert.equal(
+    api.isCwMember(staleJoJo),
+    true,
+    "source must remain available to advance/resurface",
+  );
+  assert.equal(
+    api.isCwDisplayReady(staleJoJo),
+    false,
+    "completed old JoJo must not enter visible CW",
+  );
+  assert.deepEqual(api.resolvedEpisodeCoords(staleJoJo), { season: 6, episode: 7 });
+});
+
+test("a verified next-episode or timer card remains visible after a temporary source finishes", () => {
+  const api = cwApi(new Set());
+  const completed = series(
+    { flaggedWatched: 1, timeOffset: 99_000, duration: 100_000 },
+    { removed: true, temp: true },
+  );
+  assert.equal(api.isCwDisplayReady(completed), false);
+  assert.equal(api.isCwDisplayReady({ ...completed, upNext: true }), true);
+  assert.equal(api.isCwDisplayReady({ ...completed, waitingForAir: true }), true);
+  assert.equal(api.isCwDisplayReady({ ...completed, removed: false }), true);
+  assert.equal(api.isCwDisplayReady({ ...completed, temp: false }), true);
+  assert.equal(api.isCwDisplayReady(series({ flaggedWatched: 0, timeOffset: 10_000 })), true);
+  assert.equal(
+    api.isCwDisplayReady(
+      series(
+        { flaggedWatched: 0, timeOffset: 99_000, duration: 100_000 },
+        { removed: true, temp: true },
+      ),
+    ),
+    false,
+  );
+});
+
+test("the worker retains completed sources while only the final CW row hides unresolved cards", () => {
+  const home = read("src/views/home.tsx");
+  const hook = read("src/views/home/hooks/use-cw-advance.ts");
+  assert.match(home, /isCwMember\(i\)/);
+  assert.doesNotMatch(home, /isCwDisplayReady\(i\)/);
+  assert.match(hook, /const candidates = items\.filter/);
+  assert.match(hook, /restoredDisplay\.advanced\.get\(i\._id\)/);
+  assert.match(
+    hook,
+    /function isPlayableCwDisplay\(\s*i: LibraryItem,\s*advancementEnabled: boolean,\s*unresolved\?: ReadonlySet<string>,?\s*\)/,
+  );
+  assert.match(hook, /if \(!isCwDisplayReady\(i\)\) return false/);
+  assert.match(
+    hook,
+    /\.filter\(\s*\(i\) =>\s*isPlayableCwDisplay\(i, enabled\) &&\s*!isCwDismissed\(i\) &&\s*\(animeMode !== "exclude" \|\| !isAnimeCwItem\(i\)\)/,
+  );
+  assert.match(hook, /\.map\(\(i\) => displayAdvanced\.get\(i\._id\) \?\? i\)/);
+  assert.match(
+    hook,
+    /\.filter\(\s*\(i\) =>\s*isPlayableCwDisplay\(i, enabled, unresolvedDisplayIds\) &&\s*!displayRemoved\.has\(i\._id\)/,
   );
 });
 

@@ -1,10 +1,18 @@
 import { invoke } from "@tauri-apps/api/core";
+import {
+  musicVideoMaxHeight,
+  musicVideoQuality,
+  type MusicVideoQuality,
+  defaultMusicVideoQuality,
+} from "./video-quality";
 import type { MusicTrack } from "./types";
 
 export type MusicVideoStream = {
   url: string;
   audioUrl: string | null;
   httpHeaders?: Record<string, string>;
+  /** Heights the upload offers, so the picker only lists what it can serve. */
+  availableHeights?: number[];
 };
 
 const STREAM_TTL = 30 * 60_000;
@@ -23,6 +31,18 @@ const streamCache = new Map<string, CachedStream>();
 const streamRequests = new Map<string, Promise<MusicVideoStream>>();
 const prefetchQueue: MusicTrack[] = [];
 let prefetchKey = "";
+
+/**
+ * A queued song resolves to the audio upload the provider gave the queue, whose "video" is a
+ * square art track. Video mode needs the official video instead, so the session layer
+ * registers the lookup that swaps the identity before the native resolve.
+ */
+let videoTargetResolver: ((track: MusicTrack) => Promise<MusicTrack | null>) | null = null;
+export function setMusicVideoTargetResolver(
+  resolver: ((track: MusicTrack) => Promise<MusicTrack | null>) | null,
+): void {
+  videoTargetResolver = resolver;
+}
 
 export type MusicVideoIdentity = Pick<MusicTrack, "id" | "connectorId" | "sourceId">;
 
@@ -98,12 +118,22 @@ function dropCached(key: string): void {
   releaseSessions(cached.sessions);
 }
 
-function boundedResolve(track: MusicTrack, timeoutMs: number): Promise<MusicVideoStream> {
-  const native = invoke<MusicVideoStream>("music_video_stream", { track });
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return native;
+function boundedResolve(
+  track: MusicTrack,
+  timeoutMs: number,
+  quality: MusicVideoQuality,
+): Promise<MusicVideoStream> {
+  const work = (async () => {
+    const resolved = videoTargetResolver ? await videoTargetResolver(track) : null;
+    return invoke<MusicVideoStream>("music_video_stream", {
+      track: resolved ?? track,
+      maxHeight: musicVideoMaxHeight(quality),
+    });
+  })();
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return work;
   return new Promise<MusicVideoStream>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(MUSIC_VIDEO_UNAVAILABLE)), timeoutMs);
-    native.then(
+    work.then(
       (stream) => {
         clearTimeout(timer);
         resolve(stream);
@@ -125,8 +155,9 @@ export function musicVideoStream(
   track: MusicTrack,
   refresh = false,
   timeoutMs = MUSIC_VIDEO_RESOLVE_TIMEOUT,
+  quality = musicVideoQuality(),
 ): Promise<MusicVideoStream> {
-  const key = musicVideoStreamKey(track);
+  const key = `${musicVideoStreamKey(track)}|${quality}`;
   if (!refresh) {
     const hit = streamCache.get(key);
     // Reinsert on a hit. Eviction takes the oldest entry, and without this the video being
@@ -140,7 +171,7 @@ export function musicVideoStream(
     if (running) return running;
   }
   forgetMusicVideoStreamKey(key);
-  const request: Promise<MusicVideoStream> = boundedResolve(track, timeoutMs)
+  const request: Promise<MusicVideoStream> = boundedResolve(track, timeoutMs, quality)
     .then(async (stream) => {
       const expires = streamExpiry(stream);
       const next = await proxied(stream);
@@ -171,7 +202,7 @@ function runPrefetch(): void {
   const next = prefetchQueue.shift();
   if (!next) return;
   prefetchKey = musicVideoStreamKey(next);
-  void musicVideoStream(next)
+  void musicVideoStream(next, false, undefined, defaultMusicVideoQuality())
     .catch(() => {})
     .finally(() => {
       prefetchKey = "";
@@ -185,12 +216,14 @@ function runPrefetch(): void {
  * viewer is already waiting on, and only a couple deep so the bounded cache keeps what is playing.
  */
 export function prefetchMusicVideoStreams(tracks: MusicTrack[], limit = PREFETCH_LIMIT): void {
+  const quality = defaultMusicVideoQuality();
   for (const track of tracks.slice(0, Math.max(0, limit))) {
     if (prefetchQueue.length >= PREFETCH_QUEUE_LIMIT) break;
-    const key = musicVideoStreamKey(track);
+    const base = musicVideoStreamKey(track);
+    const key = `${base}|${quality}`;
     const hit = streamCache.get(key);
     if ((hit && hit.expires > Date.now()) || streamRequests.has(key)) continue;
-    if (prefetchQueue.some((queued) => musicVideoStreamKey(queued) === key)) continue;
+    if (prefetchQueue.some((queued) => musicVideoStreamKey(queued) === base)) continue;
     prefetchQueue.push(track);
   }
   runPrefetch();

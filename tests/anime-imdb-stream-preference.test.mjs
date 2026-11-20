@@ -123,6 +123,12 @@ function transport(empty = false) {
       isStremioLocalAddon: () => false,
     },
     "./cached": { hasUncachedMarker: () => false },
+    "./addon-priority": {
+      declaresStream: (a) =>
+        (a.manifest.resources ?? []).some((r) =>
+          typeof r === "string" ? r === "stream" : r.name === "stream",
+        ),
+    },
     "@/lib/torrent/magnet": { infoHashFromSources: () => null, infoHashFromUrl: () => null },
     "./plugins/addon": {
       ...pluginMocks,

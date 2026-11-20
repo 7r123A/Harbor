@@ -80,5 +80,6 @@ test("remote reads are skipped on fallback, and cache audio must be verified bef
   );
   assert.match(hook, /scene-read=skipped reason=buffered-playback-selected/);
   assert.match(hook, /subsync_prepare_cache_audio/);
-  assert.match(hook, /input: recordPath\.replace[^}]*mapSpec: "0:a:0"/);
+  assert.match(hook, /input: capturePath\.replace[^}]*mapSpec: "0:a:0"/);
+  assert.match(hook, /anchorInput: captureAnchorPath\.replace/);
 });

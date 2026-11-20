@@ -8,6 +8,11 @@ import { FACET_DIMS, facetOptions, matchesFacets, type FacetState } from "./stre
 import { addonInstanceKey, buildAddonOptions, needsDownload } from "./picker-utils";
 import { useSettings } from "@/lib/settings";
 import { useT } from "@/lib/i18n";
+import {
+  INTENT_PREWARM_ABANDON_MS,
+  abandonPrewarmedStream,
+  prewarmP2pStream,
+} from "@/lib/streams/p2p-prewarm";
 import type { CustomStreamFilter } from "@/lib/streams/custom-filters";
 import { sortStreams } from "@/lib/streams/source-sort";
 import { FacetMenuRow } from "./facet-menu-row";
@@ -15,6 +20,7 @@ import { FilterBuilder } from "./filter-builder";
 
 export function StremioLayout({
   streams,
+  lastPlayedStream,
   addons,
   pipelineDone,
   loadingAddonCount,
@@ -27,6 +33,7 @@ export function StremioLayout({
   isAnime = false,
 }: {
   streams: ScoredStream[];
+  lastPlayedStream?: ScoredStream | null;
   addons: Addon[] | null;
   pipelineDone: boolean;
   loadingAddonCount: number;
@@ -200,10 +207,21 @@ export function StremioLayout({
           <StremioRow
             key={`${s.url ?? s.infoHash ?? s.title}-${i}`}
             stream={s}
+            playedLast={s === lastPlayedStream}
             failed={failedStreams.has(s)}
             addonLogo={addonLogoMap.get(s.addonUrl ?? "") ?? addonLogoMap.get(s.addonId) ?? null}
             match={matchFor ? matchFor(s) : null}
             onPlay={() => onPlay(s)}
+            onIntent={
+              download
+                ? undefined
+                : () =>
+                    prewarmP2pStream(s, {
+                      abandonAfterMs: INTENT_PREWARM_ABANDON_MS,
+                      intent: true,
+                    })
+            }
+            onIntentCancel={download ? undefined : () => abandonPrewarmedStream(s)}
             download={download}
             downloadState={downloadStateFor?.(s)}
             isAnime={isAnime}

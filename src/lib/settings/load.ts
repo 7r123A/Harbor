@@ -211,7 +211,6 @@ export function parseStoredSettings(raw: string | null): {
       /** Legacy: the preference used to live in the Simkl panel. */
       simklAnimeTitleLanguage?: "english" | "romaji" | "native";
       _musicSeekThumbV1?: boolean;
-      _rememberLastStreamOnV1?: boolean;
       _streamSortAddonV1?: boolean;
       scrapers?: unknown;
       scrapersAcknowledged?: boolean;
@@ -293,10 +292,6 @@ export function parseStoredSettings(raw: string | null): {
       parsed.musicSeekThumb = true;
       parsed.musicSeekThumbHover = true;
       parsed._musicSeekThumbV1 = true;
-    }
-    if (!parsed._rememberLastStreamOnV1) {
-      parsed.rememberLastStream = true;
-      parsed._rememberLastStreamOnV1 = true;
     }
     if (!parsed._streamSortAddonV1) {
       if (parsed.streamSort === "harbor") parsed.streamSort = "addon";

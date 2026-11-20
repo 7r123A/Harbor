@@ -1,6 +1,6 @@
 use super::super::engine::MusicDeckState;
 use super::super::{
-    library, m3u, MusicState, MusicTrack, ACTIVE_NONE, ACTIVE_SPOTIFY, ACTIVE_STREAM, ACTIVE_MODULE, ACTIVE_MODULE_SPOTIFY,
+    library, m3u, spotify, MusicState, MusicTrack, ACTIVE_NONE, ACTIVE_SPOTIFY, ACTIVE_STREAM, ACTIVE_MODULE, ACTIVE_MODULE_SPOTIFY, ACTIVE_SOLOIST,
 };
 use super::search::resolve_track;
 use std::sync::atomic::Ordering;
@@ -13,9 +13,63 @@ pub async fn music_play_track(
     track: MusicTrack,
     volume: Option<f64>,
 ) -> Result<(), String> {
+    let started = std::time::Instant::now();
+    let identity = format!(
+        "{}:{}",
+        track.connector_id.as_deref().unwrap_or("direct"),
+        track.id
+    );
+    let result = play_track(app, state, track, volume).await;
+    let outcome = match &result {
+        Ok(()) => "ok".to_string(),
+        Err(error) => format!("error: {error}"),
+    };
+    crate::music::trace::log(format!(
+        "play {identity} {outcome} {} ms",
+        started.elapsed().as_millis()
+    ));
+    result
+}
+
+async fn play_track(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, MusicState>,
+    track: MusicTrack,
+    volume: Option<f64>,
+) -> Result<(), String> {
     let request = state.begin_play_request();
     let volume = volume.unwrap_or(0.82);
     if track.connector_id.as_deref() == Some("spotify") {
+        // An explicitly selected remote Spotify Connect device remains independent
+        // of the local engine preference.
+        if spotify::soloist::wants_local_output(&app, &state.spotify).await? {
+            let _commit = state.play_commit.lock().await;
+            if !state.is_current_play_request(request) { return Ok(()); }
+            if state.active_engine() == ACTIVE_MODULE {
+                m3u::module_request_async(serde_json::json!({"command":"mpv_stop","deck":0})).await?;
+            }
+            if state.active_engine() == ACTIVE_MODULE_SPOTIFY {
+                m3u::module_request_async(serde_json::json!({"command":"spotify_stop"})).await?;
+            }
+            if state.active_engine() == ACTIVE_SPOTIFY {
+                state.spotify.stop(false).await?;
+            }
+            state.engine.stop(false).await?;
+            match spotify::soloist::playback::play(&app, track, volume).await {
+                Ok(()) => {
+                    state.set_active_engine(ACTIVE_SOLOIST);
+                    return Ok(());
+                }
+                Err(error) => {
+                    state.set_active_engine(ACTIVE_NONE);
+                    return Err(error);
+                }
+            }
+        }
+        if state.active_engine() == ACTIVE_SOLOIST {
+            spotify::soloist::playback::stop(&app, false).await?;
+            state.set_active_engine(ACTIVE_NONE);
+        }
         let sidecar_enabled = std::env::var("HARBOR_EXPERIMENTAL_MUSIC_SPOTIFY").as_deref()==Ok("1")
             && m3u::experimental_local_playback(&MusicTrack {
                 connector_id: Some("local".into()), ..track.clone()
@@ -80,7 +134,16 @@ pub async fn music_play_track(
     if !state.is_current_play_request(request) {
         return Ok(());
     }
-    state.spotify.stop(false).await?;
+    // Only stop the engine that actually owns playback. In particular, an
+    // inactive librespot connector may hold a remote Spotify Connect target;
+    // pausing that remote target can fail and must not block YouTube or other
+    // non-Spotify tracks from starting.
+    if state.active_engine() == ACTIVE_SPOTIFY {
+        state.spotify.stop(false).await?;
+    }
+    if state.active_engine() == ACTIVE_SOLOIST {
+        spotify::soloist::playback::stop(&app, false).await?;
+    }
     if state.active_engine()==ACTIVE_MODULE_SPOTIFY {
         m3u::module_request_async(serde_json::json!({"command":"spotify_stop"})).await?;
     }
@@ -133,11 +196,13 @@ pub async fn music_spotify_preload(
 
 #[tauri::command]
 pub async fn music_engine_pause(
+    app: tauri::AppHandle,
     state: tauri::State<'_, MusicState>,
     paused: bool,
 ) -> Result<(), String> {
     match state.active_engine() {
         ACTIVE_SPOTIFY => state.spotify.set_paused(paused).await,
+        ACTIVE_SOLOIST => spotify::soloist::playback::pause(&app, paused).await,
         ACTIVE_MODULE_SPOTIFY => m3u::module_request_async(serde_json::json!({"command":"spotify_pause","paused":paused})).await.map(|_|()),
         ACTIVE_STREAM => state.engine.set_paused(paused).await,
         ACTIVE_MODULE => {
@@ -156,6 +221,7 @@ pub async fn music_engine_pause(
 pub async fn music_paused_for_video(state: tauri::State<'_, MusicState>) -> Result<bool, String> {
     Ok(match state.active_engine() {
         ACTIVE_SPOTIFY => state.spotify.paused_for_video(),
+        ACTIVE_SOLOIST => spotify::soloist::playback::paused_for_video(),
         ACTIVE_MODULE_SPOTIFY => state.external_paused_for_video.load(Ordering::SeqCst),
         ACTIVE_STREAM => state.engine.paused_for_video(),
         ACTIVE_MODULE => state.external_paused_for_video.load(Ordering::SeqCst),
@@ -164,9 +230,10 @@ pub async fn music_paused_for_video(state: tauri::State<'_, MusicState>) -> Resu
 }
 
 #[tauri::command]
-pub async fn music_resume_after_video(state: tauri::State<'_, MusicState>) -> Result<(), String> {
+pub async fn music_resume_after_video(app: tauri::AppHandle, state: tauri::State<'_, MusicState>) -> Result<(), String> {
     match state.active_engine() {
         ACTIVE_SPOTIFY => state.spotify.set_paused(false).await,
+        ACTIVE_SOLOIST => spotify::soloist::playback::resume_after_video(&app).await,
         ACTIVE_MODULE_SPOTIFY => {
             if state.external_paused_for_video.swap(false,Ordering::SeqCst) {
                 m3u::module_request_async(serde_json::json!({"command":"spotify_pause","paused":false})).await?;
@@ -188,11 +255,13 @@ pub async fn music_resume_after_video(state: tauri::State<'_, MusicState>) -> Re
 
 #[tauri::command]
 pub async fn music_engine_seek(
+    app: tauri::AppHandle,
     state: tauri::State<'_, MusicState>,
     position: f64,
 ) -> Result<(), String> {
     match state.active_engine() {
         ACTIVE_SPOTIFY => state.spotify.seek(position).await,
+        ACTIVE_SOLOIST => spotify::soloist::playback::seek(&app, position).await,
         ACTIVE_MODULE_SPOTIFY => m3u::module_request_async(serde_json::json!({"command":"spotify_seek","seconds":position})).await.map(|_|()),
         ACTIVE_STREAM => state.engine.seek(position).await,
         ACTIVE_MODULE => m3u::module_request_async(serde_json::json!({
@@ -204,11 +273,13 @@ pub async fn music_engine_seek(
 
 #[tauri::command]
 pub async fn music_engine_set_volume(
+    app: tauri::AppHandle,
     state: tauri::State<'_, MusicState>,
     volume: f64,
 ) -> Result<(), String> {
     match state.active_engine() {
         ACTIVE_SPOTIFY => state.spotify.set_volume(volume).await,
+        ACTIVE_SOLOIST => spotify::soloist::playback::set_volume(&app, volume).await,
         ACTIVE_MODULE_SPOTIFY => m3u::module_request_async(serde_json::json!({"command":"spotify_volume","volume":volume})).await.map(|_|()),
         ACTIVE_STREAM => state.engine.set_volume(volume).await,
         ACTIVE_MODULE => m3u::module_request_async(serde_json::json!({
@@ -220,6 +291,7 @@ pub async fn music_engine_set_volume(
 
 #[tauri::command]
 pub async fn music_engine_stop(
+    app: tauri::AppHandle,
     state: tauri::State<'_, MusicState>,
     unpause: Option<bool>,
 ) -> Result<(), String> {
@@ -231,6 +303,7 @@ pub async fn music_engine_stop(
     }
     let result = match state.active_engine() {
         ACTIVE_SPOTIFY => state.spotify.stop(unpause).await,
+        ACTIVE_SOLOIST => spotify::soloist::playback::stop(&app, unpause).await,
         ACTIVE_MODULE_SPOTIFY => {
             if unpause {
                 if state.external_paused_for_video.swap(false,Ordering::SeqCst) {
@@ -293,6 +366,18 @@ pub async fn music_engine_state(
         position_seconds: None,
         duration_seconds: None,
     };
+    if state.active_engine() == ACTIVE_SOLOIST {
+        snapshot.engine = "spotify".into();
+        snapshot.connector_id = Some("spotify".into());
+        if let Some(playback) = spotify::soloist::playback::snapshot() {
+            snapshot.live = playback.live;
+            snapshot.paused = playback.paused;
+            snapshot.track_id = Some(playback.track_id);
+            snapshot.position_seconds = Some(playback.position_seconds);
+            snapshot.duration_seconds = Some(playback.duration_seconds);
+        }
+        return Ok(snapshot);
+    }
     if state.active_engine() == ACTIVE_SPOTIFY {
         let playback = state.spotify.playback_state().await;
         snapshot.engine = "spotify".to_string();
@@ -426,6 +511,7 @@ pub async fn music_deck_loop(
 
 #[tauri::command]
 pub async fn music_deck_scratch(
+    app: tauri::AppHandle,
     state: tauri::State<'_, MusicState>,
     position: f64,
     rate: f64,
@@ -437,6 +523,7 @@ pub async fn music_deck_scratch(
             "command":"mpv_scratch","deck":0,"position":position,"rate":rate,"holding":holding
         })).await?.as_f64().ok_or_else(||"Music scratch returned invalid position".to_string()),
         ACTIVE_SPOTIFY if !holding => state.spotify.seek(position).await.map(|()| position),
+        ACTIVE_SOLOIST if !holding => spotify::soloist::playback::seek(&app, position).await.map(|()| position),
         _ => Ok(position),
     }
 }
@@ -472,12 +559,13 @@ pub async fn music_deck_play(
 
 #[tauri::command]
 pub async fn music_deck_pause(
+    app: tauri::AppHandle,
     state: tauri::State<'_, MusicState>,
     deck: u8,
     paused: bool,
 ) -> Result<(), String> {
     if deck == 0 {
-        return music_engine_pause(state, paused).await;
+        return music_engine_pause(app, state, paused).await;
     }
     if state.active_engine()==ACTIVE_MODULE {
         m3u::module_request_async(serde_json::json!({
@@ -490,12 +578,13 @@ pub async fn music_deck_pause(
 
 #[tauri::command]
 pub async fn music_deck_seek(
+    app: tauri::AppHandle,
     state: tauri::State<'_, MusicState>,
     deck: u8,
     position: f64,
 ) -> Result<(), String> {
     if deck == 0 {
-        return music_engine_seek(state, position).await;
+        return music_engine_seek(app, state, position).await;
     }
     if state.active_engine()==ACTIVE_MODULE {
         m3u::module_request_async(serde_json::json!({
@@ -508,12 +597,13 @@ pub async fn music_deck_seek(
 
 #[tauri::command]
 pub async fn music_deck_volume(
+    app: tauri::AppHandle,
     state: tauri::State<'_, MusicState>,
     deck: u8,
     volume: f64,
 ) -> Result<(), String> {
     if deck == 0 {
-        return music_engine_set_volume(state, volume).await;
+        return music_engine_set_volume(app, state, volume).await;
     }
     if state.active_engine()==ACTIVE_MODULE {
         m3u::module_request_async(serde_json::json!({
@@ -526,11 +616,12 @@ pub async fn music_deck_volume(
 
 #[tauri::command]
 pub async fn music_deck_stop(
+    app: tauri::AppHandle,
     state: tauri::State<'_, MusicState>,
     deck: u8,
 ) -> Result<(), String> {
     if deck == 0 {
-        return music_engine_stop(state, Some(false)).await;
+        return music_engine_stop(app, state, Some(false)).await;
     }
     if state.active_engine()==ACTIVE_MODULE {
         m3u::module_request_async(serde_json::json!({

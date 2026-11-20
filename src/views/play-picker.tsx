@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   ArrowDownToLine,
   ArrowUp,
@@ -31,8 +31,12 @@ import { consumeRecentStubEvent } from "@/lib/dead-streams";
 import { peekCachedLogo, resolveLogo } from "@/lib/logo";
 import {
   readPlayback,
+  readActualPlaybackForTarget,
+  getPlaybackRevision,
+  subscribePlayback,
   isPlaybackActorCurrent,
   readLastSeriesPlayback,
+  streamMatchesEntry,
   streamMatchesPreferredSource,
   streamMatchesRememberedSource,
   streamMatchesSource,
@@ -49,6 +53,7 @@ import { isAddonRanked } from "@/lib/streams/addon-detect";
 import { isFilterEmpty, matchesCustomFilter } from "@/lib/streams/custom-filters";
 import { useScrollMemory, useView, type PlayEpisode, type PlayerSrc } from "@/lib/view";
 import { prefetchSegments } from "@/lib/skip-intro";
+import { releaseIntentPrewarm } from "@/lib/streams/p2p-prewarm";
 import { exitWindowFullscreen } from "@/lib/fullscreen-state";
 import { useWindowFullscreen } from "@/lib/use-window-fullscreen";
 import { AutoExhaustedModal } from "./play-picker/auto-exhausted-modal";
@@ -173,6 +178,9 @@ export function PlayPicker({
   } = useTogether();
   const inSession = roomSnapshot.state === "joined";
   const resolvedImdb = useImdbId(meta, settings.tmdbKey);
+  // Leaving the picker (play, back, or a source switch) drops any hover/focus
+  // prewarm so it cannot outlive the list that started it.
+  useEffect(() => () => releaseIntentPrewarm(), []);
   useEffect(() => {
     prefetchSegments(meta, episode);
   }, [meta, episode]);
@@ -259,10 +267,10 @@ export function PlayPicker({
   const lastSeriesSource = useMemo(
     () =>
       seasonLockEntry ??
-      (settings.keepSourceNextEpisode && !!autoPlay && (meta.type === "series" || isAnimeMetaId)
+      (autoPlay && (meta.type === "series" || isAnimeMetaId)
         ? readLastSeriesPlayback(meta.id)
         : null),
-    [seasonLockEntry, meta.id, meta.type, isAnimeMetaId, settings.keepSourceNextEpisode, autoPlay],
+    [seasonLockEntry, meta.id, meta.type, isAnimeMetaId, autoPlay],
   );
   const lastSeriesSourceIsLineage = seasonLockEntry == null;
   const [resolving, setResolving] = useState<ResolvingSelection | null>(null);
@@ -496,13 +504,30 @@ export function PlayPicker({
   );
 
   const previousPlayback = useMemo(
-    () =>
-      continuation?.source ??
-      (settings.rememberLastStream
-        ? readPlayback(meta.id, episode?.season, episode?.episode)
-        : null),
-    [meta.id, episode?.season, episode?.episode, settings.rememberLastStream, continuation],
+    () => continuation?.source ?? readPlayback(meta.id, episode?.season, episode?.episode),
+    [meta.id, episode?.season, episode?.episode, continuation],
   );
+  const playbackRevision = useSyncExternalStore(subscribePlayback, getPlaybackRevision);
+  const lastPlayedMatch = useMemo(() => {
+    if (isDownload) return null;
+    const playback = readActualPlaybackForTarget(meta.id, episode?.season, episode?.episode);
+    const source = playback?.src.streamRef;
+    if (!playback || !source) return null;
+    const saved = {
+      ...source,
+      url: playback.src.historyUrl || playback.src.url,
+      urlFingerprint: playback.sourceFingerprint,
+      savedAt: playback.playedAt,
+    };
+    return (
+      displayStreams.find(
+        (stream) =>
+          (!source.addonId || streamOfferedByAddon(stream, source.addonId)) &&
+          (!source.infoHash || !!stream.infoHash) &&
+          streamMatchesEntry(stream, saved),
+      ) ?? null
+    );
+  }, [isDownload, meta.id, episode?.season, episode?.episode, playbackRevision, displayStreams]);
 
   // The same episode's exact source is more specific than the series lineage,
   // but an explicit season lock stays in charge.
@@ -797,7 +822,6 @@ export function PlayPicker({
   const rememberedHandledFirst =
     !autoCancelled &&
     !!previousMatch &&
-    (settings.rememberLastStream || !!continuation) &&
     !!resume &&
     !wasInvitedTo(inviteKey) &&
     !isDownload &&
@@ -1322,6 +1346,7 @@ export function PlayPicker({
         filteredPicker.all.length > 0 ? (
           <StremioLayout
             streams={displayStreams}
+            lastPlayedStream={lastPlayedMatch}
             addons={addons}
             pipelineDone={pipelineDone}
             loadingAddonCount={Math.max(0, (addons?.length ?? 0) - addonCount)}
@@ -1357,6 +1382,7 @@ export function PlayPicker({
                 queued={currentPick.infoHash != null && queuedHash === currentPick.infoHash}
                 inSession={inSession}
                 isPreviouslyPlayed={previousMatch === currentPick}
+                playedLast={lastPlayedMatch === currentPick}
                 match={matchFor(currentPick)}
               />
             )}
@@ -1412,6 +1438,7 @@ export function PlayPicker({
                   addonCount={addonCount}
                   usedAddons={usedAddons}
                   streams={displayStreams}
+                  lastPlayedStream={lastPlayedMatch}
                   debrids={debrids}
                   getAddonLogo={lookupLogo}
                   matchFor={hostMatch ? matchFor : undefined}

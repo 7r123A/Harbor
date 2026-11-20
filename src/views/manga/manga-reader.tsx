@@ -1136,6 +1136,7 @@ export function MangaReader({
                   url={page.url}
                   headers={page.headers}
                   cacheKey={pageCacheKey(i)}
+                  deferNativeFetch
                   fillHeight
                   className="block"
                   style={hStyle}
@@ -1162,6 +1163,7 @@ export function MangaReader({
                     url={page.url}
                     headers={page.headers}
                     cacheKey={pageCacheKey(i)}
+                    deferNativeFetch
                     className="block"
                     style={longStyle}
                   />

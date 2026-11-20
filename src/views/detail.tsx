@@ -223,6 +223,7 @@ import { useAnimeAnilistDetails } from "./detail/use-anime-anilist-details";
 import { useAnimeCharacters } from "./detail/use-anime-characters";
 import { TraktComments } from "./detail/trakt-comments";
 import { LetterboxdPanel } from "./detail/letterboxd-panel";
+import { ParentsGuidePanel } from "./detail/parents-guide-panel";
 import { RateButton } from "@/components/ratings/rate-button";
 import { TitleReviewsEntry } from "@/components/ratings/title-reviews-entry";
 import {
@@ -319,6 +320,16 @@ function DetailContent({
   } | null>(null);
   const [franchise, setFranchise] = useState<FranchiseEntry[]>([]);
   const [animeCanonicalId, setAnimeCanonicalId] = useState<string | null>(null);
+  const [seasonTrackerSelection, setSeasonTrackerSelection] = useState<{
+    id: string | null;
+    requiresOwner: boolean;
+  }>({ id: null, requiresOwner: false });
+  const seasonCanonicalId = seasonTrackerSelection.id;
+  const onSeasonCanonicalEntry = useCallback((id: string | null, requiresOwner: boolean) => {
+    setSeasonTrackerSelection((prev) =>
+      prev.id === id && prev.requiresOwner === requiresOwner ? prev : { id, requiresOwner },
+    );
+  }, []);
   const [ownLogo, setOwnLogo] = useState<string | undefined>(() =>
     peekCachedLogo(
       settings.tmdbKey,
@@ -435,6 +446,7 @@ function DetailContent({
     promoteMetaToRoot,
     openMeta,
     openManga,
+    metaHasSeasonScroll,
   } = useView();
   useTvdbCastFallback(meta, detail, detectedKitsu, setDetail);
   const { snapshot: roomSnapshot, claimHost } = useTogether();
@@ -445,9 +457,15 @@ function DetailContent({
   const { toggle: toggleFavorite } = useMediaFavorites();
   const isFav = useIsFavorite(meta.id, [detail?.imdbId]);
   const inSession = roomSnapshot.state === "joined" && roomSnapshot.participants.length >= 2;
-  useScrollMemory(`meta:${meta.id}`, scrollRef, settings.resumeDetailScroll, true, {
-    followLayout: true,
-  });
+  useScrollMemory(
+    `meta:${meta.id}`,
+    scrollRef,
+    settings.resumeDetailScroll || metaHasSeasonScroll,
+    true,
+    {
+      followLayout: true,
+    },
+  );
 
   useEffect(() => {
     if (!meta.id.startsWith("simkl:")) return;
@@ -560,7 +578,24 @@ function DetailContent({
     if (detectedKitsu == null) return;
     setAnimeCanonicalId((current) => current ?? `kitsu:${detectedKitsu}`);
   }, [detectedKitsu]);
-  const anilistExtra = useAnimeAnilistDetails(animeCanonicalId, isAnime);
+  // The episode panel can switch a catalog/franchise page to the native entry
+  // that owns the selected season. The airing banner must follow that entry.
+  const anilistExtra = useAnimeAnilistDetails(animeCanonicalId, isAnime, meta.id);
+  const seasonDetails = useAnimeAnilistDetails(
+    seasonCanonicalId,
+    isAnime,
+    seasonCanonicalId === animeCanonicalId ? meta.id : undefined,
+  );
+  const nextAiring =
+    seasonTrackerSelection.requiresOwner && !seasonCanonicalId
+      ? null
+      : (seasonCanonicalId ? seasonDetails : anilistExtra)?.nextAiring;
+  // A selected season must never inherit the opened entry's status when its
+  // native owner is not resolved yet.
+  const animeTrackerId = seasonTrackerSelection.requiresOwner
+    ? seasonCanonicalId
+    : (seasonCanonicalId ?? animeCanonicalId ?? meta.id);
+  const listTrackerId = isAnime ? animeTrackerId : meta.id;
   const animeCharacters = useAnimeCharacters(animeCanonicalId, isAnime);
   const stickyAwardName = useRef<string | null>(null);
   useEffect(() => {
@@ -2837,28 +2872,32 @@ function DetailContent({
                         : t("Saved locally. Connect Trakt in Settings to sync.")
                   }
                 />
-                {actionStage < 2 && animeIdentity && (
+                {actionStage < 2 && animeIdentity && animeTrackerId && (
                   <AddToAnilistButton
-                    harborId={animeCanonicalId ?? meta.id}
+                    key={`anilist:${animeTrackerId}`}
+                    harborId={animeTrackerId}
                     title={title || meta.name}
                   />
                 )}
-                {actionStage < 2 && animeIdentity && (
+                {actionStage < 2 && animeIdentity && animeTrackerId && (
                   <AddToMalButton
-                    harborId={animeCanonicalId ?? meta.id}
+                    key={`mal:${animeTrackerId}`}
+                    harborId={animeTrackerId}
                     title={title || meta.name}
                   />
                 )}
-                {actionStage < 2 && (
+                {actionStage < 2 && listTrackerId && (
                   <AddToSimklButton
-                    harborId={isAnime ? (animeCanonicalId ?? meta.id) : meta.id}
+                    key={`simkl:${listTrackerId}`}
+                    harborId={listTrackerId}
                     title={title || meta.name}
                     type={meta.type === "movie" ? "movie" : "series"}
                   />
                 )}
-                {actionStage < 2 && (
+                {actionStage < 2 && listTrackerId && (
                   <AddToPmdbButton
-                    harborId={isAnime ? (animeCanonicalId ?? meta.id) : meta.id}
+                    key={`pmdb:${listTrackerId}`}
+                    harborId={listTrackerId}
                     title={title || meta.name}
                     type={meta.type === "movie" ? "movie" : "series"}
                   />
@@ -2895,15 +2934,23 @@ function DetailContent({
                     onWatched={markThisMovieWatched}
                     showSync={actionStage >= 2}
                     listItem={listSeed}
-                    simkl={{
-                      harborId: isAnime ? (animeCanonicalId ?? meta.id) : meta.id,
-                      type: meta.type === "movie" ? "movie" : "series",
-                    }}
-                    anilist={isAnime ? { harborId: animeCanonicalId ?? meta.id } : null}
-                    pmdb={{
-                      harborId: isAnime ? (animeCanonicalId ?? meta.id) : meta.id,
-                      type: meta.type === "movie" ? "movie" : "series",
-                    }}
+                    simkl={
+                      listTrackerId
+                        ? {
+                            harborId: listTrackerId,
+                            type: meta.type === "movie" ? "movie" : "series",
+                          }
+                        : null
+                    }
+                    anilist={isAnime && animeTrackerId ? { harborId: animeTrackerId } : null}
+                    pmdb={
+                      listTrackerId
+                        ? {
+                            harborId: listTrackerId,
+                            type: meta.type === "movie" ? "movie" : "series",
+                          }
+                        : null
+                    }
                   />
                 ) : (
                   <>
@@ -3097,6 +3144,7 @@ function DetailContent({
                   (meta.id.startsWith("tt") ? meta.id : null)
                 }
                 onSeasonArt={handleSeasonArt}
+                onCanonicalEntry={onSeasonCanonicalEntry}
                 localizedOverview={localizedAnimeOverview}
                 seasonOverviews={detail?.seasonOverviews}
                 tmdbTvId={detail?.tmdbTvId}
@@ -3198,14 +3246,14 @@ function DetailContent({
 
         {(() => {
           const railSections: DetailSection[] = [];
-          if (isAnime && anilistExtra?.nextAiring) {
+          if (isAnime && nextAiring) {
             railSections.push({
               key: "animeAiring",
               label: t("Airing"),
               minHeight: 90,
               node: (
                 <AnimeAiringBanner
-                  nextAiring={anilistExtra.nextAiring}
+                  nextAiring={nextAiring}
                   reminderSeed={{
                     id: meta.id,
                     name: title || meta.name,
@@ -3287,6 +3335,20 @@ function DetailContent({
               node: <DetailCharacterRail characters={animeCharacters} />,
             });
           }
+
+          // Always register this rail so a hidden section remains restorable even when
+          // the title has no IMDb ID yet. ContentRails only mounts visible rails.
+          railSections.push({
+            key: "parentsGuide",
+            label: t("Content Advisory"),
+            minHeight: 60,
+            node: (
+              <ParentsGuidePanel
+                meta={meta}
+                imdbId={(meta.id.startsWith("tt") ? meta.id : null) ?? detail?.imdbId ?? null}
+              />
+            ),
+          });
           if (detail?.collection) {
             railSections.push({
               key: "collection",
@@ -3496,6 +3558,7 @@ function DetailContent({
               ),
             });
           }
+
           if (railSections.length === 0) return null;
           return <DetailLayoutEditor sections={railSections} />;
         })()}

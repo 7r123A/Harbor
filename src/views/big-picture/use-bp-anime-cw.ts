@@ -10,9 +10,10 @@ import { setExternalCwSources, useExternalCw } from "@/lib/feed/external-cw";
 import { isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import { animeCwIdsVersion, subscribeAnimeCwIds } from "@/lib/anime-cw-ids";
 import { dedupeAnimeCw, warmCwAnimeIdentities } from "@/lib/cw-anime-identity";
+import { sortCwFinal } from "@/lib/cw-order";
 import { publishResumeStates } from "@/lib/hover-preview/store";
 import {
-  listLocalCw,
+  listLocalCwMerged,
   localCwSourceEnabled,
   localCwVersion,
   subscribeLocalCw,
@@ -50,7 +51,7 @@ function localItems(
   privateOnly: boolean,
   sources: { library: boolean; local: boolean },
 ): LibraryItem[] {
-  return listLocalCw(privateOnly)
+  return listLocalCwMerged(privateOnly)
     .filter((e) => localCwSourceEnabled(e, sources))
     .filter((e) => ANIME_CLOUD_ID.test(e.id) || e.isAnime)
     .map((e) => ({
@@ -176,7 +177,7 @@ export function useBpAnimeCwBase(): BpAnimeCwBase {
         return true;
       })
       .sort((a, b) => cwSortKey(b) - cwSortKey(a));
-    return dedupeAnimeCw(sorted).slice(0, CW_CAP);
+    return sortCwFinal(dedupeAnimeCw(sorted)).slice(0, CW_CAP);
   }, [pool, cwVersion, animeDetectVer, animeIdsVersion, hideSharedCw]);
 
   useEffect(() => {

@@ -1234,7 +1234,8 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
         finishPlaybackTrace(activeTraceId, "replaced");
       }
       activeTraceId = src.traceId ?? null;
-      markPlaybackTrace(activeTraceId, "bridge-load");
+      const loadTraceId = activeTraceId;
+      markPlaybackTrace(loadTraceId, "bridge-load");
       if (retainedMpvRelease) await retainedMpvRelease;
       const nextIsLive = src.isLive === true;
       const nextStartupProfile =
@@ -1304,9 +1305,11 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
         unlistenLog = makeSafeTauriUnlisten(await listen<string>("mpv://log", () => {}));
       }
       try {
+        markPlaybackTrace(loadTraceId, "bridge-prepared");
         const opts = mpvOptions ?? { anime4k: false, hdrToSdr: true };
         if (mpvStarted) {
           try {
+            markPlaybackTrace(loadTraceId, "reuse-prepare-start");
             suppressEndFileUntil = Date.now() + 1500;
             await invoke("mpv_command", { cmd: ["stop"] });
             secondarySid = null;
@@ -1319,8 +1322,10 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
               await applyDefaultVodBufferPhase(nextStartupProfile, "startup");
             }
             await applyHeaderProps(src.headers);
+            // Clear an inherited resume offset without requesting a seek to zero:
+            // MKV seeks can fetch the remote index and repeat addon redirects.
             const startAt =
-              typeof src.startAtSec === "number" && src.startAtSec > 0 ? src.startAtSec : 0;
+              typeof src.startAtSec === "number" && src.startAtSec > 0 ? src.startAtSec : "none";
             const cmd: Array<string | number> = [
               "loadfile",
               src.url,
@@ -1328,22 +1333,26 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
               0,
               `start=${startAt}`,
             ];
+            markPlaybackTrace(loadTraceId, "reuse-prepare-ready");
+            markPlaybackTrace(loadTraceId, "loadfile-requested");
             await invoke("mpv_command", { cmd });
             preparedSubtitleCleanups.clearBefore(activeLoadId);
             currentIsLive = nextIsLive;
             currentStartupProfile = nextStartupProfile;
-            markPlaybackTrace(activeTraceId, "loadfile-accepted");
+            markPlaybackTrace(loadTraceId, "loadfile-accepted");
             await invoke("mpv_restore_media_surface");
             await ensureGeometryTracking(opts);
             queueSeedSubtitles(src.subtitles, activeLoadId);
             window.dispatchEvent(new Event("harbor:mpv-refresh-geom"));
             return;
           } catch (err) {
+            markPlaybackTrace(loadTraceId, "reuse-fallback");
             console.warn("[mpv] loadfile reload failed, falling back to recreate", err);
             mpvStarted = false;
           }
         }
         retainedMpv = null;
+        markPlaybackTrace(loadTraceId, "mpv-start-requested");
         await invoke("mpv_start", {
           args: {
             url: src.url,
@@ -1368,7 +1377,7 @@ export function createMpvBridge(mpvOptions?: MpvOptions): PlayerBridge {
           },
         });
         preparedSubtitleCleanups.clearBefore(activeLoadId);
-        markPlaybackTrace(activeTraceId, "loadfile-accepted");
+        markPlaybackTrace(loadTraceId, "loadfile-accepted");
         mpvStarted = true;
         adoptedRetainedSession = false;
         currentIsLive = nextIsLive;

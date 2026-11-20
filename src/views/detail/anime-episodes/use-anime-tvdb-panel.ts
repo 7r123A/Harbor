@@ -123,6 +123,13 @@ function projectSeasonEpisode(
   return match
     ? {
         ...match,
+        // An AniList release date for the source entry must not override a
+        // verified past TVDB date for the mapped native episode/special.
+        airdate:
+          match.airdate && isUpcomingDate(match.airdate) &&
+          airdate && !isUpcomingDate(airdate)
+            ? airdate
+            : (match.airdate ?? airdate ?? null),
         thumbnail: !unaired && img ? img : match.thumbnail,
         ...(!unaired && img && img !== match.thumbnail && match.thumbnail
           ? { thumbnailFallback: match.thumbnail }
@@ -450,6 +457,15 @@ export function useAnimeTvdbPanel(
             claimed,
           );
         }
+        const entryRow: KitsuEpisode | undefined = entryRowsByNumber.get(e.episodeNumber);
+        if (
+          entryRow &&
+          !claimed.has(entryRow.id) &&
+          (entryRow.tvdbEpisodeId === e.id ||
+            (entryRow.imdbSeason === e.seasonNumber && entryRow.imdbEpisode === e.episodeNumber))
+        ) {
+          match = entryRow;
+        }
         const currentMatch =
           currentByTvdbId.get(e.id) ??
           currentByPair.get(`${e.seasonNumber}:${e.episodeNumber}`) ??
@@ -487,6 +503,8 @@ export function useAnimeTvdbPanel(
           ? undefined
           : (imdbMap?.get(`${e.seasonNumber}:${e.episodeNumber}`) ??
             (abs != null ? imdbMap?.get(`1:${abs}`) : undefined));
+        // Keep the beta panel's language/episode projection lazy. Only the
+        // currently visible season needs a fully localized KitsuEpisode row.
         const id = match?.id ?? -e.id;
         if (seenId.has(id)) continue;
         seenId.add(id);

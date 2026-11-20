@@ -1,3 +1,4 @@
+import { PlayedLastBadge } from "./played-last-badge";
 import { Check, Download, ExternalLink, Loader2, Zap } from "lucide-react";
 import { Play } from "@/components/icons/play-filled";
 import { Flag } from "@/components/flag";
@@ -36,6 +37,7 @@ export function PrimaryCard({
   queued,
   inSession,
   isPreviouslyPlayed = false,
+  playedLast = false,
   match = null,
 }: {
   meta: Meta;
@@ -50,6 +52,7 @@ export function PrimaryCard({
   queued: boolean;
   inSession: boolean;
   isPreviouslyPlayed?: boolean;
+  playedLast?: boolean;
   match?: "same" | "close" | null;
 }) {
   const t = useT();
@@ -103,7 +106,9 @@ export function PrimaryCard({
   const isLandscape = Boolean(landscapeImage);
 
   return (
-    <section className="relative overflow-hidden rounded-3xl bg-canvas/70">
+    <section
+      className={`relative overflow-hidden rounded-3xl bg-canvas/70 ${playedLast ? "ring-1 ring-accent/70" : ""}`}
+    >
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-ink/12 to-transparent" />
 
       <div
@@ -151,6 +156,7 @@ export function PrimaryCard({
 
         <div className="flex min-w-0 flex-col justify-between gap-6">
           <div className="flex flex-col gap-4">
+            {playedLast && <PlayedLastBadge />}
             {knownLanguages.length > 0 ? (
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
                 {knownLanguages.slice(0, 6).map((lang) => (

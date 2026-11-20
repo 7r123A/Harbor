@@ -1,7 +1,7 @@
 use super::super::super::{
-    MusicAlbumRef, MusicArtistRef, MusicCatalogItem, MusicCatalogKind, MusicCatalogRow,
-    MusicPlaylistImport, MusicPlaylistRef, MusicStationRef, MusicStream, MusicTrack,
-    MusicVideoStream,
+    MusicAlbumRef, MusicArtistRef, MusicCatalogItem, MusicCatalogKind, MusicCatalogPage,
+    MusicCatalogRow, MusicCatalogScope, MusicPlaylistImport, MusicPlaylistRef, MusicRowLayout,
+    MusicStationRef, MusicStream, MusicTrack, MusicVideoStream,
 };
 use super::innertube::{self, Client};
 use super::{items, parse, rows};
@@ -54,20 +54,93 @@ pub(super) fn video_results_kind(
     let mut found = Vec::new();
     parse::collect(response, LIST_ITEM, &mut found);
     let mut seen = std::collections::HashSet::new();
-    found.into_iter().filter_map(|item| {
-        // Keep provider-declared official music videos. UGC search also contains
-        // tutorials, covers and static audio uploads; those are not music-video discovery.
-        let kind = item.pointer("/overlay/musicItemThumbnailOverlayRenderer/content/musicPlayButtonRenderer/playNavigationEndpoint/watchEndpoint/watchEndpointMusicSupportedConfigs/watchEndpointMusicConfig/musicVideoType").and_then(Value::as_str)?;
+    let mut videos = Vec::new();
+    let mut sources = Vec::new();
+    for item in found {
+        // Keep provider-declared official music. UGC search also contains tutorials,
+        // covers and static audio uploads; those are not music-video discovery.
+        let kind = item.pointer("/overlay/musicItemThumbnailOverlayRenderer/content/musicPlayButtonRenderer/playNavigationEndpoint/watchEndpoint/watchEndpointMusicSupportedConfigs/watchEndpointMusicConfig/musicVideoType").and_then(Value::as_str);
+        let Some(kind) = kind else { continue };
         if interviews {
-            if kind != "MUSIC_VIDEO_TYPE_UGC" { return None; }
-        } else if kind != "MUSIC_VIDEO_TYPE_OMV" { return None; }
-        let mut track = items::track_from_list_item(item)?;
-        if interviews && !track.title.to_lowercase().contains("interview") { return None; }
+            if kind != "MUSIC_VIDEO_TYPE_UGC" {
+                continue;
+            }
+        } else if kind != "MUSIC_VIDEO_TYPE_OMV" && kind != "MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC" {
+            continue;
+        }
+        let Some(mut track) = items::track_from_list_item(item) else {
+            continue;
+        };
+        if interviews && !track.title.to_lowercase().contains("interview") {
+            continue;
+        }
         track.media_kind = Some("video".to_string());
-        let id = track.source_id.as_deref()?;
-        if id.len() != 11 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') || !seen.insert(id.to_string()) { return None; }
-        Some(track)
-    }).take(limit).collect()
+        let Some(id) = track.source_id.as_deref() else {
+            continue;
+        };
+        if id.len() != 11
+            || !id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+            || !seen.insert(id.to_string())
+        {
+            continue;
+        }
+        // The provider often lists a stage or lyric upload before the official video and
+        // gives both the same song title. Keep the music video first: discovery dedupes by
+        // title, so whichever comes first is the one the listener sees.
+        if kind == "MUSIC_VIDEO_TYPE_OMV" {
+            videos.push(track);
+        } else {
+            sources.push(track);
+        }
+    }
+    videos.extend(sources);
+    videos.truncate(limit);
+    videos
+}
+
+/// The "top result" card. YouTube Music pins the official video there even when the videos
+/// shelf omits it or lists a stage upload with the same title first.
+pub(super) fn card_video(response: &Value) -> Option<MusicTrack> {
+    let mut cards = Vec::new();
+    parse::collect(response, "musicCardShelfRenderer", &mut cards);
+    let card = *cards.first()?;
+    let title = parse::text(card.get("title")?)?;
+    let subtitle = parse::text(card.get("subtitle")?)?;
+    let parts: Vec<&str> = subtitle
+        .split('•')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    let kind = parts.first()?;
+    if !kind.eq_ignore_ascii_case("video") && !kind.eq_ignore_ascii_case("music video") {
+        return None;
+    }
+    let artist = parts.get(1)?.to_string();
+    let duration_label = parts
+        .iter()
+        .rev()
+        .find(|part| part.contains(':'))
+        .copied()
+        .unwrap_or("");
+    let seconds = super::fields::seconds_from_label(duration_label).unwrap_or(0);
+    let art = parse::nav(
+        card,
+        &["thumbnail", "musicThumbnailRenderer", "thumbnail", "thumbnails"],
+    )?;
+    let url = art.as_array()?.last()?.get("url")?.as_str()?;
+    let id = url.split("/vi/").nth(1)?.split('/').next()?;
+    if id.len() != 11
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+    {
+        return None;
+    }
+    let mut track = items::track(id, title, Some(artist), None, url.to_string(), seconds);
+    track.media_kind = Some("video".to_string());
+    Some(track)
 }
 
 pub async fn albums(
@@ -143,6 +216,188 @@ pub async fn chart_rows(
     ))
 }
 
+/// The account's liked songs, the YouTube Music counterpart of "Liked on Spotify". `LM` is the
+/// provider's fixed id for that playlist; it only exists for a signed-in session.
+pub async fn liked_row(
+    client: &Client,
+    app: &tauri::AppHandle,
+    signed_in: bool,
+) -> Result<Option<MusicCatalogRow>, String> {
+    if !signed_in {
+        return Ok(None);
+    }
+    let response = client.browse(app, &playlist_browse_id("LM")?).await?;
+    Ok(liked_row_from(&response))
+}
+
+fn liked_row_from(response: &Value) -> Option<MusicCatalogRow> {
+    let tracks = gather(response, LIST_ITEM, items::track_from_list_item, ROW_ITEMS);
+    if tracks.is_empty() {
+        return None;
+    }
+    Some(MusicCatalogRow {
+        id: "ytm:home:liked".to_string(),
+        title: "Liked on YouTube Music".to_string(),
+        title_literal: true,
+        subtitle: Some("YouTube Music".to_string()),
+        layout: MusicRowLayout::TrackGrid,
+        source: super::fields::CONNECTOR.to_string(),
+        items: tracks.into_iter().map(MusicCatalogItem::Track).collect(),
+    })
+}
+
+/// The account's own playlists, the YouTube Music counterpart of the Spotify playlist shelf.
+const LIBRARY_PLAYLISTS: &str = "FEmusic_liked_playlists";
+const LIBRARY_ALBUMS: &str = "FEmusic_liked_albums";
+const LIBRARY_LANDING: &str = "FEmusic_library_landing";
+/// Playlist ids the provider keeps in the library as automatic lists rather than user content.
+/// Liked Music has its own row above, and saved episodes are not a music playlist.
+const AUTO_PLAYLISTS: [&str; 2] = ["VLLM", "VLSE"];
+/// The library screens show grouped rows rather than a provider-ordered carousel.
+const LIBRARY_ITEMS: usize = 100;
+
+pub async fn library_playlists(
+    client: &Client,
+    app: &tauri::AppHandle,
+    signed_in: bool,
+) -> Result<Option<MusicCatalogRow>, String> {
+    if !signed_in {
+        return Ok(None);
+    }
+    let response = client.browse(app, LIBRARY_PLAYLISTS).await?;
+    Ok(playlists_row(
+        &response,
+        "ytm:home:playlists",
+        "music.row.ytPlaylists",
+    ))
+}
+
+fn playlists_row(response: &Value, id: &str, title: &str) -> Option<MusicCatalogRow> {
+    let playlists = gather(
+        response,
+        "musicTwoRowItemRenderer",
+        items::catalog_item,
+        LIBRARY_ITEMS,
+    )
+    .into_iter()
+    .filter_map(|item| match item {
+        MusicCatalogItem::Playlist(playlist) if !AUTO_PLAYLISTS.contains(&playlist.id.as_str()) => {
+            Some(playlist)
+        }
+        _ => None,
+    })
+    .collect::<Vec<_>>();
+    if playlists.is_empty() {
+        return None;
+    }
+    Some(MusicCatalogRow {
+        id: id.to_string(),
+        title: title.to_string(),
+        title_literal: false,
+        subtitle: None,
+        layout: MusicRowLayout::Covers,
+        source: super::fields::CONNECTOR.to_string(),
+        items: playlists.into_iter().map(MusicCatalogItem::Playlist).collect(),
+    })
+}
+
+/// The rows of the YouTube Music library surface: liked songs, the account's playlists, the
+/// artists in the library, and saved albums. Sections that the account has nothing in are left
+/// out so an empty shelf never renders.
+pub async fn library_rows(
+    client: &Client,
+    app: &tauri::AppHandle,
+) -> Result<Vec<MusicCatalogRow>, String> {
+    let (liked, playlists, landing, albums) = tokio::join!(
+        liked_row(client, app, true),
+        client.browse(app, LIBRARY_PLAYLISTS),
+        client.browse(app, LIBRARY_LANDING),
+        client.browse(app, LIBRARY_ALBUMS),
+    );
+    let mut rows = Vec::new();
+    if let Ok(Some(mut row)) = liked {
+        // The library page opens the full list through the row's View all action.
+        row.id = "ytm:library:liked".to_string();
+        rows.push(row);
+    }
+    if let Ok(response) = playlists {
+        if let Some(row) = playlists_row(&response, "ytm:library:playlists", "music.row.playlists")
+        {
+            rows.push(row);
+        }
+    }
+    if let Ok(response) = landing {
+        if let Some(row) = artists_row_from(&response) {
+            rows.push(row);
+        }
+    }
+    if let Ok(response) = albums {
+        if let Some(row) = albums_row_from(&response) {
+            rows.push(row);
+        }
+    }
+    if rows.is_empty() {
+        return Err("YouTube Music did not return a library for this account".to_string());
+    }
+    Ok(rows)
+}
+
+fn artists_row_from(response: &Value) -> Option<MusicCatalogRow> {
+    let mut seen = std::collections::HashSet::new();
+    let artists = gather(
+        response,
+        "musicTwoRowItemRenderer",
+        items::catalog_item,
+        LIBRARY_ITEMS,
+    )
+    .into_iter()
+    .filter_map(|item| match item {
+        MusicCatalogItem::Artist(artist) if seen.insert(artist.id.clone()) => Some(artist),
+        _ => None,
+    })
+    .collect::<Vec<_>>();
+    if artists.is_empty() {
+        return None;
+    }
+    Some(MusicCatalogRow {
+        id: "ytm:library:artists".to_string(),
+        title: "music.row.artists".to_string(),
+        title_literal: false,
+        subtitle: None,
+        layout: MusicRowLayout::Circles,
+        source: super::fields::CONNECTOR.to_string(),
+        items: artists.into_iter().map(MusicCatalogItem::Artist).collect(),
+    })
+}
+
+fn albums_row_from(response: &Value) -> Option<MusicCatalogRow> {
+    let mut seen = std::collections::HashSet::new();
+    let albums = gather(
+        response,
+        "musicTwoRowItemRenderer",
+        items::catalog_item,
+        LIBRARY_ITEMS,
+    )
+    .into_iter()
+    .filter_map(|item| match item {
+        MusicCatalogItem::Album(album) if seen.insert(album.id.clone()) => Some(album),
+        _ => None,
+    })
+    .collect::<Vec<_>>();
+    if albums.is_empty() {
+        return None;
+    }
+    Some(MusicCatalogRow {
+        id: "ytm:library:albums".to_string(),
+        title: "music.search.albums".to_string(),
+        title_literal: false,
+        subtitle: None,
+        layout: MusicRowLayout::Covers,
+        source: super::fields::CONNECTOR.to_string(),
+        items: albums.into_iter().map(MusicCatalogItem::Album).collect(),
+    })
+}
+
 pub async fn album_tracks(
     client: &Client,
     app: &tauri::AppHandle,
@@ -196,6 +451,43 @@ pub async fn playlist_tracks(
         items::track_from_list_item,
         LIST_TRACKS,
     ))
+}
+
+/// One page of a playlist's songs. `None` starts at the playlist's first shelf; each page hands
+/// back the continuation token for the next one.
+pub async fn playlist_page(
+    client: &Client,
+    app: &tauri::AppHandle,
+    playlist: &MusicPlaylistRef,
+    cursor: Option<&str>,
+) -> Result<MusicCatalogPage, String> {
+    let response = match cursor {
+        Some(token) => {
+            if token.len() > 8_192 || token.chars().any(char::is_control) {
+                return Err("This YouTube Music playlist cursor is invalid".to_string());
+            }
+            client.browse_continuation(app, token).await?
+        }
+        None => {
+            client
+                .browse(app, &playlist_browse_id(&playlist.id)?)
+                .await?
+        }
+    };
+    playlist_page_from(&response, cursor.is_some())
+}
+
+fn playlist_page_from(response: &Value, continuation: bool) -> Result<MusicCatalogPage, String> {
+    // The import parser validates every entry, so an incomplete page cannot pass for the list.
+    let normalized = playlist_song_response(response, !continuation)?;
+    let (entries, next) =
+        super::artist::collection_page(&normalized, MusicCatalogKind::Tracks, "")?;
+    Ok(MusicCatalogPage {
+        items: entries,
+        next_cursor: next,
+        total: None,
+        scope: MusicCatalogScope::Catalog,
+    })
 }
 
 pub async fn import_playlist(
@@ -465,9 +757,10 @@ pub async fn stream(app: &tauri::AppHandle, track: &MusicTrack) -> Result<MusicS
 pub async fn video_stream(
     app: &tauri::AppHandle,
     track: &MusicTrack,
+    max_height: Option<u32>,
 ) -> Result<MusicVideoStream, String> {
     let video_id = safe_video_id(track.source_id.as_deref().unwrap_or(&track.id))?;
-    super::ytdlp::video_stream(app, &video_id).await
+    super::ytdlp::video_stream(app, &video_id, max_height).await
 }
 
 fn gather<T>(response: &Value, key: &str, build: fn(&Value) -> Option<T>, limit: usize) -> Vec<T> {
@@ -480,7 +773,8 @@ fn adopt(mut track: MusicTrack, album: &MusicAlbumRef) -> MusicTrack {
     if track.album.is_none() {
         track.album = Some(album.title.clone());
     }
-    if track.artwork.is_empty() {
+    // The album's cover is the canonical artwork for a track listed on that album.
+    if !album.artwork.is_empty() {
         track.artwork = album.artwork.clone();
     }
     if track.artist == "Unknown artist" {
@@ -558,6 +852,135 @@ mod tests {
     }
 
     #[test]
+    fn liked_songs_become_a_lead_row() {
+        let response = json!({"contents": [
+            {"musicResponsiveListItemRenderer": {
+                "playlistItemData": {"videoId": "one"},
+                "flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": {
+                    "text": {"runs": [{"text": "Liked song"}]}
+                }}]
+            }}
+        ]});
+        let row = liked_row_from(&response).expect("liked row");
+        assert_eq!(row.id, "ytm:home:liked");
+        assert_eq!(row.title, "Liked on YouTube Music");
+        assert_eq!(row.layout, MusicRowLayout::TrackGrid);
+        assert_eq!(row.items.len(), 1);
+        // A signed-out account has no liked playlist, so no empty row is added.
+        assert!(liked_row_from(&json!({})).is_none());
+    }
+
+    fn library_playlist(title: &str, browse_id: &str) -> Value {
+        json!({
+            "musicTwoRowItemRenderer": {
+                "title": {"runs": [{"text": title}]},
+                "subtitle": {"runs": [
+                    {"text": "ThundeR"}, {"text": " • "}, {"text": "5 tracks"}
+                ]},
+                "navigationEndpoint": {"browseEndpoint": {
+                    "browseId": browse_id,
+                    "browseEndpointContextSupportedConfigs": {
+                        "browseEndpointContextMusicConfig": {"pageType": "MUSIC_PAGE_TYPE_PLAYLIST"}
+                    }
+                }},
+                "thumbnailRenderer": {"musicThumbnailRenderer": {"thumbnail": {"thumbnails": [
+                    {"url": "https://example.test/cover.jpg", "width": 576, "height": 576}
+                ]}}}
+            }
+        })
+    }
+
+    #[test]
+    fn library_playlists_become_a_covers_row_without_automatic_lists() {
+        let response = json!({"contents": [
+            {"grid": {"items": [
+                library_playlist("Liked Music", "VLLM"),
+                library_playlist("Saved episodes", "VLSE"),
+                library_playlist("Favorite Songs", "VLPLPiI50_X6Uc4LP")
+            ]}}
+        ]});
+        let row = playlists_row(&response, "ytm:home:playlists", "music.row.ytPlaylists")
+            .expect("playlist row");
+        assert_eq!(row.id, "ytm:home:playlists");
+        assert_eq!(row.title, "music.row.ytPlaylists");
+        assert!(!row.title_literal);
+        assert_eq!(row.layout, MusicRowLayout::Covers);
+        assert_eq!(row.items.len(), 1);
+        match &row.items[0] {
+            MusicCatalogItem::Playlist(playlist) => {
+                assert_eq!(playlist.id, "VLPLPiI50_X6Uc4LP");
+                assert_eq!(playlist.name, "Favorite Songs");
+                assert_eq!(playlist.track_count, Some(5));
+                assert_eq!(playlist.artwork, vec!["https://example.test/cover.jpg"]);
+            }
+            _ => panic!("expected a playlist item"),
+        }
+        // A signed-out account has no library, and auto playlists alone are not a row.
+        assert!(playlists_row(&json!({}), "ytm:home:playlists", "music.row.ytPlaylists").is_none());
+        let auto_only = json!({"contents": [library_playlist("Liked Music", "VLLM")]});
+        assert!(playlists_row(&auto_only, "ytm:home:playlists", "music.row.ytPlaylists").is_none());
+    }
+
+    fn library_artist(name: &str, channel_id: &str) -> Value {
+        json!({
+            "musicTwoRowItemRenderer": {
+                "title": {"runs": [{"text": name}]},
+                "subtitle": {"runs": [{"text": "Artist"}, {"text": " • "}, {"text": "2M subscribers"}]},
+                "navigationEndpoint": {"browseEndpoint": {
+                    "browseId": channel_id,
+                    "browseEndpointContextSupportedConfigs": {
+                        "browseEndpointContextMusicConfig": {"pageType": "MUSIC_PAGE_TYPE_ARTIST"}
+                    }
+                }}
+            }
+        })
+    }
+
+    fn library_album(title: &str, album_id: &str) -> Value {
+        json!({
+            "musicTwoRowItemRenderer": {
+                "title": {"runs": [{"text": title}]},
+                "subtitle": {"runs": [{"text": "Album"}, {"text": " • "}, {"text": "Muse"}, {"text": " • "}, {"text": "2003"}]},
+                "navigationEndpoint": {"browseEndpoint": {
+                    "browseId": album_id,
+                    "browseEndpointContextSupportedConfigs": {
+                        "browseEndpointContextMusicConfig": {"pageType": "MUSIC_PAGE_TYPE_ALBUM"}
+                    }
+                }}
+            }
+        })
+    }
+
+    #[test]
+    fn library_sections_keep_only_their_own_kind_and_dedupe() {
+        let landing = json!({"contents": [
+            library_playlist("Favorite Songs", "VLPLPiI50_X6Uc4LP"),
+            library_artist("Muse", "UCmuse"),
+            library_artist("Muse", "UCmuse"),
+            library_artist("Tame Impala", "UCtame")
+        ]});
+        let row = artists_row_from(&landing).expect("artist row");
+        assert_eq!(row.id, "ytm:library:artists");
+        assert_eq!(row.title, "music.row.artists");
+        assert_eq!(row.layout, MusicRowLayout::Circles);
+        assert_eq!(row.items.len(), 2);
+        assert!(artists_row_from(&json!({"contents": [library_playlist("A", "VLPLone")]})).is_none());
+
+        let saved = json!({"contents": [
+            library_album("Absolution", "MPREb_one"),
+            library_artist("Muse", "UCmuse"),
+            library_album("Absolution", "MPREb_one")
+        ]});
+        let row = albums_row_from(&saved).expect("album row");
+        assert_eq!(row.id, "ytm:library:albums");
+        assert_eq!(row.title, "music.search.albums");
+        assert_eq!(row.layout, MusicRowLayout::Covers);
+        assert_eq!(row.items.len(), 1);
+        // The endpoint answers with an empty grid for accounts that saved no albums.
+        assert!(albums_row_from(&json!({})).is_none());
+    }
+
+    #[test]
     fn album_tracks_inherit_the_album_cover_and_artist() {
         let album = MusicAlbumRef {
             id: "MPREb_one".to_string(),
@@ -604,6 +1027,56 @@ mod tests {
         response["contents"].as_array_mut().unwrap().push(duplicate);
         assert_eq!(video_results(&response, 12).len(), 1);
     }
+    #[test]
+    fn the_top_result_card_is_a_video_identity() {
+        let response = json!({"contents": [{"musicCardShelfRenderer": {
+            "title": {"runs": [{"text": "Gnarly"}]},
+            "subtitle": {"runs": [{"text": "Video"}, {"text": " • "}, {"text": "KATSEYE"}, {"text": " • "}, {"text": "246M views"}, {"text": " • "}, {"text": "2:22"}]},
+            "thumbnail": {"musicThumbnailRenderer": {"thumbnail": {"thumbnails": [
+                {"url": "https://i.ytimg.com/vi/R2-yomhYAj4/hqdefault.jpg"}
+            ]}}}
+        }}]});
+        let track = card_video(&response).expect("card");
+        assert_eq!(track.source_id.as_deref(), Some("R2-yomhYAj4"));
+        assert_eq!(track.title, "Gnarly");
+        assert_eq!(track.artist, "KATSEYE");
+        assert_eq!(track.duration_seconds, 142);
+        assert_eq!(track.media_kind.as_deref(), Some("video"));
+        // A song card is not a video identity.
+        let song = json!({"musicCardShelfRenderer": {
+            "title": {"runs": [{"text": "Gnarly"}]},
+            "subtitle": {"runs": [{"text": "Song • KATSEYE"}]},
+            "thumbnail": {"musicThumbnailRenderer": {"thumbnail": {"thumbnails": [
+                {"url": "https://i.ytimg.com/vi/R2-yomhYAj4/hqdefault.jpg"}
+            ]}}}
+        }});
+        assert!(card_video(&song).is_none());
+    }
+
+    #[test]
+    fn an_official_video_leads_a_source_upload_with_the_same_title() {
+        let mut response: Value =
+            serde_json::from_str(include_str!("video-search-fixture.json")).unwrap();
+        let pointer = "/contents/0/musicResponsiveListItemRenderer/overlay/musicItemThumbnailOverlayRenderer/content/musicPlayButtonRenderer/playNavigationEndpoint/watchEndpoint/watchEndpointMusicSupportedConfigs/watchEndpointMusicConfig/musicVideoType";
+        // The clean-stage upload is listed first and shares the song's title.
+        *response.pointer_mut(pointer).unwrap() = json!("MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC");
+        let tracks = video_results(&response, 12);
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(tracks[0].source_id.as_deref(), Some("a5uQMwRMHcs"));
+    }
+
+    #[test]
+    fn official_source_music_uploads_count_as_music_videos() {
+        let mut response: Value =
+            serde_json::from_str(include_str!("video-search-fixture.json")).unwrap();
+        let pointer = "/contents/0/musicResponsiveListItemRenderer/overlay/musicItemThumbnailOverlayRenderer/content/musicPlayButtonRenderer/playNavigationEndpoint/watchEndpoint/watchEndpointMusicSupportedConfigs/watchEndpointMusicConfig/musicVideoType";
+        // YouTube Music types a label's art track this way; it is still the official upload.
+        *response.pointer_mut(pointer).unwrap() = json!("MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC");
+        assert_eq!(video_results(&response, 12).len(), 2);
+        *response.pointer_mut(pointer).unwrap() = json!("MUSIC_VIDEO_TYPE_ATV");
+        assert_eq!(video_results(&response, 12).len(), 1);
+    }
+
     #[test]
     fn interviews_do_not_mix_official_videos_or_audio() {
         let mut response: Value =
@@ -677,6 +1150,11 @@ mod tests {
         assert_eq!(imported.tracks[0].duration_seconds, 189);
         assert_eq!(imported.tracks[1].album.as_deref(), Some("ELEVEN"));
         assert_eq!(imported.tracks[2].source_id.as_deref(), Some("V6TEcoNUmc8"));
+        // The fixture's Ditto entry carries no thumbnail; the id still supplies a poster.
+        assert_eq!(
+            imported.tracks[2].artwork,
+            "https://i.ytimg.com/vi/V6TEcoNUmc8/hq720.jpg"
+        );
     }
 
     #[test]
@@ -721,6 +1199,19 @@ mod tests {
             "WUJYt4Zs3Ko"
         )
         .is_err());
+    }
+
+    #[test]
+    fn playlist_pages_follow_the_continuation_token() {
+        let fixture = playlist_fixture();
+        let first = playlist_page_from(&fixture["first"], false).expect("first page");
+        assert_eq!(first.scope, MusicCatalogScope::Catalog);
+        assert_eq!(first.items.len(), 2);
+        assert!(matches!(first.items[0], MusicCatalogItem::Track(_)));
+        assert!(first.next_cursor.is_some());
+        let second = playlist_page_from(&fixture["second"], true).expect("second page");
+        assert_eq!(second.items.len(), 2);
+        assert!(second.next_cursor.is_none());
     }
 
     #[tokio::test]

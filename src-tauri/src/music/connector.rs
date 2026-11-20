@@ -89,6 +89,7 @@ pub trait MusicConnector: Send + Sync {
         &self,
         _app: &tauri::AppHandle,
         _track: &MusicTrack,
+        _max_height: Option<u32>,
     ) -> Result<MusicVideoStream, String> {
         Err(NO_VIDEO.to_string())
     }
@@ -117,6 +118,11 @@ pub trait MusicConnector: Send + Sync {
     }
 
     async fn browse_home(&self, _app: &tauri::AppHandle) -> Result<Vec<MusicCatalogRow>, String> {
+        Ok(Vec::new())
+    }
+
+    /// Grouped rows for a source's own library surface. Sources without one stay empty.
+    async fn library_rows(&self, _app: &tauri::AppHandle) -> Result<Vec<MusicCatalogRow>, String> {
         Ok(Vec::new())
     }
 
@@ -183,6 +189,29 @@ pub trait MusicConnector: Send + Sync {
         _playlist: &MusicPlaylistRef,
     ) -> Result<Vec<MusicTrack>, String> {
         Err(self.unsupported("playlists"))
+    }
+
+    /// One page of a playlist, for surfaces that page the list instead of loading it whole.
+    /// Connectors that cannot page answer with their full playlist and no cursor.
+    async fn playlist_page(
+        &self,
+        app: &tauri::AppHandle,
+        playlist: &MusicPlaylistRef,
+        cursor: Option<&str>,
+    ) -> Result<MusicCatalogPage, String> {
+        if cursor.is_some() {
+            return Err(self.unsupported("playlist pagination"));
+        }
+        let tracks = self.playlist_tracks(app, playlist).await?;
+        Ok(MusicCatalogPage {
+            items: tracks
+                .into_iter()
+                .map(MusicCatalogItem::Track)
+                .collect(),
+            next_cursor: None,
+            total: None,
+            scope: MusicCatalogScope::Catalog,
+        })
     }
 
     async fn import_playlist(

@@ -270,7 +270,7 @@ export function notifyAnimeCwIds(): void {
   notifyAliasOnce();
 }
 
-function record(kind: Kind, id: string, value: string): void {
+function record(kind: Kind, id: string, value: string, notifyNow = true): void {
   if (!valid(kind, id, value)) return;
   const map = mapFor(kind);
   if (map.get(id) === value) return;
@@ -278,7 +278,7 @@ function record(kind: Kind, id: string, value: string): void {
   const entry = recordOf(kind, id, value);
   pending.set(entry.key, entry);
   if (kind === "alias") notifyAliasOnce();
-  else notify();
+  else if (notifyNow) notify();
   scheduleFlush();
 }
 
@@ -299,8 +299,8 @@ export function getAnilistMalAlias(id: string): string | null {
 }
 
 /** The entry resolved by the detail page; separate from playback's last cour. */
-export function recordAnimeCwId(catalogId: string, animeId: string): void {
-  record("canonical", catalogId, animeId);
+export function recordAnimeCwId(catalogId: string, animeId: string, notifyNow = true): void {
+  record("canonical", catalogId, animeId, notifyNow);
 }
 
 /** The specific entry used by playback, which can differ from the catalog entry. */

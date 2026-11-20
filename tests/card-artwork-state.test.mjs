@@ -172,7 +172,7 @@ function metadataFixture(remote = async () => [], local = []) {
   return load("src/lib/meta-resource.ts", {
     "./metadata-addons": { providesMetadata: (a) => a.manifest.resources.includes("meta") },
     "./addons": {
-      userAddons: remote,
+      cachedUserAddons: remote,
       addonAccepts: (a, resource) => a.manifest.resources.includes(resource),
     },
     "./addon-store": { loadInstalled: () => local, filterEnabled: (items) => items },

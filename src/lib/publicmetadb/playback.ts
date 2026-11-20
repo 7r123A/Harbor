@@ -113,6 +113,12 @@ type ResumePages = {
   totalPagesKnown: boolean;
   pagesFetched: number;
   invalidPage: boolean;
+  /**
+   * True only when every requested page was read successfully and the walk
+   * reached the end of the list. A partial or failed read must not be reported
+   * as a fresh provider result.
+   */
+  ok: boolean;
 };
 
 async function readResumePages(fresh = false): Promise<ResumePages> {
@@ -121,6 +127,7 @@ async function readResumePages(fresh = false): Promise<ResumePages> {
   let totalPagesKnown = false;
   let pagesFetched = 0;
   let invalidPage = false;
+  let ok = true;
   try {
     const first = await pmdbRequest<PmdbResumeResponse>(
       `/api/external/resume?page=1&perPage=${RESUME_PER_PAGE}`,
@@ -149,18 +156,19 @@ async function readResumePages(fresh = false): Promise<ResumePages> {
         pagesFetched = page;
       } catch (error) {
         if (fresh) throw error;
+        ok = false;
         break;
       }
     }
   } catch (error) {
     if (fresh) throw error;
+    ok = false;
   }
-  return { points, totalPages, totalPagesKnown, pagesFetched, invalidPage };
+  if (invalidPage) ok = false;
+  return { points, totalPages, totalPagesKnown, pagesFetched, invalidPage, ok };
 }
 
-async function fetchAllResumePoints(fresh = false): Promise<PmdbResumePoint[]> {
-  return (await readResumePages(fresh)).points;
-}
+export type PmdbPlaybackResult = { items: LibraryItem[]; fresh: boolean };
 
 async function mapResumePoints(
   points: PmdbResumePoint[],
@@ -226,8 +234,9 @@ export async function fetchPublicMetaDbPlaybackSnapshot(): Promise<PublicMetaDbP
   return { items, complete };
 }
 
-export async function fetchPublicMetaDbPlaybackItems(fresh = false): Promise<LibraryItem[]> {
-  if (!isAuthenticated()) return [];
-  const all = await fetchAllResumePoints(fresh);
-  return mapResumePoints(all, true);
+export async function fetchPublicMetaDbPlaybackItems(fresh = false): Promise<PmdbPlaybackResult> {
+  if (!isAuthenticated()) return { items: [], fresh: false };
+  const pages = await readResumePages(fresh);
+  const items = await mapResumePoints(pages.points, true);
+  return { items, fresh: pages.ok };
 }

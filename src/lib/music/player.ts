@@ -35,6 +35,7 @@ import {
   pinSourceFor,
   unpinSourceFor,
 } from "./pinned-sources";
+import { selectSourceCandidate } from "./source-selection";
 import {
   getMusicTransport,
   musicAdvance,
@@ -578,7 +579,9 @@ function clearSpotifyStartupWatchdog(): void {
 
 function armSpotifyStartupWatchdog(request: number, track: MusicTrack): void {
   clearSpotifyStartupWatchdog();
-  if (track.connectorId !== "spotify" || state.phase !== "resolving") return;
+  // A source can accept the command and then never reach file-loaded, which used to leave the
+  // player spinning on "resolving" for as long as the user waited.
+  if (state.phase !== "resolving") return;
   spotifyStartupTimer = setTimeout(() => {
     spotifyStartupTimer = null;
     if (
@@ -914,6 +917,12 @@ async function nextPlayableSource(
   return (usable.find((candidate) => candidate.connectorId === want) ?? usable[0])?.track ?? null;
 }
 
+
+/** Warm the cross-source candidate cache without making the listener wait for it. */
+export function warmMusicSourceCache(track: MusicTrack): void {
+  void sourcesFor(track).catch(() => {});
+}
+
 export async function playMusic(
   track: MusicTrack,
   queue = [track],
@@ -1020,17 +1029,12 @@ export async function playMusic(
       }
       const preferred = readMusicPreference("harbor.music.preferred-source.v1");
       const ranked = rankByExplicitness(playable, explicitnessOf(track));
-      const pinned = peekPinnedSource(track);
-      const match =
-        (pinned &&
-          (ranked.find(
-            (candidate) =>
-              candidate.connectorId === pinned.connectorId && candidate.track.id === pinned.id,
-          ) ??
-            ranked.find((candidate) => candidate.connectorId === pinned.connectorId))) ??
-        ranked.find((candidate) => candidate.connectorId === preferred) ??
-        ranked.find((candidate) => candidate.connectorId === workingSource) ??
-        ranked[0];
+      const match = selectSourceCandidate(
+        ranked,
+        preferred,
+        peekPinnedSource(track),
+        workingSource,
+      );
       if (!match) throw new Error("music.source.none");
       const original = track;
       alternatives = ranked
@@ -1137,8 +1141,9 @@ export async function playMusic(
         else {
           await invoke("music_play_track", { track, volume: state.volume });
           // The music-video host owns the audible track once its surface takes over.
-          // Pause the native engine immediately so a video loop cannot play both.
-          if (track.mediaKind === "video")
+          // Pause the native engine once the video owns the picture. A queued song in video
+          // mode keeps playing until its video actually starts, so a failed lookup is audible.
+          if (track.mediaKind === "video" && !track.videoSearch)
             await invoke("music_engine_pause", { paused: true }).catch(() => {});
         }
         break;

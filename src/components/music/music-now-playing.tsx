@@ -8,9 +8,11 @@ import type { MusicArtistRef, MusicTrack } from "@/lib/music/types";
 import {
   type CSSProperties,
   type RefObject,
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -56,12 +58,9 @@ import { aiIsGroq, aiKey } from "@/lib/ai-models";
 import { translateLyrics } from "@/lib/music/lyrics-translation";
 import { Dropdown } from "@/components/dropdown";
 import { pushBackHandler } from "@/lib/back-intercept";
-import {
-  useMusicPlayer,
-  seekMusic,
-  toggleMusicLiked,
-  isMusicVideoActive,
-} from "@/lib/music/player";
+import { getMusicState, seekMusic, toggleMusicLiked, isMusicVideoActive } from "@/lib/music/player";
+import { useMusicClock, useMusicPlayback } from "@/lib/music/use-music-playback";
+import { useMusicTransport } from "@/lib/music/transport";
 import { loadTrackLyrics, lyricIndexAt, type LyricLine } from "@/lib/music/lyrics";
 import {
   LYRIC_OFFSET_STEP,
@@ -74,6 +73,8 @@ import { useLyricSync } from "@/lib/music/use-lyric-sync";
 import { karaokeScrollTop } from "@/lib/music/karaoke-scroll";
 import { MusicKaraoke } from "./music-karaoke";
 import { loadMusicAudioDevices, useMusicAudioSettings } from "@/lib/music/audio-settings";
+import type { MusicAudioSettingsValue } from "@/lib/music/audio-settings";
+import type { SyncPoint } from "@/lib/subtitles/text-sync";
 import { setMusicAppearance, useMusicAppearance } from "@/lib/music/appearance";
 import { musicSourceName } from "@/lib/music/recovery";
 import type { MusicExploreRequest } from "@/lib/music/navigation";
@@ -108,7 +109,157 @@ const lyricTranslationDiffers = (lines: (string | null)[], source: LyricLine[]):
     return !!text && !!original && text.trim() !== original;
   });
 
-export function MusicNowPlaying({
+/**
+ * The meter store publishes on every poll, so the widget that reads it owns its own subscription.
+ * Keeping it out of the panel is what stops a live reading from re-rendering the queue beside it.
+ */
+function NowPlayingLevels({ track, enabled }: { track: MusicTrack; enabled: boolean }) {
+  const meter = useMusicAudioMeter(track, enabled);
+  return (
+    <div className="music-now-levels" data-now-levels>
+      <MusicLevelMeter meter={meter} />
+    </div>
+  );
+}
+
+/** Same reason as the levels beside the artwork: only this block follows the meter. */
+function NowPlayingSignal({
+  track,
+  enabled,
+  speakerActive,
+  outputLabel,
+  transportCodec,
+  audioSettings,
+}: {
+  track: MusicTrack;
+  enabled: boolean;
+  speakerActive: boolean;
+  outputLabel?: string;
+  transportCodec?: string;
+  audioSettings?: MusicAudioSettingsValue;
+}) {
+  const meter = useMusicAudioMeter(track, enabled);
+  return (
+    <MusicSignalDetails
+      track={
+        isMusicVideoActive()
+          ? { ...track, quality: undefined, sourceId: undefined, playbackUrl: undefined }
+          : track
+      }
+      outputLabel={outputLabel}
+      transportCodec={transportCodec}
+      audioSettings={audioSettings}
+      meter={speakerActive ? undefined : meter}
+      showLevels={false}
+    />
+  );
+}
+
+/**
+ * Timed lyrics are the one part of this window that has to follow the playback clock, so the list
+ * subscribes to it directly. The panel above renders only when the track, queue or a control
+ * changes, and the line highlight costs a render of these lines alone.
+ */
+function NowPlayingLyricList({
+  lines,
+  lyricOffset,
+  translation,
+  target,
+  syncPoints,
+  liveSync,
+  syncPick,
+  onPick,
+  onSeek,
+  onAlign,
+}: {
+  lines: LyricLine[];
+  lyricOffset: number;
+  translation: (string | null)[] | null;
+  target: UiLanguage;
+  syncPoints: SyncPoint[];
+  liveSync: boolean;
+  syncPick: number | null;
+  onPick: (index: number) => void;
+  onSeek: (index: number) => void;
+  onAlign: (index: number) => void;
+}) {
+  const t = useT();
+  const clock = useMusicClock();
+  const listRef = useRef<HTMLOListElement>(null);
+  const active = lyricIndexAt(lines, shiftedLyricTime(clock, lyricOffset));
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const line = active >= 0 ? list.children.item(active) : null;
+    if (!(line instanceof HTMLElement)) {
+      list.scrollTo({ top: 0, behavior: "auto" });
+      return;
+    }
+    const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const top = karaokeScrollTop({
+      lineTop: line.offsetTop,
+      lineHeight: line.clientHeight,
+      viewHeight: list.clientHeight,
+      maxScroll: list.scrollHeight - list.clientHeight,
+      anchor: 0.5,
+    });
+    list.scrollTo({ top, behavior: calm ? "auto" : "smooth" });
+  }, [active, lines.length]);
+  return (
+    <ol ref={listRef} className="music-now-lyrics">
+      {lines.map((line, index) => {
+        const translated = translation?.[index] ?? null;
+        const showTranslation = !!translated && translated.trim() !== line.text.trim();
+        const point = syncPoints.findIndex((held) => Math.abs(held.t - line.at) < 0.001);
+        return (
+          <li key={`${line.at}:${index}`} data-active={index === active ? "1" : undefined}>
+            {line.text ? (
+              <>
+                <button
+                  type="button"
+                  data-sync={liveSync ? "1" : undefined}
+                  data-picked={syncPick === index ? "1" : undefined}
+                  onClick={() => (liveSync ? onPick(index) : onSeek(index))}
+                >
+                  <span className="music-now-lyric-text">
+                    {line.text}
+                    {point >= 0 && (
+                      <span
+                        className="music-now-lyric-sync-badge"
+                        title={t(point === 0 ? "Aligned here" : "Drift fixed")}
+                      >
+                        {point + 1}
+                      </span>
+                    )}
+                  </span>
+                  {showTranslation && (
+                    <span className="music-now-lyric-translation" dir="auto" lang={target}>
+                      {translated}
+                    </span>
+                  )}
+                </button>
+                {liveSync && syncPick === index && (
+                  <div className="music-now-lyric-sync-actions">
+                    <button type="button" onClick={() => onAlign(index)}>
+                      {t("Align to now")}
+                    </button>
+                    <button type="button" onClick={() => onSeek(index)}>
+                      {t("Jump here")}
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <span className="music-now-lyric-rest" aria-hidden="true" />
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+export const MusicNowPlaying = memo(function MusicNowPlaying({
   inset,
   dockRef,
   closing = false,
@@ -135,7 +286,9 @@ export function MusicNowPlaying({
 }) {
   const t = useT();
   const { settings } = useSettings();
-  const player = useMusicPlayer();
+  // The catalog state without the clock: a position tick must not redraw the whole window.
+  const player = useMusicPlayback();
+  const transport = useMusicTransport();
   const appearance = useMusicAppearance();
   const audio = useMusicAudioSettings();
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -173,21 +326,10 @@ export function MusicNowPlaying({
   const [lyricTranslating, setLyricTranslating] = useState(false);
   const [lyricTranslationFailed, setLyricTranslationFailed] = useState(false);
   const lyricTranslationRun = useRef(0);
-  const lyricsRef = useRef<HTMLOListElement>(null);
   const [outputs, setOutputs] = useState<Array<{ name: string; description: string }>>([]);
   const current = player.current;
   const { profile: recording, display } = useRecordingProfile(current);
   const speaker = getMusicSpeakerState();
-  const meter = useMusicAudioMeter(
-    current,
-    Boolean(
-      current &&
-      player.phase !== "resolving" &&
-      (appearance.levels || panel === "signal") &&
-      !isMusicVideoActive() &&
-      !speaker.active,
-    ),
-  );
   const artMenu = useMusicTrackContextMenu(display, {
     onGoToArtist: () => onExplore("artist"),
     onGoToAlbum: display?.album ? () => onExplore("album") : undefined,
@@ -261,6 +403,7 @@ export function MusicNowPlaying({
   useEffect(() => {
     const dock = dockRef.current;
     if (!dock) return;
+    const root = document.documentElement;
     const origin = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const obscured = [...(dock.parentElement?.children ?? [])].filter(
       (node): node is HTMLElement =>
@@ -273,6 +416,8 @@ export function MusicNowPlaying({
     obscured.forEach((node) => {
       node.inert = true;
     });
+    // Inert stops input, not painting: the stylesheet parks the covered page's animations.
+    root.dataset.musicNowPlaying = "on";
     const raf = requestAnimationFrame(() => closeRef.current?.focus({ preventScroll: true }));
     const removeBack = pushBackHandler(() => {
       onClose();
@@ -296,6 +441,7 @@ export function MusicNowPlaying({
       cancelAnimationFrame(raf);
       removeBack();
       document.removeEventListener("keydown", keydown);
+      delete root.dataset.musicNowPlaying;
       obscured.forEach((node, index) => {
         node.inert = wasInert[index];
       });
@@ -363,7 +509,6 @@ export function MusicNowPlaying({
     }
   }, [lyricTarget, lyricTranslation, lyricTranslationOn, lyricTranslating, lyrics, settings]);
   const timedLyrics = applyLyricSync(lyrics, syncPoints);
-  const activeLyric = lyricIndexAt(timedLyrics, shiftedLyricTime(player.currentTime, lyricOffset));
   const seekLyric = useCallback(
     (index: number) => {
       const line = timedLyrics[index];
@@ -374,16 +519,13 @@ export function MusicNowPlaying({
   const alignLyric = useCallback(
     (index: number) => {
       const line = lyrics[index];
-      if (!line || !Number.isFinite(player.currentTime)) return;
-      setSyncPoints(
-        addLyricSyncPoint(syncPoints, {
-          t: line.at,
-          at: player.currentTime - lyricOffset,
-        }),
-      );
+      // Read the clock on demand: subscribing to it here would redraw the queue every tick.
+      const at = getMusicState().currentTime;
+      if (!line || !Number.isFinite(at)) return;
+      setSyncPoints(addLyricSyncPoint(syncPoints, { t: line.at, at: at - lyricOffset }));
       setSyncPick(null);
     },
-    [lyrics, lyricOffset, player.currentTime, setSyncPoints, syncPoints],
+    [lyrics, lyricOffset, setSyncPoints, syncPoints],
   );
   useEffect(() => {
     if (!current) return;
@@ -424,27 +566,16 @@ export function MusicNowPlaying({
       window.clearTimeout(giveUp);
     };
   }, [panel, current]);
-  useEffect(() => {
-    if (panel !== "lyrics") return;
-    const list = lyricsRef.current;
-    if (!list) return;
-    const line = activeLyric >= 0 ? list.children.item(activeLyric) : null;
-    if (!(line instanceof HTMLElement)) {
-      list.scrollTo({ top: 0, behavior: "auto" });
-      return;
-    }
-    const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const top = karaokeScrollTop({
-      lineTop: line.offsetTop,
-      lineHeight: line.clientHeight,
-      viewHeight: list.clientHeight,
-      maxScroll: list.scrollHeight - list.clientHeight,
-      anchor: 0.5,
-    });
-    list.scrollTo({ top, behavior: calm ? "auto" : "smooth" });
-  }, [panel, activeLyric, lyricsState]);
 
-  const next = musicUpcoming(player.queue, player.queueIndex, 40);
+  // Rebuilt only when the queue or the play order changes, not on every render.
+  const next = useMemo(
+    () => musicUpcoming(player.queue, player.queueIndex, 40),
+    [player.queue, player.queueIndex, transport],
+  );
+  const openUpNextArtist = useCallback(
+    (track: MusicTrack) => onExplore("artist", undefined, track),
+    [onExplore],
+  );
 
   const lyricsOff = hasLyrics === false;
   const tabOpen = (id: string) => id !== "lyrics" || !lyricsOff;
@@ -574,9 +705,10 @@ export function MusicNowPlaying({
               {video && <MusicVideoFullscreen track={current} />}
               {video && <MusicVideoMiniToggle className="music-now-mini-toggle" />}
               {appearance.levels && current.mediaKind !== "video" && (
-                <div className="music-now-levels" data-now-levels>
-                  <MusicLevelMeter meter={meter} />
-                </div>
+                <NowPlayingLevels
+                  track={current}
+                  enabled={player.phase !== "resolving" && !isMusicVideoActive() && !speaker.active}
+                />
               )}
             </div>
             <div className="music-now-content">
@@ -920,73 +1052,22 @@ export function MusicNowPlaying({
                             +
                           </button>
                         </div>
-                        <ol ref={lyricsRef} className="music-now-lyrics">
-                          {lyrics.map((line, index) => {
-                            const translated =
-                              lyricTranslationOn && lyricTranslation?.language === lyricTarget
-                                ? lyricTranslation.lines[index]
-                                : null;
-                            const showTranslation =
-                              !!translated && translated.trim() !== line.text.trim();
-                            const point = syncPoints.findIndex(
-                              (held) => Math.abs(held.t - line.at) < 0.001,
-                            );
-                            return (
-                              <li
-                                key={`${line.at}:${index}`}
-                                data-active={index === activeLyric ? "1" : undefined}
-                              >
-                                {line.text ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      data-sync={liveSync ? "1" : undefined}
-                                      data-picked={syncPick === index ? "1" : undefined}
-                                      onClick={() =>
-                                        liveSync
-                                          ? setSyncPick((pick) => (pick === index ? null : index))
-                                          : seekLyric(index)
-                                      }
-                                    >
-                                      <span className="music-now-lyric-text">
-                                        {line.text}
-                                        {point >= 0 && (
-                                          <span
-                                            className="music-now-lyric-sync-badge"
-                                            title={t(point === 0 ? "Aligned here" : "Drift fixed")}
-                                          >
-                                            {point + 1}
-                                          </span>
-                                        )}
-                                      </span>
-                                      {showTranslation && (
-                                        <span
-                                          className="music-now-lyric-translation"
-                                          dir="auto"
-                                          lang={lyricTarget}
-                                        >
-                                          {translated}
-                                        </span>
-                                      )}
-                                    </button>
-                                    {liveSync && syncPick === index && (
-                                      <div className="music-now-lyric-sync-actions">
-                                        <button type="button" onClick={() => alignLyric(index)}>
-                                          {t("Align to now")}
-                                        </button>
-                                        <button type="button" onClick={() => seekLyric(index)}>
-                                          {t("Jump here")}
-                                        </button>
-                                      </div>
-                                    )}
-                                  </>
-                                ) : (
-                                  <span className="music-now-lyric-rest" aria-hidden="true" />
-                                )}
-                              </li>
-                            );
-                          })}
-                        </ol>
+                        <NowPlayingLyricList
+                          lines={timedLyrics}
+                          lyricOffset={lyricOffset}
+                          translation={
+                            lyricTranslationOn && lyricTranslation?.language === lyricTarget
+                              ? lyricTranslation.lines
+                              : null
+                          }
+                          target={lyricTarget}
+                          syncPoints={syncPoints}
+                          liveSync={liveSync}
+                          syncPick={syncPick}
+                          onPick={(index) => setSyncPick((pick) => (pick === index ? null : index))}
+                          onSeek={seekLyric}
+                          onAlign={alignLyric}
+                        />
                       </>
                     ) : (
                       <div className="music-now-empty">
@@ -1001,22 +1082,15 @@ export function MusicNowPlaying({
                       </div>
                     )
                   ) : panel === "signal" ? (
-                    <MusicSignalDetails
-                      track={
-                        isMusicVideoActive()
-                          ? {
-                              ...current,
-                              quality: undefined,
-                              sourceId: undefined,
-                              playbackUrl: undefined,
-                            }
-                          : current
+                    <NowPlayingSignal
+                      track={current}
+                      enabled={
+                        !speaker.active && player.phase !== "resolving" && !isMusicVideoActive()
                       }
+                      speakerActive={speaker.active}
                       outputLabel={output}
                       transportCodec={speaker.active ? speaker.transportCodec : undefined}
                       audioSettings={speaker.active ? undefined : audio.settings}
-                      meter={speaker.active ? undefined : meter}
-                      showLevels={false}
                     />
                   ) : (
                     <MusicQueueContinuation remaining={upNext.length}>
@@ -1027,7 +1101,7 @@ export function MusicNowPlaying({
                               key={`${track.connectorId}:${track.id}:${index}`}
                               track={track}
                               queue={upNextQueue}
-                              onArtist={() => onExplore("artist", undefined, track)}
+                              onArtist={openUpNextArtist}
                             />
                           ))}
                         </ol>
@@ -1061,4 +1135,4 @@ export function MusicNowPlaying({
       </section>
     </>
   );
-}
+});

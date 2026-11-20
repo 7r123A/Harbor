@@ -9,9 +9,10 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { FolderPlus, Heart, Info } from "lucide-react";
+import { FolderOpen, FolderPlus, Heart, Info } from "lucide-react";
+import { isTauri } from "@tauri-apps/api/core";
 import { useT } from "@/lib/i18n";
-import { menuPosition } from "@/lib/games/library-management";
+import { canOpenGameFolder, menuPosition, openGameFolder } from "@/lib/games/library-management";
 import { gameIdentities } from "@/lib/games/recommendations";
 import type { PersonalCollectionGame } from "@/lib/games/personal-collections";
 import { useOptionalGameAccess } from "./game-access";
@@ -52,7 +53,10 @@ export function GameCollectionActionProvider({
 }) {
   const [target, setTarget] = useState<MenuTarget | null>(null);
   const open = useCallback<OpenMenu>((game, x, y) => setTarget({ game, x, y }), []);
-  const close = useCallback(() => setTarget(null), []);
+  const close = useCallback(
+    () => setTarget((current) => (current === target ? null : current)),
+    [target],
+  );
   useEffect(() => {
     const onContextMenu = (event: MouseEvent) => {
       if (event.defaultPrevented || !(event.target instanceof Element)) return;
@@ -91,12 +95,17 @@ function GameCollectionMenu({
     aliases = new Set(gameIdentities(target.game)),
     savedGame = access?.saved.find((game) => gameIdentities(game).some((id) => aliases.has(id)));
   const root = useRef<HTMLDivElement>(null);
+  const game = access?.quick.find(
+    (entry) => entry.id === (target.game.libraryEntryId ?? target.game.id),
+  );
+  const [folderFailed, setFolderFailed] = useState<MenuTarget | null>(null);
+  const showFolderError = folderFailed === target;
   const [position, setPosition] = useState({ left: target.x, top: target.y });
   useLayoutEffect(() => {
     const box = root.current?.getBoundingClientRect();
     if (box)
       setPosition(menuPosition(target.x, target.y, box.width, box.height, innerWidth, innerHeight));
-  }, [target]);
+  }, [target, showFolderError]);
   useEffect(() => {
     const frame = requestAnimationFrame(() =>
       root.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true }),
@@ -136,6 +145,15 @@ function GameCollectionMenu({
         <Info size={18} />
         <span>{t("games.manage.details")}</span>
       </button>
+      {isTauri() && game && canOpenGameFolder(game) && (
+        <button
+          role="menuitem"
+          onClick={() => void openGameFolder(game).then(close, () => setFolderFailed(target))}
+        >
+          <FolderOpen size={18} />
+          <span>{t("games.manage.browse")}</span>
+        </button>
+      )}
       {access && (
         <button
           role="menuitem"
@@ -163,6 +181,7 @@ function GameCollectionMenu({
         <FolderPlus size={18} />
         <span>{t("games.collections.addTo")}</span>
       </button>
+      {showFolderError && <p role="alert">{t("games.manage.failed")}</p>}
     </div>,
     document.body,
   );

@@ -242,3 +242,150 @@ test("outgoing anime tracker sync uses its own resolved ID and reaches both trac
     ],
   );
 });
+
+
+test("verified live scrobble updates AniList and MAL by native cour while retaining the original resume record", () => {
+  const h = resumeAutosaveHarness();
+  h.enableAnimeSync();
+  const p = playbackParams(6, 1);
+  p.src.meta.id = "mal:14719";
+  p.src.episode = { season: 6, episode: 1, kitsuStreamId: "kitsu:49847:1" } as typeof p.src.episode;
+  const proof = {
+    work: {
+      entryId: "kitsu:49847", entryEpisode: 1,
+      aliases: { kitsu: "kitsu:49847", mal: "mal:61469", anilist: "anilist:190327" },
+      catalogIds: ["tmdb:tv:45790"], evidence: "pack+window",
+    },
+  };
+  const withProof = { ...p, liveScrobble: { phase: "ready", proof } };
+  h.render(withProof);
+  h.render({
+    ...withProof,
+    snap: { ...p.snap, status: "playing", positionSec: 950, durationSec: 1000 },
+  });
+  h.clock(950);
+  h.tick();
+  assert.equal(h.trackerProgress.some((write) =>
+    write[0] === "anilist" && write[1] === "anilist:190327" && write[2] === 1), true);
+  assert.equal(h.trackerProgress.some((write) =>
+    write[0] === "mal" && write[1] === "mal:61469" && write[2] === 1), true);
+  assert.equal(h.cleared.at(-1)?.[0], "mal:14719", "completed episode clears only the original resume identity");
+  assert.equal(h.history.at(-1)?.[0], "mal:14719", "original playback history never changes");
+  h.unmount();
+});
+
+test("Refract early logging is opt-in, once per playback, and independent of Harbor completion", () => {
+  const h = resumeAutosaveHarness();
+  h.enableRefract(180);
+  const p = playbackParams();
+  h.render(p);
+  // Autosave skips writes less than 1.5 seconds apart; cross the threshold on a real tick.
+  h.render({ ...p, snap: { ...p.snap, status: "playing", positionSec: 178, durationSec: 3600 } });
+  h.clock(178);
+  h.tick();
+  assert.equal(h.refractWatches.length, 0);
+  h.clock(180);
+  h.tick();
+  assert.equal(h.refractWatches.length, 1);
+  assert.equal(h.refractWatches[0][0].id, "tt100");
+  assert.deepEqual(h.refractWatches[0][1].episodes, [{ season: 1, episode: 1 }]);
+  assert.equal(h.watched.length, 0);
+  assert.equal(h.watchEvents.length, 0);
+  h.clock(3500);
+  h.tick();
+  assert.equal(h.refractWatches.length, 1);
+  assert.equal(h.watchEvents.length, 1);
+  assert.deepEqual(h.watched[0], ["tt100", 1, 1, true]);
+});
+
+test("Refract waits for verified anime identity and episode mapping", () => {
+  const h = resumeAutosaveHarness();
+  h.enableRefract(180);
+  const p = playbackParams(1, 1, { resolvedImdbId: null, resolvedImdbVerified: false });
+  p.src.meta.id = "kitsu:12";
+  h.render(p);
+  const playing = {
+    ...p,
+    snap: { ...p.snap, status: "playing", positionSec: 180, durationSec: 3600 },
+  };
+  h.render(playing);
+  h.clock(180);
+  h.tick();
+  assert.equal(h.refractWatches.length, 0);
+  h.render({
+    ...playing,
+    resolvedImdbId: "tt200",
+    resolvedImdbVerified: true,
+    src: { ...p.src, episode: { ...p.src.episode, imdbSeason: 2, imdbEpisode: 4 } },
+  });
+  h.clock(184);
+  h.tick();
+  assert.equal(h.refractWatches.length, 1);
+  assert.equal(h.refractWatches[0][1].externalId, "tt200");
+  assert.deepEqual(h.refractWatches[0][1].episodes, [{ season: 2, episode: 4 }]);
+  h.clock(188);
+  h.tick();
+  assert.equal(h.refractWatches.length, 1);
+});
+
+test("Refract logs a viewing once across source switches and retries", () => {
+  const h = resumeAutosaveHarness();
+  h.enableRefract(180);
+  const p = playbackParams();
+  const play = (params: ReturnType<typeof playbackParams>, positionSec: number) => {
+    h.render(params);
+    h.render({
+      ...params,
+      snap: { ...params.snap, status: "playing", positionSec, durationSec: 3600 },
+    });
+    h.clock(positionSec);
+    h.tick();
+  };
+
+  play(p, 180);
+  assert.equal(h.refractWatches.length, 1);
+  const switched = { ...p, src: { ...p.src, url: "https://media.test/alternate.mkv" } };
+  play(switched, 2400);
+  assert.equal(h.refractWatches.length, 1);
+  const retried = { ...switched, src: { ...switched.src, attempt: 1 } };
+  play(retried, 2500);
+  h.unmount();
+  assert.equal(h.refractWatches.length, 1);
+  assert.equal(h.writes.at(-1)?.[1], 2500000);
+});
+
+test("Refract starts a new viewing on episode changes and a fresh player mount", () => {
+  const h = resumeAutosaveHarness();
+  h.enableRefract(180);
+  const play = (
+    harness: ReturnType<typeof resumeAutosaveHarness>,
+    season: number,
+    episode: number,
+  ) => {
+    const p = playbackParams(season, episode);
+    harness.render(p);
+    harness.render({
+      ...p,
+      snap: { ...p.snap, status: "playing", positionSec: 180, durationSec: 3600 },
+    });
+    harness.clock(180);
+    harness.tick();
+  };
+
+  play(h, 1, 1);
+  play(h, 1, 2);
+  assert.deepEqual(
+    h.refractWatches.map(([event]) => [event.season, event.episode]),
+    [
+      [1, 1],
+      [1, 2],
+    ],
+  );
+  h.unmount();
+  const reopened = resumeAutosaveHarness();
+  reopened.enableRefract(180);
+  play(reopened, 1, 1);
+  assert.equal(reopened.refractWatches.length, 1);
+  assert.equal(reopened.refractWatches[0][0].episode, 1);
+  reopened.unmount();
+});

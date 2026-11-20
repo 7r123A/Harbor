@@ -58,6 +58,26 @@ export function managementFile(game: QuickGame): string | null {
   return /^(?:[a-z]:[\\/]|\/)/i.test(value) && !/[\x00-\x1f]/.test(value) ? value : null;
 }
 
+export function canOpenGameFolder(game: QuickGame): boolean {
+  if (game.source === "steam") return game.install.state !== "missing";
+  if (game.source === "launcher") return game.install.state === "installed";
+  return managementFile(game) !== null;
+}
+
+export async function openGameFolder(game: QuickGame): Promise<void> {
+  if (!canOpenGameFolder(game)) throw Error("game_changed");
+  const command = managementCommand(game, "browse");
+  if (command) {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke(command.command, command.args);
+    return;
+  }
+  const path = managementFile(game);
+  if (!path) throw Error("game_changed");
+  const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+  await revealItemInDir(path);
+}
+
 export function libraryMenuActions(
   game: QuickGame,
   native: boolean,
@@ -68,17 +88,11 @@ export function libraryMenuActions(
     "favorite",
     "pin",
     "details",
+    ...(native && canOpenGameFolder(game) ? ["browse" as const] : []),
     "notes",
   ];
   if (gameVideoSearchUrl(game.name, "gameplay")) main.push("gameplay", "trailer");
   const manage: LibraryAction[] = [];
-  if (
-    native &&
-    ((game.source === "steam" && game.install.state !== "missing") ||
-      (game.source === "launcher" && game.install.state === "installed") ||
-      managementFile(game))
-  )
-    manage.push("browse");
   if (game.source === "custom" || game.source === "shortcut" || (native && game.source === "steam"))
     manage.push("properties");
   if (native && windows && game.source === "custom" && game.ready) manage.push("desktop");

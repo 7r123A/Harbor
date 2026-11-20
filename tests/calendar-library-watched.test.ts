@@ -7,7 +7,13 @@ import test from "node:test";
 import ts from "typescript";
 import { localDateTimeFromIso } from "../src/lib/calendar-time.ts";
 
-type CalendarRow = { id: string; name: string; releaseDate: string };
+type CalendarRow = {
+  id: string;
+  name: string;
+  releaseDate: string;
+  releaseAtMs?: number;
+  releaseTime?: string;
+};
 
 type Api = {
   fetchLibraryCalendar: (
@@ -59,7 +65,14 @@ function load(overrides: Record<string, unknown> = {}): Api {
       aniZipByMal: async () => null,
       pickEpisodeTitle: () => null,
     },
-    "./providers/anime-mapping": { imdbToKitsu: async () => null, tmdbTvToKitsu: async () => null },
+    "./providers/anime-mapping": {
+      imdbToKitsu: async () => null,
+      tmdbTvToKitsu: async () => null,
+      kitsuToAnilist: async () => null,
+    },
+    "./anilist/entry": { anilistAnimeEntry: async () => null },
+    "./anilist/next-airing": { fetchAnilistAiringSchedule: async () => null },
+    "./anime-tracker-entry": { resolveTrackerAnimeEntry: async () => null },
     "./providers/anime-franchise-root": { franchiseRoot: async (id: string) => id },
     "./calendar-time": { localDateTimeFromIso },
     ...overrides,
@@ -206,6 +219,7 @@ test("a catalog row in the same franchise as an anime row is dropped", async () 
     "./providers/anime-mapping": {
       imdbToKitsu: async () => null,
       tmdbTvToKitsu: async (id: number) => (id === 30984 ? 244 : null),
+      kitsuToAnilist: async () => null,
     },
     "./providers/anizip": {
       aniZipByAnilist: async () => null,
@@ -412,4 +426,98 @@ test("library resolution publishes partial rows before the slowest batch finishe
   releaseMovie();
   const final = await pending;
   assert.equal(final.length, 2);
+});
+
+test("library anime dates follow the exact second-season AniList schedule", async () => {
+  // Provider IDs and dates are synthetic fixtures, not live release metadata.
+  const correctAt = Date.parse("2026-11-21T13:30:00.000Z");
+  const api = load({
+    "./providers/anizip": {
+      aniZipByAnilist: async () => null,
+      aniZipByKitsu: async () => null,
+      aniZipByMal: async () => ({
+        titles: { en: "A Wild Last Boss Appeared! Season 2" },
+        episodes: {
+          "9": { seasonNumber: 1, episodeNumber: 9, airDateUtc: "2026-11-28T13:30:00Z" },
+        },
+      }),
+      pickEpisodeTitle: () => null,
+    },
+    "./anilist/entry": { anilistAnimeEntry: async () => ({ id: 990389 }) },
+    "./anilist/next-airing": { fetchAnilistAiringSchedule: async () => ({ 9: correctAt / 1000 }) },
+  });
+  const rows = await api.resolveSavedCalendar(
+    [
+      {
+        id: "mal:990181",
+        type: "series",
+        name: "A Wild Last Boss Appeared! Season 2",
+        mtime: 1,
+        temp: false,
+      },
+    ],
+    2026,
+    10,
+    { tmdbKey: "" },
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, "mal:990181:1:9");
+  assert.equal(rows[0].releaseAtMs, correctAt);
+  assert.equal(rows[0].releaseDate, localDateTimeFromIso(new Date(correctAt).toISOString()).date);
+});
+
+test("catalog anime calendar uses the sequel owner and drops stale parent-season proxy", async () => {
+  const correctAt = Date.parse("2026-11-21T13:30:00.000Z");
+  const api = load({
+    "./providers/tmdb/tmdb-calendar": {
+      tmdbFindByImdb: async () => ({ tvId: 280042, movieId: null }),
+      tmdbTvUpcoming: async () => ({
+        name: "A Wild Last Boss Appeared!",
+        poster: null,
+        isAnime: true,
+        episodes: [
+          {
+            season: 1,
+            number: 21,
+            name: "Old parent alias",
+            airDate: "2026-11-28",
+            image: null,
+            overview: "",
+            voteAverage: 0,
+          },
+          {
+            season: 2,
+            number: 9,
+            name: "Episode 9",
+            airDate: "2026-11-28",
+            image: null,
+            overview: "",
+            voteAverage: 0,
+          },
+        ],
+      }),
+    },
+    "./anime-tracker-entry": {
+      resolveTrackerAnimeEntry: async (_id: string, coords: { season: number }) =>
+        coords.season === 2 ? { id: "anilist:990389", episode: 9 } : null,
+    },
+    "./anilist/next-airing": { fetchAnilistAiringSchedule: async () => ({ 9: correctAt / 1000 }) },
+  });
+  const rows = await api.resolveSavedCalendar(
+    [
+      {
+        id: "tt33258199",
+        type: "series",
+        name: "A Wild Last Boss Appeared!",
+        mtime: 1,
+        temp: false,
+      },
+    ],
+    2026,
+    10,
+    { tmdbKey: "k" },
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].id, "tt33258199:2:9");
+  assert.equal(rows[0].releaseAtMs, correctAt);
 });

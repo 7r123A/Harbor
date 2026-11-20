@@ -1,5 +1,6 @@
 import { HARBOR_API_BASE } from "@/lib/config/endpoints";
 import { safeFetch } from "@/lib/safe-fetch";
+import { persistCritical } from "@/lib/storage-recovery";
 
 const API = `${HARBOR_API_BASE}/themes/api`;
 const ORIGIN = HARBOR_API_BASE;
@@ -186,17 +187,30 @@ let loadedProfile = activeProfileId();
 let session: Session | null = readSession();
 let sessionGeneration = 0;
 
+function persistSession(key: string, next: Session): void {
+  // A full WebView store must not make a successful sign-in disappear on restart.
+  // Recover space from disposable caches before accepting a new credential.
+  try {
+    if (persistCritical(key, JSON.stringify(next))) return;
+  } catch {
+    /* A blocked or unavailable store is also a failed sign-in. */
+  }
+  throw new Error("Could not save your Harbor sign-in on this device. Free some storage and try again.");
+}
+
 function setSession(next: Session | null): void {
+  const key = sessionKey();
+  if (next) persistSession(key, next);
+  else {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      /* Keep the in-memory sign-out even if storage is unavailable. */
+    }
+  }
   if (next?.user.id !== session?.user.id) sessionGeneration += 1;
   session = next;
   loadedProfile = activeProfileId();
-  try {
-    const key = sessionKey();
-    if (next) localStorage.setItem(key, JSON.stringify(next));
-    else localStorage.removeItem(key);
-  } catch {
-    /* ignore */
-  }
   for (const fn of subs) fn();
 }
 
@@ -329,11 +343,13 @@ export async function refreshToken(rejectedToken?: string): Promise<boolean> {
     if (sessionKey() === key) setSession(next);
     else {
       // Rotation consumes the old credential: retain it only in its unchanged origin profile.
-      try {
-        if (next) localStorage.setItem(key, JSON.stringify(next));
-        else localStorage.removeItem(key);
-      } catch {
-        /* Storage may be unavailable. Never write into the active profile instead. */
+      if (next) persistSession(key, next);
+      else {
+        try {
+          localStorage.removeItem(key);
+        } catch {
+          /* Never delete anything in the newly active profile instead. */
+        }
       }
     }
   };

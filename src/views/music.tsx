@@ -45,6 +45,7 @@ import {
   MUSIC_PLAY_EVENT,
   MUSIC_PLAYLIST_EVENT,
   MUSIC_SEARCH_EVENT,
+  MUSIC_VIDEO_EVENT,
   takeMusicExploreRequest,
   takeMusicGenreRequest,
   takeMusicLabelRequest,
@@ -53,6 +54,7 @@ import {
   takeMusicPlayRequest,
   takeMusicPlaylistRequest,
   takeMusicSearchRequest,
+  takeMusicVideoRequest,
 } from "@/lib/music/navigation";
 import { artistNameKey } from "@/lib/music/artist-profile";
 import { displayClusters, identityForRef, resolveArtist } from "@/lib/music/artist-authority";
@@ -70,7 +72,12 @@ import {
 } from "@/components/music/music-tabs";
 import { ScrollRootContext } from "@/components/row";
 import { useT } from "@/lib/i18n";
-import { artistCatalog, localCollection, searchTyped } from "@/lib/music/catalog";
+import {
+  artistCatalog,
+  catalogPlaylistPage,
+  localCollection,
+  searchTyped,
+} from "@/lib/music/catalog";
 import { loadMusicGenre } from "@/lib/music/genre-page";
 import { loadMusicLabel } from "@/lib/music/label-page";
 import {
@@ -99,7 +106,7 @@ import { MusicTrackCollectionPage } from "./music/music-track-collection-page";
 import type { MusicCollectionEntry } from "@/lib/music/library-collections";
 import { gateBand, scrobbleShelf } from "./music/music-band-gates";
 import { tracksOf, type MusicBand, type MusicBandContext } from "./music/music-band-types";
-import { catalogBands } from "./music/music-catalog-bands";
+import { catalogBands, ytMusicBands } from "./music/music-catalog-bands";
 import { splitHomeRows } from "./music/music-home-rows";
 import { madeForYouBand } from "./music/music-made-for-you-band";
 import { jumpBackInBand } from "./music/music-jump-back-in";
@@ -256,11 +263,14 @@ function MusicViewContent({ active }: { active: boolean }) {
   } | null>(null);
   const similarRun = useRef(0);
   const watchFromVideos = useRef(false);
-  const openVideo = (track: MusicTrack, queue: MusicTrack[]) => {
-    watchFromVideos.current = discoveryPage === "videos";
-    if (watchFromVideos.current) setDiscoveryPage(null);
-    setWatch({ track, queue });
-  };
+  const openVideo = useCallback(
+    (track: MusicTrack, queue: MusicTrack[]) => {
+      watchFromVideos.current = discoveryPage === "videos";
+      if (watchFromVideos.current) setDiscoveryPage(null);
+      setWatch({ track, queue });
+    },
+    [discoveryPage],
+  );
   const closeSimilar = useCallback(() => {
     similarRun.current += 1;
     setSimilar(null);
@@ -568,9 +578,15 @@ function MusicViewContent({ active }: { active: boolean }) {
 
   const playTrack = useCallback(
     (track: MusicTrack, queue: MusicTrack[]) => {
+      // A music video plays in the video surface; the source picker is for audio.
+      if (track.mediaKind === "video") {
+        const videos = queue.filter((entry) => entry.mediaKind === "video");
+        openVideo(track, videos.length > 0 ? videos : [track]);
+        return;
+      }
       openSourcePicker(track, queue.length > 0 ? queue : [track]);
     },
-    [openSourcePicker],
+    [openSourcePicker, openVideo],
   );
 
   const openItem = useCallback(
@@ -633,11 +649,11 @@ function MusicViewContent({ active }: { active: boolean }) {
     [loadPendingDetail],
   );
 
-  const loadMoreArtistTracks = useCallback(async () => {
+  const loadMoreTracks = useCallback(async () => {
     const current = detailRef.current;
     if (
       !current ||
-      current.item.kind !== "artist" ||
+      (current.item.kind !== "artist" && current.item.kind !== "playlist") ||
       (current.nextOffset == null && !current.trackCursor) ||
       current.loadingMore
     )
@@ -645,10 +661,13 @@ function MusicViewContent({ active }: { active: boolean }) {
     const generation = resolveGeneration.current;
     setDetail((value) => (value ? { ...value, loadingMore: true, moreError: "" } : value));
     try {
-      const local = current.item.connectorId === "local";
-      const page = local
-        ? await localCollection("tracks", "", current.nextOffset ?? 0, current.item.id)
-        : await artistCatalog(current.item, "tracks", current.trackCursor);
+      const local = current.item.kind === "artist" && current.item.connectorId === "local";
+      const page =
+        current.item.kind === "playlist"
+          ? await catalogPlaylistPage(current.item, current.trackCursor)
+          : local
+            ? await localCollection("tracks", "", current.nextOffset ?? 0, current.item.id)
+            : await artistCatalog(current.item, "tracks", current.trackCursor);
       if (generation !== resolveGeneration.current) return;
       const tracks = page.items.filter(
         (entry): entry is Extract<MusicCatalogItem, { kind: "track" }> => entry.kind === "track",
@@ -925,6 +944,16 @@ function MusicViewContent({ active }: { active: boolean }) {
 
   useEffect(() => {
     const receive = () => {
+      const request = takeMusicVideoRequest();
+      if (request) openVideo(request.track, request.queue);
+    };
+    window.addEventListener(MUSIC_VIDEO_EVENT, receive);
+    receive();
+    return () => window.removeEventListener(MUSIC_VIDEO_EVENT, receive);
+  }, [openVideo]);
+
+  useEffect(() => {
+    const receive = () => {
       const request = takeMusicExploreRequest();
       if (!request) return;
       if (request.kind === "home") {
@@ -1070,8 +1099,23 @@ function MusicViewContent({ active }: { active: boolean }) {
     return () => window.removeEventListener(MUSIC_LABEL_EVENT, receive);
   }, [openLabel]);
 
+  const youtubeRows = useMemo(
+    () => data.homeRows.filter((row) => row.source === "youtube" && row.items.length > 0),
+    [data.homeRows],
+  );
+  const spotifyHomeRows = useMemo(
+    () => data.homeRows.filter((row) => row.source === "spotify" && row.items.length > 0),
+    [data.homeRows],
+  );
   const slots = useMemo(
-    () => splitHomeRows(data.homeRows, connections),
+    () =>
+      splitHomeRows(
+        // Provider rows render in their own sections, so they do not also fill the generic
+        // new-releases / charts / extras slots (Spotify's "top tracks" used to fall through a
+        // chart-shaped id and end up in the page's extras tail).
+        data.homeRows.filter((row) => row.source !== "youtube" && row.source !== "spotify"),
+        connections,
+      ),
     [data.homeRows, connections],
   );
 
@@ -1145,7 +1189,7 @@ function MusicViewContent({ active }: { active: boolean }) {
   };
 
   const personal = personalBands(context);
-  const spotifyRows = spotifyBands(context);
+  const spotifyRows = spotifyBands(context, spotifyHomeRows);
   const catalog = catalogBands(context);
   const bands: MusicBand[] = [];
   // Sits between the hero's source options and Jump back in, so pinned
@@ -1206,6 +1250,9 @@ function MusicViewContent({ active }: { active: boolean }) {
   });
   const newReleaseCtas = newReleaseCtaBand(context);
   if (newReleaseCtas) bands.push(newReleaseCtas);
+  // YouTube Music's own shelves sit together above the video discovery instead of in the
+  // page's extras tail, where they were buried behind every Harbor row.
+  bands.push(...ytMusicBands(context, youtubeRows));
   bands.push({
     key: "music:videos",
     title: t("music.now.videos"),
@@ -1360,12 +1407,12 @@ function MusicViewContent({ active }: { active: boolean }) {
                   setVideoQuery(`${track.artist} ${track.title}`);
                   openDiscovery("videos");
                 }}
-                onLoadMore={loadMoreArtistTracks}
+                onLoadMore={loadMoreTracks}
                 onLoadMoreReleases={loadMoreArtistReleases}
                 detail={detail}
                 onBack={closeDetail}
                 onPlay={(track, queue) => {
-                  registerMusicCatalogOrigin(detail.item, queue);
+                  if (track.mediaKind !== "video") registerMusicCatalogOrigin(detail.item, queue);
                   playTrack(track, queue);
                 }}
                 onOpen={openItem}

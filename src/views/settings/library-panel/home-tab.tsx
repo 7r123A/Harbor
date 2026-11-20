@@ -27,6 +27,7 @@ import { CwSnapshotShowcase } from "../cw-snapshot-showcase";
 import { PreviewImage } from "../preview-image";
 import { HeroShadowPreview } from "./hero-shadow-preview";
 import { CwEndPreview } from "./cw-end-preview";
+import { AnimeIdentityStatus } from "./anime-identity-status";
 
 export function HomeTab() {
   const { settings, update } = useSettings();
@@ -412,6 +413,46 @@ export function HomeTab() {
           onChange={(v) => update({ cwPreferEpisodeStill: v })}
         />
         <ClearSnapshotsButton />
+      </Section>
+
+      <Section
+        title={t("Anime identity (experimental)")}
+        subtitle={t(
+          "Download a local anime mapping database so Continue Watching can group parts of the same show and write progress to the correct tracker entry. Off by default.",
+        )}
+      >
+        <ToggleRow
+          label={t("Use the local anime identity database")}
+          newId="home:anime-identity"
+          sub={t(
+            "Downloads about six megabytes once a week and keeps a small local database. Without it, the app behaves exactly as before.",
+          )}
+          value={settings.animeIdentityEnabled}
+          onChange={(v) => update({ animeIdentityEnabled: v })}
+        />
+        {settings.animeIdentityEnabled && (
+          <ToggleRow
+            label={t("Repair verified anime Continue Watching identities")}
+            newId="home:anime-identity-repair"
+            sub={t(
+              "Opt in to a display-only correction when a saved native stream or exact catalog episode proof and the local database establish one anime owner. Saved progress stays intact; external tracker, next-up and ambiguous cards are untouched.",
+            )}
+            value={settings.animeIdentityRepairEnabled}
+            onChange={(v) => update({ animeIdentityRepairEnabled: v })}
+          />
+        )}
+        {settings.animeIdentityEnabled && (
+          <ToggleRow
+            label={t("Use the anime database for live scrobbling")}
+            newId="home:anime-identity-live-scrobble"
+            sub={t(
+              "Resolve an anime episode once as playback starts and use its verified owner for AniList, MAL, Simkl, Trakt and PublicMetaDB. Does not backfill history or synchronize accounts. Off by default.",
+            )}
+            value={settings.animeIdentityLiveScrobbleEnabled}
+            onChange={(v) => update({ animeIdentityLiveScrobbleEnabled: v })}
+          />
+        )}
+        <AnimeIdentityStatus enabled={settings.animeIdentityEnabled} />
       </Section>
     </>
   );

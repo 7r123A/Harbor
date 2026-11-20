@@ -9,6 +9,20 @@ export type AnimeTitleCheckpoint = {
 
 const MAX = 2000;
 const cache = new Map<string, Set<string>>();
+let generation = 0;
+
+/**
+ * A title lookup captures this before awaiting. Clearing the cache advances it,
+ * so a result that started under the previous owner is never remembered.
+ */
+export function animeTitleKeysGeneration(): number {
+  return generation;
+}
+
+export function clearAnimeTitleKeys(): void {
+  cache.clear();
+  generation += 1;
+}
 
 function cacheKey(id: string, checkpoint?: AnimeTitleCheckpoint): string {
   return [

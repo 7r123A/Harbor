@@ -32,6 +32,11 @@ export function browseConnector(connector: string): Promise<MusicCatalogRow[]> {
   return invoke<MusicCatalogRow[]>("music_browse_connector", { connector });
 }
 
+/** Grouped rows for a source's own library surface (for example YouTube Music's saved items). */
+export function loadConnectorLibrary(connector: string): Promise<MusicCatalogRow[]> {
+  return invoke<MusicCatalogRow[]>("music_library_rows", { connector });
+}
+
 export function albumTracks(album: MusicAlbumRef): Promise<MusicTrack[]> {
   return invoke<MusicTrack[]>("music_album_tracks", { album });
 }
@@ -55,6 +60,17 @@ export function artistCatalog(
 
 export function catalogPlaylistTracks(playlist: MusicPlaylistRef): Promise<MusicTrack[]> {
   return invoke<MusicTrack[]>("music_catalog_playlist_tracks", { playlist });
+}
+
+/** One page of a catalog playlist; pass the last page's `nextCursor` to continue. */
+export function catalogPlaylistPage(
+  playlist: MusicPlaylistRef,
+  cursor?: string | null,
+): Promise<MusicCatalogPage> {
+  return invoke<MusicCatalogPage>("music_catalog_playlist_page", {
+    playlist,
+    cursor: cursor ?? null,
+  });
 }
 
 export function stationTracks(station: MusicStationRef): Promise<MusicTrack[]> {

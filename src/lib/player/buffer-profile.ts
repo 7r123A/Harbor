@@ -158,6 +158,23 @@ export function bufferMpvLines(id: BufferSizeId, totalPhysBytes?: number): strin
   ];
 }
 
+/**
+ * A manual buffer profile deliberately waits for `cache-pause-initial` seconds
+ * of cache before the first frame. A P2P stream already ramps up behind the
+ * local engine, so that gate only adds to time-to-first-frame: drop it there.
+ */
+export function withoutInitialBufferGate(options: string): string {
+  return [
+    ...options
+      .split("\n")
+      .filter((line) => !/^\s*(?:--)?(?:cache-pause-initial|cache-pause-wait)\s*=/.test(line)),
+    "cache-pause-initial=no",
+    "cache-pause-wait=1",
+  ]
+    .filter((line) => line.trim())
+    .join("\n");
+}
+
 export type StoredBufferChoice = {
   mpvBufferSize?: BufferSizeId;
   mpvBufferBoost?: boolean;

@@ -1,3 +1,4 @@
+import { PlayedLastBadge } from "./played-last-badge";
 import { ChevronDown, Download, ExternalLink, Loader2, Zap } from "lucide-react";
 import { Play } from "@/components/icons/play-filled";
 import { useEffect, useMemo, useState } from "react";
@@ -31,6 +32,7 @@ export function SourceDrawer({
   addonCount,
   usedAddons,
   streams,
+  lastPlayedStream,
   debrids,
   getAddonLogo,
   matchFor,
@@ -46,6 +48,7 @@ export function SourceDrawer({
   addonCount: number;
   usedAddons: Array<{ id: string; name: string; logo: string | null }>;
   streams: ScoredStream[];
+  lastPlayedStream?: ScoredStream | null;
   debrids: ReturnType<typeof useDebridClients>;
   getAddonLogo: (addonId: string) => string | null;
   matchFor?: (s: ScoredStream) => "same" | "close" | null;
@@ -131,6 +134,7 @@ export function SourceDrawer({
             <SourceRow
               key={`${s.addonId}-${s.infoHash ?? s.url ?? i}`}
               stream={s}
+              playedLast={s === lastPlayedStream}
               debrids={debrids}
               addonLogo={getAddonLogo(s.addonId)}
               match={matchFor ? matchFor(s) : null}
@@ -179,6 +183,7 @@ function SourceRow({
   debrids,
   addonLogo,
   match,
+  playedLast,
   onPlay,
   resolving,
   divider,
@@ -189,6 +194,7 @@ function SourceRow({
   stream: ScoredStream;
   debrids: ReturnType<typeof useDebridClients>;
   addonLogo: string | null;
+  playedLast: boolean;
   match: "same" | "close" | null;
   onPlay: () => void;
   resolving: boolean;
@@ -225,9 +231,10 @@ function SourceRow({
       <button
         onClick={onPlay}
         disabled={resolving}
-        className="group flex w-full items-start gap-4 px-5 py-4 text-start transition-colors hover:bg-ink/5 disabled:cursor-wait disabled:opacity-60"
+        className={`group flex w-full items-start gap-4 px-5 py-4 text-start transition-colors hover:bg-ink/5 disabled:cursor-wait disabled:opacity-60 ${playedLast ? "bg-accent/10 ring-1 ring-inset ring-accent/70" : ""}`}
       >
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          {playedLast && <PlayedLastBadge />}
           <div className="flex min-w-0 items-center gap-2">
             <p className="min-w-0 truncate font-mono text-[14px] text-ink">{title}</p>
             <EditionChip stream={stream} />

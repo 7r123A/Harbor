@@ -223,6 +223,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(sourceId ? readProfileSession(sourceId) : null);
   }, [sourceId]);
 
+  // commitSession/signOut can change the Stremio account without a profile
+  // event. The owner key reads the session for this exact source profile, so the
+  // stored write must land before subscribers recompute it.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("harbor:stremio-account-changed"));
+  }, [session, sourceId]);
+
   const commitSession = useCallback(
     (fresh: Session) => {
       const prevSession = activeProfile ? readProfileSession(activeProfile.id) : null;

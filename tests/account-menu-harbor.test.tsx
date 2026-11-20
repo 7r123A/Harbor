@@ -83,6 +83,12 @@ async function fixture(harborSignedIn = false, stremioSignedIn = false, kid = fa
     "react-dom": ReactDOM,
     "lucide-react": icons,
     "@/lib/config/endpoints": { HARBOR_API_BASE: "https://fixture.invalid" },
+    "@/lib/storage-recovery": {
+      persistCritical: (key: string, value: string) => {
+        localStorage.setItem(key, value);
+        return true;
+      },
+    },
     "@/lib/safe-fetch": {
       safeFetch: async (url: string, options: RequestInit) => {
         if (url.endsWith("/auth/logout") && options.method === "POST") {

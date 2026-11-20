@@ -82,10 +82,10 @@ export async function gqlAbout(
 export async function gqlSources(client: SuwayomiClient): Promise<SuwayomiSource[]> {
   const data = await gql(
     client,
-    `query { sources { nodes { id name lang iconUrl supportsLatest isNsfw isLocal } } }`,
+    `query { sources { nodes { id name lang iconUrl supportsLatest isNsfw } } }`,
   );
   const nodes = data?.sources?.nodes;
-  if (!Array.isArray(nodes)) return [];
+  if (!Array.isArray(nodes)) throw new Error("suwayomi_graphql_sources_unavailable");
   return nodes
     .filter((s: any) => s?.id != null)
     .map((s: any) => ({
@@ -100,7 +100,7 @@ export async function gqlSources(client: SuwayomiClient): Promise<SuwayomiSource
           : undefined,
       supportsLatest: !!s.supportsLatest,
       isNsfw: !!s.isNsfw,
-      isLocal: !!s.isLocal,
+      isLocal: String(s.id) === "0" || String(s.lang ?? "").toLowerCase() === "localsourcelang",
     }));
 }
 

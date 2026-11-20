@@ -101,39 +101,47 @@ async function armFromKitsu(kitsuId: number): Promise<ArmKitsuEntry | null> {
 }
 
 const EXT_KITSU_KEY = "harbor.extkitsucache.v2";
-const inflightExt = new Map<string, Promise<number | null>>();
+const inflightExt = new Map<string, Promise<ExtLookup>>();
 const extKitsuCache = mappingStore<{ kitsu: number | null; t: number }>(EXT_KITSU_KEY);
+
+type ExtLookup = { value: number | null; unavailable: boolean };
 
 export async function externalToKitsu(
   source: string,
   id: number,
   maxAge?: number,
+  strict = false,
 ): Promise<number | null> {
   await extKitsuCache.ready;
   const key = `${source}:${id}`;
   const hit = extKitsuCache.get(key);
   const ttl = hit?.kitsu == null ? ARM_NEG_TTL_MS : ARM_TTL_MS;
   if (hit && Date.now() - hit.t < Math.min(ttl, maxAge ?? ttl)) return hit.kitsu;
-  const existing = inflightExt.get(key);
-  if (existing) return existing;
-  const p = (async () => {
-    try {
-      const r = await fetch(`${ARM}?source=${source}&id=${id}`, {
-        signal: AbortSignal.timeout(8_000),
-      });
-      if (!r.ok) return null;
-      const j = (await r.json()) as { kitsu?: number };
-      const kitsu = typeof j?.kitsu === "number" ? j.kitsu : null;
-      extKitsuCache.set(key, { kitsu, t: Date.now() });
-      return kitsu;
-    } catch {
-      return null;
-    } finally {
-      inflightExt.delete(key);
-    }
-  })();
-  inflightExt.set(key, p);
-  return p;
+  // The shared request carries the raw outcome, never one caller's policy.
+  let lookup = inflightExt.get(key);
+  if (!lookup) {
+    lookup = (async (): Promise<ExtLookup> => {
+      try {
+        const r = await fetch(`${ARM}?source=${source}&id=${id}`, {
+          signal: AbortSignal.timeout(8_000),
+        });
+        if (r.status === 404) return { value: null, unavailable: false };
+        if (!r.ok) return { value: null, unavailable: true };
+        const j = (await r.json()) as { kitsu?: number };
+        const kitsu = typeof j?.kitsu === "number" ? j.kitsu : null;
+        extKitsuCache.set(key, { kitsu, t: Date.now() });
+        return { value: kitsu, unavailable: false };
+      } catch {
+        return { value: null, unavailable: true };
+      } finally {
+        inflightExt.delete(key);
+      }
+    })();
+    inflightExt.set(key, lookup);
+  }
+  const result = await lookup;
+  if (result.unavailable && strict) throw new Error("anime mapping unavailable");
+  return result.value;
 }
 
 let xmlInflight: Promise<AnidbMapCache> | null = null;
@@ -275,8 +283,11 @@ type AniZipField =
 async function validatedKitsuAniZip(
   kitsuId: number,
   maxAge?: number,
+  strict = false,
 ): Promise<AniZipMapping | null> {
-  const mapping = await aniZipByKitsu(kitsuId, false, maxAge).catch(() => null);
+  const mapping = strict
+    ? await aniZipByKitsu(kitsuId, false, maxAge, true)
+    : await aniZipByKitsu(kitsuId, false, maxAge).catch(() => null);
   if (mapping?.mappings?.kitsu_id != null && mapping.mappings.kitsu_id !== kitsuId) return null;
   return mapping;
 }
@@ -312,14 +323,21 @@ function mergeAniZipMappings(primary: AniZipMapping, alternate: AniZipMapping): 
 async function alternateKitsuAniZip(
   kitsuId: number,
   maxAge?: number,
+  strict = false,
 ): Promise<AniZipMapping | null> {
-  const ids = await kitsuExternalIds(kitsuId, maxAge).catch(() => null);
+  const ids = strict
+    ? await kitsuExternalIds(kitsuId, maxAge, true)
+    : await kitsuExternalIds(kitsuId, maxAge).catch(() => null);
   if (!ids) return null;
   const alternate =
     ids.anilist != null
-      ? await aniZipByAnilist(ids.anilist, maxAge).catch(() => null)
+      ? strict
+        ? await aniZipByAnilist(ids.anilist, maxAge, true)
+        : await aniZipByAnilist(ids.anilist, maxAge).catch(() => null)
       : ids.mal != null
-        ? await aniZipByMal(ids.mal, maxAge).catch(() => null)
+        ? strict
+          ? await aniZipByMal(ids.mal, maxAge, true)
+          : await aniZipByMal(ids.mal, maxAge).catch(() => null)
         : null;
   const mapping = alternate?.mappings;
   if (
@@ -395,25 +413,38 @@ export async function kitsuToAnidb(kitsuId: number, maxAge?: number): Promise<nu
   return (await animeMappingByKitsu(kitsuId, ["anidb_id"], maxAge))?.mappings?.anidb_id ?? null;
 }
 
-export async function kitsuToAnilist(kitsuId: number, maxAge?: number): Promise<number | null> {
+export async function kitsuToAnilist(
+  kitsuId: number,
+  maxAge?: number,
+  strict = false,
+): Promise<number | null> {
   const arm = await armFromKitsu(kitsuId);
   if (arm?.anilist != null) return arm.anilist;
-  const az = await validatedKitsuAniZip(kitsuId, maxAge);
-  return az?.mappings?.anilist_id ?? (await kitsuExternalIds(kitsuId, maxAge))?.anilist ?? null;
+  const az = await validatedKitsuAniZip(kitsuId, maxAge, strict);
+  if (az?.mappings?.anilist_id != null) return az.mappings.anilist_id;
+  const external = strict
+    ? await kitsuExternalIds(kitsuId, maxAge, true)
+    : await kitsuExternalIds(kitsuId, maxAge).catch(() => null);
+  return external?.anilist ?? null;
 }
 
+/**
+ * `strict` is for callers that cannot treat an unavailable provider as "this
+ * anime has no mapping" — CW advancement removes a card on that answer.
+ */
 export async function animeMappingByKitsu(
   kitsuId: number,
   required: readonly AniZipField[] = [],
   maxAge?: number,
+  strict = false,
 ): Promise<AniZipMapping | null> {
-  const primary = await validatedKitsuAniZip(kitsuId, maxAge);
+  const primary = await validatedKitsuAniZip(kitsuId, maxAge, strict);
   if (
     primary &&
     (required.length === 0 ? hasAniZipEnrichment(primary) : hasAniZipFields(primary, required))
   )
     return primary;
-  const alternate = await alternateKitsuAniZip(kitsuId, maxAge);
+  const alternate = await alternateKitsuAniZip(kitsuId, maxAge, strict);
   if (!alternate) return primary;
   return primary ? mergeAniZipMappings(primary, alternate) : alternate;
 }
@@ -627,9 +658,11 @@ async function nativeKitsuFromAniZip(az: AniZipMapping | null): Promise<number |
   return null;
 }
 
-export async function imdbToKitsu(imdbId: string): Promise<number | null> {
+export async function imdbToKitsu(imdbId: string, strict = false): Promise<number | null> {
   if (!imdbId.startsWith("tt")) return null;
-  const az = await aniZipByImdb(imdbId, true).catch(() => null);
+  const az = strict
+    ? await aniZipByImdb(imdbId, true, undefined, true)
+    : await aniZipByImdb(imdbId, true).catch(() => null);
   if (typeof az?.mappings?.kitsu_id === "number") {
     return preferMainTv(az.mappings.kitsu_id, (az.mappings as { type?: string }).type);
   }
@@ -657,8 +690,10 @@ export async function imdbToKitsu(imdbId: string): Promise<number | null> {
   return preferFirstCour(fallback, { imdb_id: imdbId });
 }
 
-export async function tmdbTvToKitsu(tmdbId: number): Promise<number | null> {
-  const az = await aniZipByTmdbTv(tmdbId, true).catch(() => null);
+export async function tmdbTvToKitsu(tmdbId: number, strict = false): Promise<number | null> {
+  const az = strict
+    ? await aniZipByTmdbTv(tmdbId, true, undefined, true)
+    : await aniZipByTmdbTv(tmdbId, true).catch(() => null);
   if (typeof az?.mappings?.kitsu_id === "number") {
     return preferMainTv(az.mappings.kitsu_id, (az.mappings as { type?: string }).type);
   }

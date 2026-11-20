@@ -36,6 +36,7 @@ const api = (invoke) =>
 test("video pages retain more than twelve exact videos and follow cursors without repeating requests", async () => {
   const calls = [];
   const pages = api(async (command, args) => {
+    if (command === "music_video_titles") return {};
     calls.push({ command, args });
     return {
       tracks: Array.from({ length: 24 }, (_, i) => track(String(i).padStart(11, "x"), `Song ${i}`)),
@@ -74,7 +75,8 @@ test("failed video pages can be retried and repeated cursors end pagination", as
 });
 test("artist identity filters apply on every video page without hiding the provider continuation", async () => {
   const calls = [];
-  const pages = api(async (_command, args) => {
+  const pages = api(async (command, args) => {
+    if (command === "music_video_titles") return {};
     calls.push(args);
     return {
       tracks: [
@@ -96,4 +98,19 @@ test("artist identity filters apply on every video page without hiding the provi
     ["Nas"],
   );
   assert.equal(calls.length, 2);
+});
+test("the first videos page is ranked so the official song leads", async () => {
+  const pages = api(async () => ({
+    tracks: [
+      { ...track("aaaaaaaaaaa", "LE SSERAFIM - Smart || English Cover by SERRI"), artist: "Serri" },
+      { ...track("bbbbbbbbbbb", "Smart (Slowed + Reverb ver.)"), artist: "LE SSERAFIM" },
+      { ...track("ccccccccccc", "Smart"), artist: "LE SSERAFIM" },
+    ],
+    next: null,
+  }));
+  const page = await pages.searchMusicVideoPage("LE SSERAFIM Smart", false);
+  assert.deepEqual(
+    page.tracks.map((entry) => entry.title),
+    ["Smart", "LE SSERAFIM - Smart || English Cover by SERRI", "Smart (Slowed + Reverb ver.)"],
+  );
 });

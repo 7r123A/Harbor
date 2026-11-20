@@ -358,3 +358,26 @@ test("exact TVDB stills replace broken addon URLs while keeping playback identit
   assert.equal(rows[0].imdbEpisode, 1);
   assert.equal(rows[1].thumbnail, "broken-2.jpg", "future episodes retain their existing fallback");
 });
+
+test("manual season selection uses the sequel when the root also supplies the same episode", () => {
+  const root = row({ ...pool[0], id: 900, airdate: day(2) }, "kitsu:13209");
+  states[1] = ordering;
+  call = 0;
+  const result = useAnimeTvdbPanel(
+    13209,
+    "tt7441658",
+    [root],
+    "default",
+    "",
+    true,
+    [root, ...pool],
+    undefined,
+    "2",
+    franchise,
+    "kitsu:13209",
+  );
+  const episode = result.panel!.visibleEpisodes[0];
+  assert.equal(episode.sourceMetaId, "kitsu:50024");
+  assert.equal(episode.id, pool[0].id);
+  assert.equal(episode.airdate, day(-1));
+});

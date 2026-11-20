@@ -7,6 +7,7 @@ import type { AddonOrigin, Meta } from "./cinemeta";
 import { fetchManifestAt, filterEnabled, loadInstalled } from "./addon-store";
 import { isNuvioProviderActive } from "@/lib/active-profile-id";
 import { resolveEffectiveStremioAuthKey } from "@/lib/auth";
+import { readSettingsMirror } from "@/lib/metadata-policy";
 
 const STREMIO_API = "https://api.strem.io/api";
 const MAX_ROWS = 24;
@@ -165,23 +166,91 @@ export async function userAddons(authKey: string): Promise<Addon[]> {
   return result?.addons ?? [];
 }
 
-export async function setUserAddons(authKey: string, addons: Addon[]): Promise<boolean> {
-  const result = await call<{ success?: boolean }>("addonCollectionSet", {
+// Home, the anime page, detail, meta lookups and the play picker each read the
+// account's addon list as they mount, so one navigation used to pay several
+// identical POSTs to api.strem.io before any catalog or stream request could
+// start. Read-only callers share one short-lived result instead. Read-modify-write
+// paths keep calling userAddons so they never write back a stale list.
+const USER_ADDONS_TTL_MS = 60 * 1000;
+const userAddonsMemo = new Map<string, { at: number; list: Addon[] }>();
+const userAddonsInflight = new Map<string, Promise<Addon[]>>();
+let userAddonsGeneration = 0;
+// Reads that settle while a write is pending may return the list from before it,
+// so none are remembered until every pending write has finished.
+let userAddonsWrites = 0;
+
+export function invalidateUserAddons(): void {
+  userAddonsGeneration += 1;
+  userAddonsMemo.clear();
+  userAddonsInflight.clear();
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("harbor:addons-changed", invalidateUserAddons);
+}
+
+export function cachedUserAddons(authKey: string): Promise<Addon[]> {
+  const hit = userAddonsMemo.get(authKey);
+  if (hit && Date.now() - hit.at < USER_ADDONS_TTL_MS) return Promise.resolve(hit.list.slice());
+  const pending = userAddonsInflight.get(authKey);
+  if (pending) return pending.then((list) => list.slice());
+  const generation = userAddonsGeneration;
+  const request = call<{ addons: Addon[] }>("addonCollectionGet", {
     authKey,
     type: "user",
-    addons: addons.map((a) => {
-      const raw = a as Record<string, unknown>;
-      return {
-        transportUrl: a.transportUrl,
-        transportName: typeof raw.transportName === "string" ? raw.transportName : "",
-        manifest: a.manifest,
-        flags: (raw.flags as { official?: boolean; protected?: boolean } | undefined) ?? {
-          official: false,
-          protected: false,
-        },
-      };
+    update: false,
+  })
+    .then((result) => {
+      const list = result?.addons ?? [];
+      // A failed call is not remembered, and a write that landed while this
+      // read was in flight makes its result stale.
+      if (
+        result &&
+        Array.isArray(result.addons) &&
+        generation === userAddonsGeneration &&
+        userAddonsWrites === 0
+      ) {
+        userAddonsMemo.set(authKey, { at: Date.now(), list });
+      }
+      return list;
+    })
+    .finally(() => {
+      if (userAddonsInflight.get(authKey) === request) userAddonsInflight.delete(authKey);
+    });
+  userAddonsInflight.set(authKey, request);
+  return request.then((list) => list.slice());
+}
+
+async function writeUserAddons<T>(write: () => Promise<T>): Promise<T> {
+  userAddonsWrites += 1;
+  invalidateUserAddons();
+  try {
+    return await write();
+  } finally {
+    userAddonsWrites -= 1;
+    invalidateUserAddons();
+  }
+}
+
+export async function setUserAddons(authKey: string, addons: Addon[]): Promise<boolean> {
+  const result = await writeUserAddons(() =>
+    call<{ success?: boolean }>("addonCollectionSet", {
+      authKey,
+      type: "user",
+      addons: addons.map((a) => {
+        const raw = a as Record<string, unknown>;
+        return {
+          transportUrl: a.transportUrl,
+          transportName: typeof raw.transportName === "string" ? raw.transportName : "",
+          manifest: a.manifest,
+          flags: (raw.flags as { official?: boolean; protected?: boolean } | undefined) ?? {
+            official: false,
+            protected: false,
+          },
+        };
+      }),
     }),
-  });
+  );
   return result != null;
 }
 
@@ -197,11 +266,13 @@ export async function getUserAddonsRaw(authKey: string): Promise<Addon[] | null>
 
 export async function setUserAddonsRaw(authKey: string, addons: Addon[]): Promise<boolean> {
   if (addons.length === 0) return false;
-  const result = await call<{ success?: boolean }>("addonCollectionSet", {
-    authKey,
-    type: "user",
-    addons,
-  });
+  const result = await writeUserAddons(() =>
+    call<{ success?: boolean }>("addonCollectionSet", {
+      authKey,
+      type: "user",
+      addons,
+    }),
+  );
   return result != null;
 }
 
@@ -223,9 +294,7 @@ export function normalizeName(name: string, type: string): string {
 // they actually picked, so the app matches web and honours their choice.
 function addonAcceptLanguage(): string | null {
   try {
-    const raw =
-      typeof localStorage !== "undefined" ? localStorage.getItem("harbor.settings") : null;
-    const s = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    const s = readSettingsMirror() ?? {};
     const region = String(s.region ?? "US")
       .trim()
       .toUpperCase();
@@ -255,6 +324,40 @@ async function fetchWithTimeout(url: string, timeoutMs = 8000): Promise<Response
     return null;
   } finally {
     clearTimeout(t);
+  }
+}
+
+// A catalog row holds a catalog lane until it settles, so the body is read under
+// the same deadline as the request: a response that stalls mid-body fails the row
+// instead of holding the lane. `acceptLanguage` is the one the row's cache key was
+// built with, so a queued refresh never stores another language under that key.
+// Resolves undefined on any failure.
+async function fetchJsonWithTimeout(
+  url: string,
+  timeoutMs: number,
+  acceptLanguage: string | null,
+): Promise<unknown> {
+  const ac = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => {
+      ac.abort();
+      resolve(undefined);
+    }, timeoutMs);
+  });
+  const read = (async (): Promise<unknown> => {
+    allowDirectHost(url);
+    const res = await fetch(url, {
+      signal: ac.signal,
+      headers: acceptLanguage ? { "Accept-Language": acceptLanguage } : undefined,
+    });
+    if (!res.ok) return undefined;
+    return (await res.json()) as unknown;
+  })().catch(() => undefined);
+  try {
+    return await Promise.race([read, deadline]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -326,37 +429,63 @@ export function withDebridKeys(addons: Addon[], keys: DebridKeySet): Addon[] {
   });
 }
 
+// Most installed addons are stream-only, so they carry no catalogs and every
+// gatherCatalogAddons call (home, anime, detail, search, library) re-fetched each
+// of their manifests. Only this read-only merge shares the result for a while;
+// install, configure and refresh flows keep calling fetchManifestAt directly.
+const MANIFEST_TTL_MS = 10 * 60 * 1000;
+const manifestMemo = new Map<string, { at: number; manifest: Addon["manifest"] }>();
+let manifestGeneration = 0;
+
+if (typeof window !== "undefined") {
+  window.addEventListener("harbor:addons-changed", () => {
+    manifestGeneration += 1;
+    manifestMemo.clear();
+  });
+}
+
+async function cachedManifest(transportUrl: string): Promise<Addon["manifest"]> {
+  const hit = manifestMemo.get(transportUrl);
+  if (hit && Date.now() - hit.at < MANIFEST_TTL_MS) return hit.manifest;
+  const generation = manifestGeneration;
+  const manifest = await fetchManifestAt(transportUrl);
+  // An addon change that landed while this fetch was pending makes its result stale.
+  if (generation === manifestGeneration) {
+    manifestMemo.set(transportUrl, { at: Date.now(), manifest });
+  }
+  return manifest;
+}
+
 export async function gatherCatalogAddons(authKey: string | null): Promise<Addon[]> {
   const isNuvio = isNuvioProviderActive();
   let nuvioAddonMode = "separate";
   try {
-    const raw =
-      typeof localStorage !== "undefined"
-        ? localStorage.getItem("harbor.settings") || localStorage.getItem("harbor.settings.shared")
-        : null;
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed.nuvioAddonMode) nuvioAddonMode = parsed.nuvioAddonMode;
-    }
+    // An empty `harbor.settings` string falls through to the shared mirror, as before.
+    const parsed = localStorage.getItem("harbor.settings")
+      ? readSettingsMirror("harbor.settings")
+      : readSettingsMirror("harbor.settings.shared");
+    if (parsed?.nuvioAddonMode) nuvioAddonMode = parsed.nuvioAddonMode as string;
   } catch {}
 
   const shouldStremio = !isNuvio || nuvioAddonMode === "combined";
-  let nuvioRaw: Addon[] = [];
-  if (isNuvio || nuvioAddonMode === "combined") {
+  const loadNuvio = async (): Promise<Addon[]> => {
+    if (!isNuvio && nuvioAddonMode !== "combined") return [];
     try {
       const { isNuvioSignedIn: checkSignedIn } = await import("@/lib/nuvio/nuvio-client");
       const { fetchNuvioAddons: getNuvioAddons } = await import("@/lib/nuvio/nuvio-sync");
-      if (checkSignedIn()) {
-        nuvioRaw = await getNuvioAddons().catch(() => [] as Addon[]);
-      }
+      if (checkSignedIn()) return await getNuvioAddons().catch(() => [] as Addon[]);
     } catch {}
-  }
+    return [];
+  };
 
   const effectiveAuthKey = resolveEffectiveStremioAuthKey(authKey);
-  const stremioRaw =
+  // The two account lists are independent, so neither waits for the other.
+  const [nuvioRaw, stremioRaw] = await Promise.all([
+    loadNuvio(),
     shouldStremio && effectiveAuthKey
-      ? await userAddons(effectiveAuthKey).catch(() => [] as Addon[])
-      : [];
+      ? cachedUserAddons(effectiveAuthKey).catch(() => [] as Addon[])
+      : Promise.resolve([] as Addon[]),
+  ]);
   const stremio = filterEnabled(stremioRaw);
   const nuvio = filterEnabled(nuvioRaw);
   const seen = new Set([...stremio, ...nuvio].map((a) => a.transportUrl));
@@ -365,7 +494,7 @@ export async function gatherCatalogAddons(authKey: string | null): Promise<Addon
     localOnly.map(async (l): Promise<Addon | null> => {
       if (l.manifest?.catalogs?.length)
         return { manifest: l.manifest, transportUrl: l.transportUrl };
-      const manifest = await fetchManifestAt(l.transportUrl).catch(() => l.manifest ?? null);
+      const manifest = await cachedManifest(l.transportUrl).catch(() => l.manifest ?? null);
       return manifest ? { manifest, transportUrl: l.transportUrl } : null;
     }),
   );
@@ -409,23 +538,26 @@ export function fetchCatalogRow(
   addon: Addon,
   cat: CatalogDef,
 ): Promise<CatalogLoad<AddonRow | null>> {
-  return cachedCatalogRow(`${addon.transportUrl}|${cat.type}|${cat.id}`, () =>
-    loadCatalogRow(addon, cat),
+  // Region-gated addons answer per Accept-Language, so a region or language
+  // change must not be served the rows cached for the previous one.
+  const lang = addonAcceptLanguage();
+  return cachedCatalogRow(`${addon.transportUrl}|${cat.type}|${cat.id}|${lang ?? ""}`, () =>
+    loadCatalogRow(addon, cat, lang),
   );
 }
 
 async function loadCatalogRow(
   addon: Addon,
   cat: CatalogDef,
+  acceptLanguage: string | null,
 ): Promise<CatalogLoad<AddonRow | null>> {
   const base = addonBaseUrl(addon.transportUrl);
   const url = catalogRequestUrl(base, cat);
   if (!url) return { value: null, ok: true };
-  const res = await fetchWithTimeout(url);
-  if (!res || !res.ok) return { value: null, ok: false };
+  const json = await fetchJsonWithTimeout(url, 8000, acceptLanguage);
+  if (json === undefined) return { value: null, ok: false };
   try {
-    const json = await res.json();
-    const raw: Meta[] = json.metas ?? [];
+    const raw: Meta[] = (json as { metas?: Meta[] }).metas ?? [];
     if (raw.length === 0) return { value: null, ok: true };
     const origin = {
       id: addon.manifest.id,

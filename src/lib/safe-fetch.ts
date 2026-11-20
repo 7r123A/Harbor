@@ -76,6 +76,8 @@ const PROXY_HOSTS = new Set([
   "openlibrary.org",
   "covers.openlibrary.org",
   "graphql.anilist.co",
+  "graphql.imdb.com",
+  "api.graphql.imdb.com",
   "www.googleapis.com",
   "www.wikidata.org",
   "api.deepseek.com",
@@ -113,6 +115,8 @@ const DEV_PROXY_HOSTS = new Set([
   "partner.steamgames.com",
   "help.steampowered.com",
   "graphql.anilist.co",
+  "graphql.imdb.com",
+  "api.graphql.imdb.com",
   "openlibrary.org",
   "covers.openlibrary.org",
   "www.googleapis.com",
@@ -168,8 +172,14 @@ function rewriteForWeb(url: string, init?: RequestInit): { url: string; init?: R
     PROXY_HOSTS.has(parsed.hostname) || PROXY_SUFFIXES.some((s) => parsed.hostname.endsWith(s));
   if (!proxiable) return { url, init };
   const localDev = /^(?:localhost|127\.0\.0\.1)$/i.test(window.location.hostname);
-  if (!webProxyAvailable() && !(localDev && DEV_PROXY_HOSTS.has(parsed.hostname)))
-    return { url, init };
+  const isHarborStremio = /(^|\.)harborstremio\.com$/i.test(window.location.hostname);
+  const isImdbGraphql =
+    parsed.hostname === "api.graphql.imdb.com" || parsed.hostname === "graphql.imdb.com";
+  const proxyAllowed =
+    webProxyAvailable() ||
+    (localDev && DEV_PROXY_HOSTS.has(parsed.hostname)) ||
+    (isHarborStremio && isImdbGraphql);
+  if (!proxyAllowed) return { url, init };
 
   const proxied = `/api-proxy/${parsed.hostname}${parsed.pathname}${parsed.search}`;
   if (!init?.headers) return { url: proxied, init };
@@ -221,6 +231,7 @@ async function invokeHarborFetch(
   timeoutMs = 30000,
   maxResponseBytes?: number,
   allowLocalNetwork = false,
+  allowImageChallenge = false,
 ): Promise<HarborFetchResponse> {
   countCrossing("harborFetch", input);
   const headers: Record<string, string> = {};
@@ -282,6 +293,7 @@ async function invokeHarborFetch(
       credentialHandle,
       publicNetworkOnly,
       allowLocalNetwork,
+      allowImageChallenge,
       followRedirects:
         init?.redirect === "manual" || init?.redirect === "error" ? false : undefined,
     },
@@ -305,6 +317,7 @@ async function tauriHarborFetch(
   timeoutMs = 30000,
   maxResponseBytes?: number,
   allowLocalNetwork = false,
+  allowImageChallenge = false,
 ): Promise<Response> {
   const resp = await invokeHarborFetch(
     input,
@@ -313,6 +326,7 @@ async function tauriHarborFetch(
     timeoutMs,
     maxResponseBytes,
     allowLocalNetwork,
+    allowImageChallenge,
   );
   const responseHeaders = new Headers(
     resp.headers ?? (resp.contentType ? { "content-type": resp.contentType } : {}),
@@ -619,6 +633,7 @@ export function safeFetchBytes(
   timeoutMs = 30000,
   maxResponseBytes?: number,
   allowLocalNetwork = false,
+  allowImageChallenge = false,
 ): Promise<Response> {
   const target = typeof input === "string" ? input : input instanceof URL ? input.href : null;
   const policyHeaders = new Headers(init?.headers as HeadersInit | undefined);
@@ -648,8 +663,8 @@ export function safeFetchBytes(
     return Promise.reject(new TrackerBlockedError(new URL(target).hostname));
   }
   return withDeadline(
-    tauriHarborFetch(target, init, "base64", timeoutMs, maxResponseBytes, allowLocalNetwork),
+    tauriHarborFetch(target, cleanInit, "base64", timeoutMs, maxResponseBytes, allowLocalNetwork, allowImageChallenge),
     init?.signal,
-    timeoutMs + 5_000,
+    timeoutMs + (allowImageChallenge ? 110_000 : 5_000),
   );
 }

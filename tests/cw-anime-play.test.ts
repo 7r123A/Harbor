@@ -352,5 +352,8 @@ test("the continue card resolves the anime identity before playing", () => {
   const src = readFileSync("src/components/continue-card.tsx", "utf8");
   assert.match(src, /import \{ resolveCwAnimePlayEpisode \} from "@\/lib\/cw-anime-play";/);
   assert.match(src, /const animePlay = await resolveCwAnimePlayEpisode\(\{/);
-  assert.match(src, /if \(animePlay\) return animePlay;/);
+  assert.match(src, /if \(animePlay\) \{/);
+  assert.match(src, /return animePlay;/);
+  assert.match(src, /sourceMetaId: item\._id,/);
+  assert.match(src, /kitsuStreamId: item\.cwRepairNativeStreamId,/);
 });

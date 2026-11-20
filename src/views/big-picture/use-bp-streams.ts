@@ -198,9 +198,8 @@ export function useBpStreams(params: { meta: Meta; episode?: PlayEpisode }): BpS
   // The remembered pick and the season lock are what "don't ask me again" means.
   // Neither was read back here, so both settings silently did nothing.
   const previousPlayback = useMemo(
-    () =>
-      settings.rememberLastStream ? readPlayback(meta.id, episode?.season, episode?.episode) : null,
-    [meta.id, episode?.season, episode?.episode, settings.rememberLastStream],
+    () => readPlayback(meta.id, episode?.season, episode?.episode),
+    [meta.id, episode?.season, episode?.episode],
   );
 
   const sourceEntry = useMemo(

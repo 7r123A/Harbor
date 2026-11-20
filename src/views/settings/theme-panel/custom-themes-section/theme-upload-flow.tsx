@@ -22,7 +22,7 @@ import { useT } from "@/lib/i18n";
 import { getActiveModal, isBackKey, isEditable } from "@/lib/keyboard-navigation/geometry";
 import { exportThemeJson, getCustomThemes, type CustomTheme } from "@/lib/custom-themes";
 import { currentAuthor, subscribeAuthor, type Author } from "@/lib/theme-auth";
-import { recordUpload, uploadTheme } from "@/lib/theme-store";
+import { recordUpload, THEME_SUBMISSION_SCREENSHOT_LIMIT, uploadTheme } from "@/lib/theme-store";
 import { optimizeBackgroundForShare } from "../image-utils";
 import { CheatSheet } from "../theme-studio/cheat-sheet";
 import { AuthorAccountPanel } from "./author-account-panel";
@@ -104,14 +104,17 @@ export function ThemeUploadFlow({ onClose }: { onClose: () => void }) {
     input.accept = "image/*";
     input.multiple = true;
     input.onchange = async () => {
-      const files = Array.from(input.files || []).slice(0, 6 - shots.length);
+      const files = Array.from(input.files || []).slice(
+        0,
+        THEME_SUBMISSION_SCREENSHOT_LIMIT - shots.length,
+      );
       const added = await Promise.all(
         files.map(async (f) => {
           const blob = await scaleToBlob(f);
           return { blob, url: URL.createObjectURL(blob) };
         }),
       );
-      setShots((s) => [...s, ...added].slice(0, 6));
+      setShots((s) => [...s, ...added].slice(0, THEME_SUBMISSION_SCREENSHOT_LIMIT));
     };
     input.click();
   };
@@ -419,9 +422,9 @@ function ShotsStep({
   return (
     <div className="flex flex-col gap-4">
       <p className="max-w-[66ch] text-[15.5px] leading-[22px] text-ink-muted">
-        {t(
-          "Add up to 6 screenshots so people can see your theme in action. Optional, but they sell it.",
-        )}
+        {t("Add up to {n} screenshots to show your theme in action. Screenshots are optional.", {
+          n: THEME_SUBMISSION_SCREENSHOT_LIMIT,
+        })}
       </p>
       <div className="grid gap-3 sm:grid-cols-2">
         {shots.map((s, i) => (
@@ -439,7 +442,7 @@ function ShotsStep({
             </button>
           </div>
         ))}
-        {shots.length < 6 && (
+        {shots.length < THEME_SUBMISSION_SCREENSHOT_LIMIT && (
           <button
             onClick={onAdd}
             className="flex aspect-video flex-col items-center justify-center gap-1.5 rounded-md border border-dashed border-edge bg-surface text-ink-subtle transition-colors hover:border-accent hover:text-ink"

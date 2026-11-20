@@ -32,6 +32,34 @@ test("playback retry chooses a different available excerpt near the playhead", (
   const narrow = rankDialogueScenes(cues, 280, 3600, 45, [{ start: 253, end: 299 }]);
   assert.equal(selectPlaybackRetryScene(narrow, 280, 253), undefined);
 });
+
+test("Moonshine can retry using a different fully buffered scene BEHIND playback", () => {
+  const cues = Array.from({ length: 120 }, (_, i) =>
+    cue(190 + i * 1.5, 191 + i * 1.5, `Dialogue behind ${i}`),
+  );
+  const focus = 330;
+  const scenes = rankDialogueScenes(cues, focus, 3600, 45, [{ start: 240, end: 330 }]);
+  assert.ok(scenes.length > 0);
+  const failed = scenes[0];
+  assert.ok(failed.endSec <= focus, "initial excerpt is behind the playhead");
+  const retry = selectPlaybackRetryScene(scenes, focus, failed.startSec);
+  assert.ok(retry, "a different excerpt in the buffered range must be eligible");
+  assert.ok(retry.endSec <= focus, "retry must not require future unbuffered audio");
+  assert.ok(
+    Math.abs(retry.startSec - failed.startSec) >= 22.5,
+    "retry must contain at least half a new 45-second excerpt",
+  );
+  assert.ok(retry.startSec >= 240 && retry.endSec <= 330);
+});
+
+test("Moonshine does not retry with effectively the same audio or an unbuffered scene", () => {
+  const cues = Array.from({ length: 80 }, (_, i) => cue(200 + i * 2, 201 + i * 2, `Dialogue ${i}`));
+  const focus = 310;
+  const scenes = rankDialogueScenes(cues, focus, 3600, 45, [{ start: 250, end: 300 }]);
+  assert.ok(scenes.length > 0);
+  assert.equal(selectPlaybackRetryScene(scenes, focus, scenes[0].startSec), undefined);
+  assert.equal(selectPlaybackRetryScene([], focus, scenes[0].startSec), undefined);
+});
 const michaelLike = [
   cue(353.84, 354.98, "Like this, alright?"),
   cue(355.5, 356.1, "Come on."),

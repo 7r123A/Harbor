@@ -21,6 +21,8 @@ export type MusicTrack = {
     artwork?: string;
   };
   mediaKind?: "audio" | "video";
+  /** A queued song in video mode: its video has to be found, its own id is only the audio. */
+  videoSearch?: boolean;
   connectorId?: string;
   sourceId?: string;
   playbackUrl?: string;

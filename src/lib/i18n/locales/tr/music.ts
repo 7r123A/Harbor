@@ -613,6 +613,9 @@ const music: Record<string, string> = {
   "music.search.recent": "Son aramalar",
   "music.search.historyEmpty": "Son aramalarınız burada görünecek.",
   "music.search.removeRecent": "{title} öğesini son aramalardan kaldır",
+  "music.audio.videoQuality": "Default video quality",
+  "music.audio.videoQualityHint":
+    "Used for music videos. A quality you pick while watching lasts until the next song.",
 };
 
 export default music;

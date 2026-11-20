@@ -47,6 +47,7 @@ import { CinematicOverlay } from "@/chrome/cinematic-overlay";
 import { Topbar, TogetherButton } from "@/chrome/topbar";
 import { TabHotkeys } from "@/chrome/tab-hotkeys";
 import { startMaintenance, subscribeMemoryPressure } from "@/lib/maintenance";
+import { startupMarkOnce } from "@/lib/startup-trace";
 import { MiddleClickScroll } from "@/lib/use-middle-click-scroll";
 import { exitWindowFullscreenOnPlayerClose, toggleWindowFullscreen } from "@/lib/fullscreen-state";
 import { flushCloudSync } from "@/views/player/hooks/use-stremio-sync";
@@ -153,9 +154,11 @@ import { MangaFavoritesProvider } from "@/lib/manga-favorites";
 import { LocalWatchlistProvider } from "@/lib/local-watchlist";
 import { useSettings } from "@/lib/settings";
 import { mountHarborCursor } from "@/lib/harbor-cursor";
+import { ensureIdentityPack, installIdentityDebug, setIdentityFlags } from "@/lib/identity";
 import {
   flushPendingTorrentRemovals,
   reconcilePendingTorrentRemovals,
+  reconcilePrewarmTorrents,
   torrentEngineSetOptions,
 } from "@/lib/torrent/local-engine";
 import { findHotkeyMatch, shouldHandleGlobalKeyboardEvent } from "@/lib/hotkeys";
@@ -616,6 +619,7 @@ export function App({ onReady }: { onReady?: () => void }) {
                                                       </AfterFirstPaint>
                                                       <AfterFirstPaint>
                                                         <MediaServerSyncRunner />
+                                                        <IdentityStartupRunner />
                                                         <NuvioMutationRetryRunner />
                                                         <AutoDownloadRunner />
                                                         <RemindersRunner />
@@ -712,6 +716,29 @@ function RatingsSyncRunner() {
 
 function ActivitySyncRunner() {
   useActivitySync();
+  return null;
+}
+
+const IDENTITY_SYNC_FIRST_MS = 4000;
+const IDENTITY_SYNC_EVERY_MS = 6 * 60 * 60 * 1000;
+
+function IdentityStartupRunner() {
+  const { settings } = useSettings();
+  const enabled = settings.animeIdentityEnabled;
+  useEffect(() => {
+    setIdentityFlags({ pack: enabled, cards: enabled });
+    if (import.meta.env.DEV) installIdentityDebug();
+    if (!enabled) return;
+    const run = () => {
+      void ensureIdentityPack(false).catch(() => {});
+    };
+    const first = window.setTimeout(run, IDENTITY_SYNC_FIRST_MS);
+    const every = window.setInterval(run, IDENTITY_SYNC_EVERY_MS);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(every);
+    };
+  }, [enabled]);
   return null;
 }
 
@@ -959,6 +986,7 @@ function parseDeepLinkEpisode(videoId?: string): { season: number; episode: numb
 
 function RevealOnMount({ onReady }: { onReady?: () => void }) {
   useEffect(() => {
+    startupMarkOnce("shell.committed");
     onReady?.();
   }, [onReady]);
   return null;
@@ -1018,6 +1046,9 @@ function Shell({ onReady }: { onReady?: () => void }) {
   const activeProfileForMusic = activeProfile?.id ?? null;
   const kid = activeProfile?.kid ?? null;
   const preview = useThemePreview();
+  useEffect(() => {
+    startupMarkOnce("shell.committed");
+  }, []);
   useEffect(() => {
     void ensureCuratedLogos();
     const id = window.setTimeout(() => {
@@ -1361,6 +1392,7 @@ function Shell({ onReady }: { onReady?: () => void }) {
   useEffect(() => {
     if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
     void reconcilePendingTorrentRemovals();
+    void reconcilePrewarmTorrents();
   }, []);
 
   useEffect(() => {

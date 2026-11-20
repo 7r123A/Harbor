@@ -4,6 +4,7 @@ import { albumTracks, artistTop, catalogPlaylistTracks, stationTracks } from "@/
 import { useT } from "@/lib/i18n";
 import type { MusicCatalogItem, MusicTrack } from "@/lib/music/types";
 import { registerMusicCatalogOrigin, registerMusicQueueOrigin } from "@/lib/music/playback-origin";
+import { requestMusicVideo } from "@/lib/music/navigation";
 
 let latestRequest = 0;
 
@@ -50,6 +51,12 @@ export function useMusicCatalogPlayback() {
         return;
       }
       const queue = tracks.length ? tracks : [track];
+      // A music video belongs in the video surface, not the audio source picker.
+      if (track.mediaKind === "video") {
+        const videos = queue.filter((entry) => entry.mediaKind === "video");
+        requestMusicVideo(track, videos.length > 0 ? videos : [track]);
+        return;
+      }
       if (item.kind === "track" && rowId === "spotify:home:saved-tracks") {
         registerMusicQueueOrigin(queue, {
           kind: "spotify",

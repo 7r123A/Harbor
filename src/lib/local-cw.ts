@@ -245,12 +245,57 @@ export function listLocalCw(
   return entries.sort((a, b) => b.t - a.t);
 }
 
+/**
+ * Read-only view for the active shared scope: a card can exist in the shared
+ * store and in the active profile's private store (the split that hid
+ * private-only cards). Keep the newest checkpoint per content id.
+ *
+ * A private-only scope keeps the existing private behavior so a shared profile
+ * can never read another profile's data.
+ */
+export function listLocalCwMerged(
+  privateOnly = !!privateCwProfileId(),
+  ownerId?: string,
+): LocalCwEntry[] {
+  if (privateOnly) return listLocalCw(true, ownerId);
+  const merged = new Map<string, LocalCwEntry>();
+  for (const key of [storeKey(false, ownerId), storeKey(true, ownerId)]) {
+    for (const entry of Object.values(readAll(key))) {
+      if (!entry?.id) continue;
+      const held = merged.get(entry.id);
+      if (!held || entry.t > held.t) merged.set(entry.id, entry);
+    }
+  }
+  const isNuvio = isNuvioMode() || (ownerId != null && ownerId.startsWith("nuvio-"));
+  const entries = [...merged.values()];
+  if (!isNuvio) {
+    return entries
+      .filter((e) => !(e.id && (e as any).external === "nuvio"))
+      .sort((a, b) => b.t - a.t);
+  }
+  return entries.sort((a, b) => b.t - a.t);
+}
+
 export function localCwEntry(
   id: string,
   privateOnly = !!privateCwProfileId(),
   ownerId?: string,
 ): LocalCwEntry | null {
   return readAll(storeKey(privateOnly, ownerId))[id] ?? null;
+}
+
+/** Newest checkpoint for an id across the shared and private local stores. */
+export function localCwEntryMerged(
+  id: string,
+  privateOnly = !!privateCwProfileId(),
+  ownerId?: string,
+): LocalCwEntry | null {
+  const shared = readAll(storeKey(false, ownerId))[id];
+  if (privateOnly) return localCwEntry(id, true, ownerId);
+  const priv = readAll(storeKey(true, ownerId))[id];
+  if (!shared) return priv ?? null;
+  if (!priv) return shared;
+  return priv.t >= shared.t ? priv : shared;
 }
 
 export function clearLocalCw(

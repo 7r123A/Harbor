@@ -35,7 +35,7 @@ test("the same title from two sources keeps one card", () => {
 });
 
 test("a franchise suffix does not count as a different title", () => {
-  const out = dedupeCwItems([item("tt1", "Michael"), item("tt2", "Michael Season 2")], 16);
+  const out = dedupeCwItems([item("tt1", "Michael"), item("tmdb:1", "Michael Season 2")], 16);
   assert.equal(out.length, 1);
 });
 
@@ -55,44 +55,50 @@ test("a stale earlier episode is replaced by the current verified copy", () => {
   assert.ok(out[0].altIds?.includes("tt1"), "verified copies keep each other's ids");
 });
 
-test("a title-only duplicate is shown but owns no other show's progress", () => {
-  // Two different shows that share a title (The Office US/UK). One card is fine;
-  // a dismissal of it must not clear the other show's saved position.
+test("two shows with the same name keep a card each", () => {
+  // The Office US/UK: distinct IMDb titles are distinct shows.
   const us = series("tt0386676", "The Office", 2, 1, 100);
   const uk = series("tt0290978", "The Office", 3, 7, 100);
   const out = dedupeCwItems([us, uk], 16);
+
   assert.deepEqual(
     out.map((i) => i._id),
-    ["tt0290978"],
-    "the further episode is still the one shown",
+    ["tt0386676", "tt0290978"],
   );
-  assert.equal(out[0].cwMembers, undefined, "no dismissal ownership across a title match");
-  assert.equal(out[0].altIds, undefined, "no verified alias across a title match");
+  for (const card of out) {
+    assert.equal(card.cwMembers, undefined, "no dismissal ownership from a shared title");
+    assert.equal(card.altIds, undefined, "no verified alias from a shared title");
+  }
+
+  const usCopy = { ...series("tmdb:tv:38", "The Office US", 2, 2, 100), altIds: ["tt0386676"] };
+  const ukCopy = { ...series("tmdb:tv:29", "The Office UK", 3, 8, 100), altIds: ["tt0290978"] };
+  const again = dedupeCwItems([us, uk, usCopy, ukCopy], 16);
+
+  assert.equal(again.length, 2, "each copy joins its own show");
+  assert.deepEqual(
+    again.map((card) => card.cwMembers?.map((item) => item._id).sort()),
+    [
+      ["tmdb:tv:38", "tt0386676"],
+      ["tmdb:tv:29", "tt0290978"],
+    ],
+  );
 });
 
 test("an id seen only on a collapsed duplicate still finds the card", () => {
   const first = series("tt1", "Show", 2, 1, 100);
-  const duplicate = series("tt2", "Show Season 2", 3, 7, 100);
-  const hiddenTwin = { ...series("tt3", "Unrelated Stored Name", 3, 7, 100), altIds: ["tt2"] };
+  const duplicate = series("tmdb:2", "Show Season 2", 3, 7, 100);
+  const hiddenTwin = {
+    ...series("tt3", "Unrelated Stored Name", 3, 7, 100),
+    altIds: ["tmdb:2"],
+  };
   const out = dedupeCwItems([first, duplicate, hiddenTwin], 16);
   assert.equal(out.length, 1, "the twin of the collapsed copy joins the same card");
   assert.deepEqual(
     out[0].cwMembers?.map((i) => i._id),
-    ["tt2", "tt3"],
+    ["tmdb:2", "tt3"],
     "only the copies that share an id with the shown card are owned",
   );
   assert.ok(!out[0].cwMembers?.some((i) => i._id === "tt1"));
-});
-
-test("same episode keeps the copy with further progress", () => {
-  const out = dedupeCwItems(
-    [series("tt1", "Show", 1, 2, 100), series("tt2", "Show", 1, 2, 400)],
-    16,
-  );
-  assert.deepEqual(
-    out.map((i) => i._id),
-    ["tt2"],
-  );
 });
 
 test("a series row and an anime row with the same title collapse", () => {
@@ -241,12 +247,12 @@ test("the same show from two seasons collapses to the later episode", () => {
 
 test("the same episode keeps the copy with further progress", () => {
   const out = dedupeCwItems(
-    [series("tt1", "Show", 1, 2, 100), series("tt2", "Show", 1, 2, 400)],
+    [series("tt1", "Show", 1, 2, 100), series("tmdb:2", "Show", 1, 2, 400)],
     16,
   );
   assert.deepEqual(
     out.map((i) => i._id),
-    ["tt2"],
+    ["tmdb:2"],
   );
 });
 
@@ -255,13 +261,13 @@ test("a current copy arriving after the limit still replaces a stale duplicate",
     [
       series("tt1", "Show", 1, 1, 0),
       item("tt2", "Other", "series"),
-      series("tt3", "Show", 1, 5, 0),
+      series("tmdb:3", "Show", 1, 5, 0),
     ],
     2,
   );
   assert.deepEqual(
     out.map((i) => i._id),
-    ["tt3", "tt2"],
+    ["tmdb:3", "tt2"],
   );
 });
 
@@ -282,24 +288,23 @@ test("a verified merge indexes title aliases without granting ownership", () => 
   const show = (id: string, name: string, episode: number, extra: Record<string, unknown> = {}) =>
     ({ ...series(id, name, 1, episode, 100), ...extra }) as LibraryItem;
 
-  const a = show("ttA", "Alias Show", 1, { altIds: ["ttB"] });
-  const b = show("ttB", "Alias Show: The Sequel", 2);
-  const c = show("ttC", "Alias Show: The Sequel", 1, { altIds: ["tmdb:tv:77"] });
+  const a = show("tt9001", "Alias Show", 1, { altIds: ["tt9002"] });
+  const b = show("tt9002", "Alias Show: The Sequel", 2);
+  const c = show("tmdb:tv:9003", "Alias Show: The Sequel", 1);
 
   const out = dedupeCwItems([a, b, c], 16);
 
   assert.equal(out.length, 1);
-  assert.equal(out[0]._id, "ttB");
-  assert.deepEqual(out[0].cwMembers?.map((item) => item._id).sort(), ["ttA", "ttB"]);
-  assert.ok(!out[0].cwMembers?.some((item) => item._id === "ttC"));
-  assert.deepEqual(out[0].altIds, ["ttA"], "only the verified copy's id is an alias");
-  assert.ok(!out[0].altIds?.includes("ttC"));
-  assert.ok(!out[0].altIds?.includes("tmdb:tv:77"));
+  assert.equal(out[0]._id, "tt9002");
+  assert.deepEqual(out[0].cwMembers?.map((item) => item._id).sort(), ["tt9001", "tt9002"]);
+  assert.ok(!out[0].cwMembers?.some((item) => item._id === "tmdb:tv:9003"));
+  assert.deepEqual(out[0].altIds, ["tt9001"], "only the verified copy's id is an alias");
+  assert.ok(!out[0].altIds?.includes("tmdb:tv:9003"));
   assert.equal(out[0].state?.episode, 2, "the further verified copy is displayed");
 
-  const d = show("ttD", "Alias Show: The Sequel", 1);
+  const d = show("tmdb:tv:9004", "Alias Show: The Sequel", 1);
   const again = dedupeCwItems([a, b, c, d], 16);
   assert.equal(again.length, 1);
-  assert.deepEqual(again[0].cwMembers?.map((item) => item._id).sort(), ["ttA", "ttB"]);
-  assert.deepEqual(again[0].altIds, ["ttA"]);
+  assert.deepEqual(again[0].cwMembers?.map((item) => item._id).sort(), ["tt9001", "tt9002"]);
+  assert.deepEqual(again[0].altIds, ["tt9001"]);
 });

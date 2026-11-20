@@ -75,7 +75,8 @@ export async function fetchAniListAiringCalendar(
   const cacheKey = `anilist-airing:${year}-${month}`;
   return withCalendarCache(cacheKey, async () => {
     const { fetchAniListAiringCalendar } = await import("./anilist/airing");
-    return fetchAniListAiringCalendar(year, month).catch(() => []);
+    // Do not turn AniList errors into a successful empty month and cache it.
+    return fetchAniListAiringCalendar(year, month);
   });
 }
 

@@ -1,5 +1,16 @@
 import type { SubSearchQuery } from "./types";
 
+export function subtitleSearchLabel(target: {
+  title: string;
+  year?: string;
+  season?: number;
+  episode?: number;
+}): string {
+  const name = target.year ? `${target.title} (${target.year})` : target.title;
+  if (target.season == null || target.episode == null) return name;
+  return `${name} S${String(target.season).padStart(2, "0")}E${String(target.episode).padStart(2, "0")}`;
+}
+
 /** An absolute anime episode is still a series episode, even without a season. */
 export function normalizeSubtitleSearchQuery(query: SubSearchQuery): SubSearchQuery {
   return query.episode != null ? { ...query, type: "series" } : query;

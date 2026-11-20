@@ -48,8 +48,17 @@ export type LibraryItem = {
   providerPlaybackIds?: Partial<Record<"trakt" | "simkl" | "publicmetadb", string>>;
   /** Original source checkpoints represented by a verified anime CW group. */
   cwMembers?: LibraryItem[];
+  /** Display-only native correction: resume/sync still use the original source id. */
+  cwRepairSourceId?: string;
+  /** Verified exact native stream for offline picker/tracker resolution. */
+  cwRepairNativeStreamId?: string;
   isAnime?: boolean;
   upNext?: boolean;
+  /** A verified caught-up card: show it neutrally without a countdown. */
+  caughtUp?: boolean;
+  /** Provisional, verified provider episode coordinates for CW card presentation only.
+   * Never use this for playback progress, ownership, or provider dismissal. */
+  cwVerifiedProviderMapping?: { imdbSeason: number; imdbEpisode: number };
   waitingForAir?: boolean;
   nextAirDate?: string;
   local?: boolean;
@@ -80,22 +89,75 @@ export function episodeFromVideoId(
   return { season, episode };
 }
 
+/**
+ * The episode a Continue Watching card actually represents. Complete state
+ * coordinates win, including season zero for Specials. An exact local source
+ * checkpoint can prove a merged library's 0:0 is only a watched-sync placeholder.
+ * Native anime stream ids are entry-relative, never a season; nothing is
+ * invented when coordinates are incomplete or malformed.
+ */
+export function resolvedEpisodeCoords(
+  item: Pick<LibraryItem, "_id" | "state"> &
+    Partial<Pick<LibraryItem, "removed" | "temp" | "cwMembers">>,
+): { season: number; episode: number } | null {
+  const season = item.state?.season;
+  const episode = item.state?.episode;
+  const videoId = item.state?.video_id ?? "";
+  if (
+    typeof season === "number" &&
+    typeof episode === "number" &&
+    Number.isInteger(season) &&
+    Number.isInteger(episode) &&
+    season >= 0 &&
+    episode >= 0
+  ) {
+    // Watched sync can leave a removed temp record at 0:0 while its own saved
+    // playback video still identifies an episode. This is not a Season 0
+    // special: only replace the double-zero placeholder when the video id
+    // belongs to this exact record and names a real episode.
+    if (season === 0 && episode === 0) {
+      const encoded = episodeFromVideoId(videoId);
+      if (
+        encoded &&
+        encoded.episode > 0 &&
+        videoId === `${item._id}:${encoded.season}:${encoded.episode}`
+      ) {
+        if (item.removed === true && item.temp === true) return encoded;
+        // An ordinary library row can keep 0:0 after Stremio marks an episode
+        // watched, even though the same merged CW card retains its actual local
+        // S3E1 checkpoint. Trust this only with independent local evidence;
+        // the video id alone must never turn a genuine S0 special into S3.
+        if (
+          encoded.season >= 1 &&
+          item.cwMembers?.some((member) =>
+            member.local === true &&
+            member._id === item._id &&
+            member.state?.video_id === videoId &&
+            member.state.season === encoded.season &&
+            member.state.episode === encoded.episode &&
+            (member.state.timeOffset ?? 0) > 0
+          )
+        ) return encoded;
+      }
+    }
+    return { season, episode };
+  }
+  const native = /^(?:kitsu|mal|anilist|anidb):\d+:(\d+)$/.exec(videoId);
+  if (native) {
+    const number = Number(native[1]);
+    return number > 0 ? { season: 1, episode: number } : null;
+  }
+  return episodeFromVideoId(videoId);
+}
+
 function resumeForItem(i: LibraryItem): { ms: number; t: number } | null {
-  const vid = i.state?.video_id ?? "";
-  const kitsuThreeSeg = /^(kitsu|mal|anilist|anidb):/.test(i._id) && vid.split(":").length === 3;
-  const se = kitsuThreeSeg ? null : episodeFromVideoId(i.state?.video_id);
-  const season = i.state?.season ?? (kitsuThreeSeg ? 1 : se?.season);
-  const episode = i.state?.episode ?? (kitsuThreeSeg ? Number(vid.split(":")[2]) : se?.episode);
-  return readResumeEntry(i._id, season, episode);
+  const coords = resolvedEpisodeCoords(i);
+  return readResumeEntry(i._id, coords?.season, coords?.episode);
 }
 
 export function resumeSourceForItem(i: LibraryItem): ExternalCwSource | undefined {
-  const vid = i.state?.video_id ?? "";
-  const kitsuThreeSeg = /^(kitsu|mal|anilist|anidb):/.test(i._id) && vid.split(":").length === 3;
-  const se = kitsuThreeSeg ? null : episodeFromVideoId(i.state?.video_id);
-  const season = i.state?.season ?? (kitsuThreeSeg ? 1 : se?.season);
-  const episode = i.state?.episode ?? (kitsuThreeSeg ? Number(vid.split(":")[2]) : se?.episode);
-  return readResumeSource(i._id, season, episode);
+  const coords = resolvedEpisodeCoords(i);
+  return readResumeSource(i._id, coords?.season, coords?.episode);
 }
 
 // True only when CW eligibility comes from the harbor.resume fallback (no cloud
@@ -128,10 +190,27 @@ export function cwSortKey(i: LibraryItem): number {
   return best;
 }
 
+/**
+ * A completed removed/temp series is still a source for episode advancement
+ * and resurfacing, but its already-watched checkpoint must not flash as an
+ * active CW card while the next episode is unresolved.
+ */
+export function isCwDisplayReady(i: LibraryItem): boolean {
+  if (i.type !== "series" || !i.removed || !i.temp || i.upNext || i.waitingForAir || i.caughtUp) {
+    return true;
+  }
+  const state = i.state;
+  if (!state) return true;
+  const duration = state.duration ?? 0;
+  const completedByRatio = duration > 0 && (state.timeOffset ?? 0) / duration >= CW_FINISHED_RATIO;
+  return (state.flaggedWatched ?? 0) <= 0 && !completedByRatio;
+}
+
 export function isCwMember(i: LibraryItem): boolean {
   if (i.removed && !i.temp) return false;
   if (i.upNext) return true;
   if (i.waitingForAir) return true;
+  if (i.caughtUp) return true;
   // A removed item survives only as a temp progress record. Without playback
   // progress or a resume entry there is nothing to continue, and the placeholder
   // `season: 0 / episode: 0` state written by watched sync must not become a card.

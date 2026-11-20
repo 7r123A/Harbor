@@ -87,3 +87,84 @@ test("private profiles never use another profile's cloud resume", async () => {
   assert.equal((await h.run()).ms, 300000);
   assert.equal(h.reads, 0);
 });
+
+test("slow cloud lookup stays shared across TTL expiry and remains fresh after completion", async () => {
+  let at = 0;
+  let reads = 0;
+  let finish!: (value: any) => void;
+  const pending = new Promise((resolve) => {
+    finish = resolve;
+  });
+  const h = hookHarness(
+    "src/lib/player/resume-start.ts",
+    "resolveStartMs",
+    {
+      "@/lib/resume": { readResumeEntry: () => null, saveResumeBatch() {} },
+      "@/lib/cw-profile": { privateCwProfileId: () => null },
+      "@/lib/stremio": {
+        libraryGetOne: () => {
+          reads++;
+          return pending;
+        },
+        episodeFromVideoId: () => ({ season: 1, episode: 1 }),
+      },
+    },
+    {
+      Date: class extends Date {
+        static now() {
+          return at;
+        }
+      },
+    },
+  );
+  const first = h.render(args);
+  at = 31_000;
+  const second = h.render(args);
+  assert.equal(reads, 1);
+  finish({ state: { season: 1, episode: 1, timeOffset: 600000, duration: 1800000 } });
+  assert.equal((await first).ms, 600000);
+  assert.equal((await second).ms, 600000);
+  at = 40_000;
+  assert.equal((await h.render(args)).ms, 600000);
+  assert.equal(reads, 1);
+  at = 62_000;
+  await h.render(args);
+  assert.equal(reads, 2);
+});
+
+test("local progress bounds the cloud wait without late writes changing playback", async () => {
+  let expire!: () => void;
+  let finish!: (value: any) => void;
+  let writes = 0;
+  const pending = new Promise((resolve) => {
+    finish = resolve;
+  });
+  const h = hookHarness(
+    "src/lib/player/resume-start.ts",
+    "resolveStartMs",
+    {
+      "@/lib/resume": {
+        readResumeEntry: () => ({ ms: 300000, t: 1000 }),
+        saveResumeBatch: () => {
+          writes++;
+        },
+      },
+      "@/lib/cw-profile": { privateCwProfileId: () => null },
+      "@/lib/stremio": { libraryGetOne: () => pending, episodeFromVideoId: () => null },
+    },
+    {
+      setTimeout: (callback: () => void, ms: number) => {
+        assert.equal(ms, 500);
+        expire = callback;
+        return 1;
+      },
+      clearTimeout() {},
+    },
+  );
+  const result = h.render(args);
+  expire();
+  assert.deepEqual(await result, { ms: 300000, fromRemote: false, finished: false });
+  finish({ state: { timeOffset: 600000, season: 1, episode: 1 } });
+  await Promise.resolve();
+  assert.equal(writes, 0);
+});

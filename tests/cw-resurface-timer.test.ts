@@ -9,9 +9,11 @@ function harness(
   opts: {
     nextEp?: { season: number; episode: number; airDate?: string } | null;
     relatedIds?: (id: string) => string[];
+    owner?: string;
   } = {},
 ) {
   const relatedCalls: string[] = [];
+  const state = { adjacentCalls: 0 };
   const data = new Map<string, string>();
   const storage = {
     getItem: (k: string) => data.get(k) ?? null,
@@ -44,12 +46,15 @@ function harness(
         }
         if (name.endsWith("/series-episodes")) {
           return {
-            fetchAdjacentEpisodes: async () => ({
-              next:
-                opts.nextEp !== undefined
-                  ? opts.nextEp
-                  : { season: 1, episode: 5, airDate: "2099-01-01" },
-            }),
+            fetchAdjacentEpisodes: async () => {
+              state.adjacentCalls++;
+              return {
+                next:
+                  opts.nextEp !== undefined
+                    ? opts.nextEp
+                    : { season: 1, episode: 5, airDate: "2099-01-01" },
+              };
+            },
             fetchEpisodeList: async () => [],
             nextUnwatchedAfter: () => null,
           };
@@ -65,8 +70,8 @@ function harness(
         if (name.endsWith("/cw-dismiss")) {
           return { isCwDismissed: () => false };
         }
-        if (name.endsWith("/cw-profile")) {
-          return { privateCwProfileId: () => "profile-1" };
+        if (name.endsWith("/cw-derived-caches")) {
+          return { cwCacheOwnerKey: () => opts.owner ?? "profile-1" };
         }
         if (name.endsWith("/cw-dedupe")) return cwDedupe;
         return {};
@@ -77,7 +82,13 @@ function harness(
     );
     return exports;
   };
-  return { load, data, relatedCalls };
+  return {
+    load,
+    data,
+    relatedCalls,
+    adjacentCalls: () => state.adjacentCalls,
+    opts,
+  };
 }
 
 test("resurfaceCandidates keeps unaired episode with waitingForAir and airDate when animeCwEnd is timer", async () => {
@@ -145,7 +156,7 @@ test("resurfaceCandidates drops unaired episode when animeCwEnd is hide", async 
   );
 });
 
-test("resurfaceCandidates retains caught-up series with waitingForAir when no subsequent episode exists and animeCwEnd is timer", async () => {
+test("resurfaceCandidates keeps a caught-up series as a neutral card when timer mode is on", async () => {
   const h = harness({ nextEp: null }); // Show is caught up (e.g. Tulsa King latest released ep 2 watched)
   const resurface = h.load("src/lib/cw-resurface.ts");
 
@@ -170,10 +181,11 @@ test("resurfaceCandidates retains caught-up series with waitingForAir when no su
   });
 
   const candidate = timerResult.get("tt_tulsa_king");
-  assert.ok(candidate, "Caught up series should be retained with timer");
+  assert.ok(candidate, "Caught-up series should be retained with timer");
   assert.equal(candidate.season, 2);
   assert.equal(candidate.episode, 2);
-  assert.equal(candidate.waitingForAir, true);
+  assert.equal(candidate.caughtUp, true);
+  assert.equal(candidate.waitingForAir, undefined);
 });
 
 test("resurfaceCandidates drops caught-up series when hideCaughtUp is true", async () => {
@@ -236,7 +248,7 @@ test("resurfaceCandidates drops a future season placeholder with no air date in 
   assert.equal(result.get("tt_from"), undefined);
 });
 
-test("resurfaceCandidates still waits on a same-season episode with no air date", async () => {
+test("resurfaceCandidates keeps a same-season episode with no air date as caught up, not a countdown", async () => {
   const h = harness({ nextEp: { season: 1, episode: 5 } });
   const resurface = h.load("src/lib/cw-resurface.ts");
 
@@ -262,7 +274,8 @@ test("resurfaceCandidates still waits on a same-season episode with no air date"
 
   const candidate = result.get("tt_same_season");
   assert.ok(candidate);
-  assert.equal(candidate.waitingForAir, true);
+  assert.equal(candidate.caughtUp, true);
+  assert.equal(candidate.waitingForAir, undefined);
 });
 
 test("resurfaceCandidates isolates cache between timer and hide modes", async () => {
@@ -602,4 +615,169 @@ test("resurfaceCandidates only looks up identities for anime", async () => {
     animeCwEnd: "timer",
   });
   assert.ok(h.relatedCalls.includes("kitsu:77"), "anime still checks its aliases");
+});
+
+test("staleCwIds keeps same-name shows with different IMDb ids", async () => {
+  const h = harness();
+  const resurface = h.load("src/lib/cw-resurface.ts");
+  const us = {
+    _id: "tt0386676",
+    type: "series",
+    isAnime: true,
+    name: "Same Name",
+    state: {
+      season: 1,
+      episode: 1,
+      timeOffset: 100,
+      duration: 1000,
+      lastWatched: "2026-01-01T00:00:00Z",
+    },
+  };
+  const uk = {
+    ...us,
+    _id: "tt0290978",
+    state: { ...us.state, episode: 2, lastWatched: "2026-02-01T00:00:00Z" },
+  };
+
+  const stale = await resurface.staleCwIds([us, uk], [us, uk]);
+
+  assert.deepEqual([...stale], [], "a shared title cannot hide a different IMDb title");
+});
+
+test("resurfaceCandidates isolates cache between hideCaughtUp values", async () => {
+  const h = harness({ nextEp: null });
+  const resurface = h.load("src/lib/cw-resurface.ts");
+  const item = {
+    _id: "tt_hide_switch",
+    type: "series",
+    name: "Hide Switch",
+    state: {
+      season: 1,
+      episode: 4,
+      timeOffset: 0,
+      duration: 3600000,
+      flaggedWatched: 1,
+      lastWatched: new Date().toISOString(),
+    },
+  };
+
+  const keep = await resurface.resurfaceCandidates([item], new Set(), {
+    tmdbKey: "",
+    animeMode: "all",
+    animeCwEnd: "timer",
+    hideCaughtUp: false,
+  });
+  assert.equal(keep.get(item._id)?.caughtUp, true);
+
+  const hide = await resurface.resurfaceCandidates([item], new Set(), {
+    tmdbKey: "",
+    animeMode: "all",
+    animeCwEnd: "timer",
+    hideCaughtUp: true,
+  });
+  assert.equal(
+    hide.get(item._id),
+    undefined,
+    "a caught-up decision made with Hide Caught Up off must not be reused when it is on",
+  );
+});
+
+test("resurfaceCandidates does not reuse a cached decision across account owners", async () => {
+  const h = harness({ nextEp: null, owner: "owner-a" });
+  const resurface = h.load("src/lib/cw-resurface.ts");
+  const item = {
+    _id: "tt_owner_switch",
+    type: "series",
+    name: "Owner Switch",
+    state: {
+      season: 1,
+      episode: 4,
+      timeOffset: 0,
+      duration: 3600000,
+      flaggedWatched: 1,
+      lastWatched: new Date().toISOString(),
+    },
+  };
+
+  await resurface.resurfaceCandidates([item], new Set(), {
+    tmdbKey: "",
+    animeMode: "all",
+    animeCwEnd: "timer",
+    hideCaughtUp: true,
+  });
+  assert.equal(h.adjacentCalls(), 1);
+
+  h.opts.owner = "owner-b";
+  h.opts.nextEp = {
+    season: 1,
+    episode: 5,
+    airDate: new Date(Date.now() - 1000).toISOString(),
+  };
+  const next = await resurface.resurfaceCandidates([item], new Set(), {
+    tmdbKey: "",
+    animeMode: "all",
+    animeCwEnd: "timer",
+    hideCaughtUp: true,
+  });
+  assert.equal(h.adjacentCalls(), 2, "a different owner must not reuse the cached negative");
+  assert.equal(next.get(item._id)?.episode, 5);
+});
+
+test("resurfaceCandidates retries a negative result after the short TTL", async () => {
+  const h = harness({ nextEp: null });
+  const resurface = h.load("src/lib/cw-resurface.ts");
+  const realNow = Date.now;
+  let fake = realNow();
+  Date.now = () => fake;
+  try {
+    const item = {
+      _id: "tt_negative_ttl",
+      type: "series",
+      name: "Negative TTL",
+      state: {
+        season: 1,
+        episode: 4,
+        timeOffset: 0,
+        duration: 3600000,
+        flaggedWatched: 1,
+        lastWatched: new Date(fake).toISOString(),
+      },
+    };
+    const options = {
+      tmdbKey: "",
+      animeMode: "all" as const,
+      animeCwEnd: "timer" as const,
+      hideCaughtUp: true,
+    };
+
+    await resurface.resurfaceCandidates([item], new Set(), options);
+    assert.equal(h.adjacentCalls(), 1);
+
+    h.opts.nextEp = {
+      season: 1,
+      episode: 5,
+      airDate: new Date(fake - 1000).toISOString(),
+    };
+    fake += 60_000;
+    const cached = await resurface.resurfaceCandidates([item], new Set(), options);
+    assert.equal(cached.get(item._id), undefined);
+    assert.equal(h.adjacentCalls(), 1, "a negative result is cached for about a minute");
+
+    fake += 6 * 60_000;
+    const retried = await resurface.resurfaceCandidates([item], new Set(), options);
+    assert.equal(h.adjacentCalls(), 2, "the negative result expires on the short TTL");
+    assert.equal(retried.get(item._id)?.episode, 5);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("changing timer or metadata settings clears the resurface cache", () => {
+  const advance = readFileSync(resolve("src/views/home/hooks/use-cw-advance.ts"), "utf8");
+
+  assert.match(advance, /clearResurfaceCache/);
+  assert.match(advance, /resurfaceCacheKey = \[/);
+  assert.match(advance, /\[resurfaceCacheKey\]/);
+  assert.match(advance, /settings\.animeCwEnd/);
+  assert.match(advance, /settings\.metadataSources\?\.episodes/);
 });

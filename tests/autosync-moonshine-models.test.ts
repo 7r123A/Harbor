@@ -20,6 +20,27 @@ test("auto selects only the active audio track, including ISO-639-2 tags", () =>
   assert.equal(resolveMoonshineLanguage("auto", "es-MX"), "es");
 });
 
+test("untagged selected audio can use its explicitly named track language", () => {
+  // MPV reports this track title without --alang even though aid=2 is English.
+  assert.equal(resolveMoonshineLanguage("auto", undefined, "English : DTS-HD Master Audio 5.1"), "en");
+  assert.equal(resolveMoonshineLanguage("auto", "und", "English : DTS-HD Master Audio 5.1"), "en");
+  assert.equal(resolveMoonshineLanguage("auto", "", "English (US) - Stereo"), "en");
+  assert.equal(resolveMoonshineLanguage("auto", undefined, "Japanese : AAC 2.0"), "ja");
+  assert.equal(resolveMoonshineLanguage("auto", undefined, "Chinese : AAC"), "zh");
+  assert.equal(resolveMoonshineLanguage("auto", undefined, "French (International) : Dolby Digital"), null);
+});
+
+test("audio track title fallback never overrides explicit metadata or guesses from vague names", () => {
+  assert.equal(resolveMoonshineLanguage("auto", "fra", "English : DTS-HD Master Audio 5.1"), null);
+  assert.equal(resolveMoonshineLanguage("auto", "deu", "English : DTS-HD Master Audio 5.1"), "de");
+  assert.equal(resolveMoonshineLanguage("es", undefined, "English : DTS-HD Master Audio 5.1"), "es");
+  assert.equal(resolveMoonshineLanguage("auto", undefined, "Better Call Saul English Audio"), null);
+  assert.equal(resolveMoonshineLanguage("auto", undefined, "Commentary (English)"), null);
+  assert.equal(resolveMoonshineLanguage("auto", undefined, "English commentary"), null);
+  assert.equal(resolveMoonshineLanguage("auto", undefined, "English/French Dual Audio"), null);
+  assert.equal(resolveMoonshineLanguage("auto", undefined, "English subtitle"), null);
+});
+
 test("unknown and unsupported audio never choose or download an unrelated model", () => {
   assert.equal(resolveMoonshineLanguage("auto", ""), null);
   assert.equal(resolveMoonshineLanguage("auto", "und"), null);

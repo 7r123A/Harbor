@@ -103,5 +103,8 @@ export function resolveDetailEdition(
   };
   // IGDB's exact record provides this association, never a title-based guess.
   const steamLinkId = target.steamId ?? (reviewed ? undefined : atlas?.steamId);
-  return { target, atlas, storeDetail, detail, portableGame, steamLinkId };
+  // Guides can use the selected IGDB edition's published Steam association even
+  // for reviewed local metadata. This is read-only: never change launch/store identity.
+  const guideSteamId = target.steamId ?? atlas?.steamId;
+  return { target, atlas, storeDetail, detail, portableGame, steamLinkId, guideSteamId };
 }

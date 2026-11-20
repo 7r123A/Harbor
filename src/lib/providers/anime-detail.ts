@@ -27,6 +27,7 @@ import {
 import { applyMalEpisodeTitles, episodesMissingTitle } from "@/lib/providers/episode-placeholder";
 import { malEpisodeTitles } from "@/lib/providers/mal-episodes";
 import { anilistFranchise, type AnilistFranchiseNode } from "@/lib/anilist/relations";
+import { fetchAnilistAiringSchedule } from "@/lib/anilist/next-airing";
 import { anilistArtById } from "@/lib/anilist/browse";
 import { pickAnimeHeroBackdrop } from "./anime-art-quality";
 import { staticHeroArt } from "./anime-hero-art-static";
@@ -572,6 +573,41 @@ export function animeDetails(
   return beginDetailLoad(settings, meta, key, listeners, retry, maxAge);
 }
 
+/**
+ * The Kitsu add-on can date a currently airing cour a week late, and the TVDB
+ * merge can overwrite that date again. The detail banner already trusts
+ * AniList, so episode rows must use the same schedule. Only currently airing
+ * single-season lists are rewritten.
+ */
+async function applyAnilistAiringDates(episodes: KitsuEpisode[], kitsuId: number): Promise<void> {
+  if (
+    !episodes.some((episode) => {
+      const at = episode.airdate ? Date.parse(episode.airdate) : NaN;
+      return Number.isFinite(at) && at > Date.now();
+    })
+  )
+    return;
+  const seasons = new Set(
+    episodes.filter((episode) => episode.seasonNumber > 0).map((episode) => episode.seasonNumber),
+  );
+  if (seasons.size > 1) return;
+  const anilistId = await kitsuToAnilist(kitsuId).catch(() => null);
+  if (anilistId == null) return;
+  const schedule = await fetchAnilistAiringSchedule(anilistId).catch(() => null);
+  if (!schedule) return;
+  for (const episode of episodes) {
+    // Season-zero specials are outside the regular AniList episode sequence.
+    // Anime episode enrichment may retain native season 1 while mapping the
+    // same special to IMDb season 0, so both coordinates must be checked.
+    if (!Number.isInteger(episode.seasonNumber) || episode.seasonNumber <= 0 ||
+        episode.imdbSeason === 0) continue;
+    const airingAt = schedule[episode.number];
+    if (Number.isFinite(airingAt) && airingAt > 0) {
+      episode.airdate = new Date(airingAt * 1000).toISOString();
+    }
+  }
+}
+
 async function loadAnimeDetails(
   settings: Settings,
   meta: Meta,
@@ -683,6 +719,7 @@ async function loadAnimeDetails(
   ]);
 
   const episodes = buildKitsuEpisodes(addonMeta, kitsuRawEpisodes);
+  await applyAnilistAiringDates(episodes, kitsuId);
   const tmdbEpisodesPromise = (async () => {
     let tmdbEpsRaw: TmdbEpisode[] | null = null;
     let tmdbEnRaw: TmdbEpisode[] | null = null;
@@ -724,6 +761,7 @@ async function loadAnimeDetails(
   // the addon labels the cour "season 1" — the window must land before the
   // TVDB merge or the cour's identity-less rows match franchise season 1.
   await applyAnidbSeasonWindow(episodes, kitsuId);
+  await applyAnilistAiringDates(episodes, kitsuId);
   let seriesImdb = aniZip?.mappings?.imdb_id ?? episodes.find((e) => e.imdbId)?.imdbId ?? null;
   if (!seriesImdb) seriesImdb = await kitsuToImdb(kitsuId).catch(() => null);
   // Fetch ratings independently of translations, title fallbacks and artwork.
@@ -751,6 +789,7 @@ async function loadAnimeDetails(
       targetLang: iso1,
       englishEpisodes: tmdb.en,
     });
+    await applyAnilistAiringDates(enrichedEpisodes, kitsuId);
     // Fall back to English titles/overviews when the localized translation is missing (providers
     // otherwise fall back to the original, e.g. Japanese for anime). `targetLang` keeps this pass
     // from overwriting a title the user already has in their own language.

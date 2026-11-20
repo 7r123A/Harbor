@@ -20,8 +20,9 @@ const RETRYABLE_ENGINE_FAILURES = new Set([
   "remote-server-unreachable",
   "remote-server-unreachable-strict",
 ]);
-import { engineP2pEligible } from "@/lib/torrent/stremio-stream";
+import { engineP2pEligible, isHostedTorrentServerUrl } from "@/lib/torrent/stremio-stream";
 import { hasUncachedMarker } from "@/lib/streams/cached";
+import { PLAY_PREWARM_ABANDON_MS, prewarmP2pStream } from "@/lib/streams/p2p-prewarm";
 import { preflightCheck } from "@/lib/streams/preflight";
 import { resolveStream, shouldPreferP2pDownload } from "@/lib/streams/resolve";
 import { resolvePlaybackRedirect } from "@/lib/streams/playback-redirect";
@@ -289,12 +290,14 @@ export function usePickHandler({
       }
       debridFailStreakRef.current = 0;
       let playUrl = r.data.url;
-      if (intent !== "download" && !autoPickRef.current && r.via === "direct") {
+      if (intent !== "download" && r.via === "direct") {
+        markPlaybackTrace(playbackTraceId, "redirect-start");
         playUrl = await resolvePlaybackRedirect({
           url: playUrl,
           headers: r.data.headers,
           signal: ac.signal,
         });
+        markPlaybackTrace(playbackTraceId, "redirect-ready");
         if (ac.signal.aborted) return;
       }
       markPlaybackTrace(playbackTraceId, "resolve-ready");
@@ -506,6 +509,17 @@ export function usePickHandler({
     if (retryTimerRef.current != null) {
       window.clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
+    }
+    // Consent-independent: auto-consent and P2P-only modes never open the
+    // prompt, so start metadata/peer discovery here too. The torrent is added
+    // paused; if nothing ever plays it, the abandon timer removes it again.
+    if (
+      committed &&
+      intent !== "download" &&
+      (!stream.url || isHostedTorrentServerUrl(stream.url)) &&
+      engineP2pEligible(stream)
+    ) {
+      prewarmP2pStream(stream, { abandonAfterMs: PLAY_PREWARM_ABANDON_MS });
     }
     const effectiveForceP2p =
       forceP2p || (intent === "download" && shouldPreferP2pDownload(stream));

@@ -33,6 +33,7 @@ function harness({
       getAnimeCanonicalId: (id: string) => animeIds.get(id) ?? null,
       getAnimeCwId: (id: string) => animeIds.get(id) ?? null,
       getAnilistMalAlias: () => null,
+      recordAnilistMalAlias: () => {},
       recordAnimeCwId: (id: string, value: string) => animeIds.set(id, value),
       notifyAnimeCwIds: () => {},
     },
@@ -44,6 +45,7 @@ function harness({
         return true;
       },
     },
+    "@/lib/anilist/entry": { anilistAnimeEntry: async () => null },
     "@/lib/providers/anime-entry": {
       resolveAnimeEntry: async () => {
         calls.entry++;

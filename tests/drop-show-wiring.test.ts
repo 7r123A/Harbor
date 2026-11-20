@@ -9,7 +9,8 @@ test("PublicMetaDB appears in both detail hero tracker layouts", () => {
 
   assert.match(detail, /import \{ AddToPmdbButton \}/);
   assert.match(detail, /<AddToPmdbButton/);
-  assert.match(detail, /pmdb=\{\{/);
+  // The button and overflow now share an ID availability guard.
+  assert.match(detail, /pmdb=\{listTrackerId \? \{/);
 });
 
 test("Drop show is exposed from details and the right-click menu", () => {

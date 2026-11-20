@@ -15,21 +15,23 @@ export type DialogueScene = {
   distanceFromPlaybackSec: number;
 };
 
-/** Choose a different, already-buffered excerpt before retrying speech recognition.
- * Selection uses proximity and dialogue availability, never a candidate offset.
+/** Choose a different already-buffered excerpt before retrying recognition.
+ * The cache commonly lies BEHIND the playhead, so requiring a later scene would
+ * eliminate nearly every real retry. rankDialogueScenes has already verified
+ * that every candidate is fully buffered and ranked for dialogue availability.
+ * Demand at least half a scene of new audio, without guessing an offset.
  */
 export function selectPlaybackRetryScene(
   scenes: DialogueScene[],
   playbackSec: number,
   failedStartSec: number,
 ): DialogueScene | undefined {
-  return scenes
-    .filter(
-      (scene) =>
-        scene.startSec >= playbackSec &&
-        scene.startSec - failedStartSec >= (scene.endSec - scene.startSec) / 3,
-    )
-    .sort((a, b) => a.startSec - b.startSec)[0];
+  return scenes.find(
+    (scene) =>
+      Number.isFinite(playbackSec) &&
+      scene.distanceFromPlaybackSec <= SCENE_SEARCH_RADIUS_SEC &&
+      Math.abs(scene.startSec - failedStartSec) >= (scene.endSec - scene.startSec) / 2,
+  );
 }
 
 function normalizedDialogue(raw: string): string | null {

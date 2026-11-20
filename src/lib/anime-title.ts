@@ -7,10 +7,15 @@ import {
   type AniZipMapping,
 } from "@/lib/providers/anizip";
 import { getAnimeCanonicalId, getAnimeCwId, notifyAnimeCwIds } from "@/lib/anime-cw-ids";
-import { rememberAnimeTitle, type AnimeTitleCheckpoint } from "@/lib/anime-title-key";
+import {
+  animeTitleKeysGeneration,
+  rememberAnimeTitle,
+  type AnimeTitleCheckpoint,
+} from "@/lib/anime-title-key";
 import { cwAnimeIdentityKey, getCachedCatalogImdb } from "@/lib/cw-anime-identity";
 import { externalToKitsu, tmdbTvToKitsu } from "@/lib/providers/anime-mapping";
 import { parseKitsuId } from "@/lib/providers/kitsu";
+import { anilistAnimeEntry } from "@/lib/anilist/entry";
 
 export type AnimeTitleLang = "english" | "romaji" | "native";
 
@@ -165,6 +170,22 @@ async function resolvePreferredAnimeTitleUncached(
     const title = getTitleFromAniZip(mapping.titles, lang);
     if (title) return title;
   }
+  // Very new anime can have no Kitsu entry, or a Kitsu entry whose English
+  // title is still missing, while AniZip has a mapping without titles. AniList
+  // already knows the translated title, so prefer it before Kitsu's romaji
+  // fallback. Kitsu English (`en`) falls back to `en_jp`, which is exactly how
+  // a merged card could otherwise keep showing its Romaji source name.
+  let anilistTitles: Awaited<ReturnType<typeof anilistTitlesFor>> = null;
+  for (const candidate of new Set([entryId, id])) {
+    if (!candidate) continue;
+    anilistTitles = await anilistTitlesFor(candidate).catch(() => null);
+    if (anilistTitles) break;
+  }
+  if (anilistTitles) {
+    if (lang === "english") return anilistTitles.english || anilistTitles.romaji || null;
+    if (lang === "romaji") return anilistTitles.romaji || anilistTitles.english || null;
+    // The lightweight entry query has no native title; fall through to Kitsu.
+  }
   if (kitsuId != null) {
     const titles = await kitsuTitles(kitsuId);
     if (titles) return getTitleFromKitsu(titles, lang);
@@ -172,14 +193,38 @@ async function resolvePreferredAnimeTitleUncached(
   return null;
 }
 
+function anilistTitlesFor(
+  id: string,
+): Promise<{ english?: string | null; romaji?: string | null } | null> {
+  const mal = /^mal:([1-9]\d*)$/.exec(id);
+  if (mal) {
+    return anilistAnimeEntry(Number(mal[1]), "mal")
+      .then((entry) => entry?.title ?? null)
+      .catch(() => null);
+  }
+  const anilist = /^anilist:([1-9]\d*)$/.exec(id);
+  if (anilist) {
+    return anilistAnimeEntry(Number(anilist[1]), "anilist")
+      .then((entry) => entry?.title ?? null)
+      .catch(() => null);
+  }
+  return Promise.resolve(null);
+}
+
 export async function resolvePreferredAnimeTitle(
   id: string,
   lang: AnimeTitleLang,
   checkpoint?: AnimeTitleCheckpoint,
 ): Promise<string | null> {
+  const generation = animeTitleKeysGeneration();
   const title = await resolvePreferredAnimeTitleUncached(id, lang, checkpoint);
   // The card shows this title, so two sources that display the same show should
   // also dedupe by it even when their stored names are in different languages.
-  if (title && rememberAnimeTitle(id, title, checkpoint)) notifyAnimeCwIds();
+  if (
+    title &&
+    generation === animeTitleKeysGeneration() &&
+    rememberAnimeTitle(id, title, checkpoint)
+  )
+    notifyAnimeCwIds();
   return title;
 }

@@ -181,6 +181,7 @@ function useAccess(
     libraryPreferences,
     customLibrary,
     emulation,
+    quick,
     saved,
     save,
     saveFailed,

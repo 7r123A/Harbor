@@ -1,4 +1,4 @@
-use super::super::{audio::MusicAudioSettings, m3u, MusicState, ACTIVE_SPOTIFY, ACTIVE_MODULE, ACTIVE_MODULE_SPOTIFY};
+use super::super::{audio::MusicAudioSettings, m3u, MusicState, ACTIVE_SPOTIFY, ACTIVE_MODULE, ACTIVE_MODULE_SPOTIFY, ACTIVE_SOLOIST};
 
 #[tauri::command]
 pub async fn music_audio_devices(
@@ -48,6 +48,10 @@ pub async fn music_audio_meter_set_enabled(
     state: tauri::State<'_, MusicState>,
     enabled: bool,
 ) -> Result<(), String> {
+    // The visualizer can subscribe before the first Soloist play completes.
+    // Remember interest across engines, and start capturing only while Soloist
+    // is the active engine and snapshots are being requested.
+    super::super::spotify::soloist::capture::set_enabled(enabled);
     if state.active_engine() == ACTIVE_MODULE {
         m3u::module_request_async(serde_json::json!({
             "command":"mpv_meter_set","enabled":enabled
@@ -62,6 +66,9 @@ pub async fn music_audio_meter_set_enabled(
     }
     if state.active_engine() == ACTIVE_SPOTIFY {
         state.spotify.set_meter_enabled(enabled).await;
+        return Ok(());
+    }
+    if state.active_engine() == ACTIVE_SOLOIST {
         return Ok(());
     }
     state.engine.set_meter_enabled(enabled).await
@@ -85,6 +92,9 @@ pub async fn music_audio_meter_snapshot(
     }
     if state.active_engine() == ACTIVE_SPOTIFY {
         return Ok(state.spotify.meter_snapshot().await);
+    }
+    if state.active_engine() == ACTIVE_SOLOIST {
+        return Ok(super::super::spotify::soloist::capture::snapshot());
     }
     Ok(state.engine.meter_snapshot().await)
 }

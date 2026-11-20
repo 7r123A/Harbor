@@ -26,6 +26,7 @@ import { Dropdown } from "@/components/dropdown";
 import { ModalShell, useModalExit } from "@/components/modal-shell";
 import { MusicLocalCollection } from "./music-local-collection";
 import { MusicSpotifyLibrary } from "./music-spotify-library";
+import { MusicYtMusicLibrary } from "./music-ytmusic-library";
 import { MusicTrackMenu, type MusicTrackMenuItem } from "./music-track-menu";
 import { useMusicItemMenu } from "./music-item-menu";
 import { MusicPlaylistEditDialog } from "./music-playlist-edit-dialog";
@@ -73,8 +74,16 @@ import {
 import type { MusicCatalogItem, MusicPlaylist } from "@/lib/music/types";
 import "./music-library.css";
 
-type LibraryFilter = "all" | "playlists" | "albums" | "artists" | "tracks" | "spotify";
-const FILTERS: LibraryFilter[] = ["all", "playlists", "albums", "artists", "tracks", "spotify"];
+type LibraryFilter = "all" | "playlists" | "albums" | "artists" | "tracks" | "spotify" | "youtube";
+const FILTERS: LibraryFilter[] = [
+  "all",
+  "playlists",
+  "albums",
+  "artists",
+  "tracks",
+  "spotify",
+  "youtube",
+];
 const LOCAL: LibraryFilter[] = ["albums", "artists", "tracks"];
 
 export function MusicLibrary({
@@ -202,9 +211,10 @@ export function MusicLibrary({
     return built;
   }, [player.likedTracks, player.recents, playlists, shelf, filter, t]);
 
+  const arrangeKind = filter === "spotify" || filter === "youtube" ? "all" : filter;
   const arranged = useMemo(
-    () => arrangeCollections(entries, filter === "spotify" ? "all" : filter, sort, query),
-    [entries, filter, sort, query],
+    () => arrangeCollections(entries, arrangeKind, sort, query),
+    [entries, arrangeKind, sort, query],
   );
 
   const createPlaylist = (event: FormEvent) => {
@@ -382,13 +392,15 @@ export function MusicLibrary({
   const filterLabel = (value: LibraryFilter) =>
     value === "spotify"
       ? "Spotify"
-      : t(
-          value === "all"
-            ? "music.library.all"
-            : value === "playlists"
-              ? "music.playlists"
-              : `music.search.${value}`,
-        );
+      : value === "youtube"
+        ? "YouTube Music"
+        : t(
+            value === "all"
+              ? "music.library.all"
+              : value === "playlists"
+                ? "music.playlists"
+                : `music.search.${value}`,
+          );
   const countFor = (value: LibraryFilter) =>
     value === "playlists" ? playlists.length + (player.likedTracks.length > 0 ? 1 : 0) : 0;
 
@@ -463,7 +475,9 @@ export function MusicLibrary({
                 setQuery("");
               }}
             >
-              {value === "spotify" && <MusicServiceLogo source="spotify" size={18} />}
+              {(value === "spotify" || value === "youtube") && (
+                <MusicServiceLogo source={value} size={18} />
+              )}
               {filterLabel(value)}
               {countFor(value) > 0 && <small>{countFor(value)}</small>}
             </button>
@@ -592,6 +606,7 @@ export function MusicLibrary({
           onTastes={onTastes}
         />
       )}
+      {filter === "youtube" && <MusicYtMusicLibrary active={active} onOpen={onOpen} />}
       {filter === "spotify" && (
         <MusicSpotifyLibrary
           active={active}

@@ -9,8 +9,15 @@ import {
   type LibraryItem,
 } from "@/lib/stremio";
 import { isCwDismissed } from "@/lib/cw-dismiss";
-import { privateCwProfileId } from "@/lib/cw-profile";
-import { isFurther, itemIds, recordKey, sameRecord, titleKeys } from "@/lib/cw-dedupe";
+import { cwCacheOwnerKey } from "@/lib/cw-derived-caches";
+import {
+  differentImdbTitles,
+  isFurther,
+  itemIds,
+  recordKey,
+  sameRecord,
+  titleKeys,
+} from "@/lib/cw-dedupe";
 
 const ANIME_ID = /^(kitsu|mal|anilist|anidb):/;
 
@@ -63,7 +70,12 @@ export async function staleCwIds(
     for (const id of itemIds(item)) for (const row of byId.get(id) ?? []) related.add(row);
     const anime = isAnimeCwItem(item) || ANIME_ID.test(item._id);
     if (anime) {
-      for (const key of titleKeys(item)) for (const row of byTitle.get(key) ?? []) related.add(row);
+      for (const key of titleKeys(item)) {
+        for (const row of byTitle.get(key) ?? []) {
+          // Distinct IMDb titles are distinct shows; one may not hide the other.
+          if (!differentImdbTitles(item, row)) related.add(row);
+        }
+      }
     }
     // The card itself is always in the pool; exclude that record before asking
     // whether an identity lookup is needed, or the fallback never runs.
@@ -113,6 +125,8 @@ function currentEpisode(i: LibraryItem): { season: number; episode: number } | n
 }
 
 const RESURFACE_TTL = 6 * 3600 * 1000;
+/** A negative answer can become positive when the next episode appears; retry it soon. */
+const RESURFACE_NEGATIVE_TTL = 3 * 60 * 1000;
 const RECENT_MS = 45 * 864e5;
 
 export type ResurfaceOptions = {
@@ -127,6 +141,7 @@ export type ResurfaceTarget = {
   episode: number;
   waitingForAir?: boolean;
   airDate?: string;
+  caughtUp?: boolean;
 };
 
 type CacheVal = { next: ResurfaceTarget | null; t: number };
@@ -148,8 +163,11 @@ export async function resurfaceCandidates(
   watchedFor?: WatchedFor,
 ): Promise<Map<string, ResurfaceTarget>> {
   const now = Date.now();
-  const profileScope = privateCwProfileId() ?? "shared";
+  // Account/profile scope: a resurface decision must not cross an account switch
+  // that keeps the same local profile id.
+  const ownerScope = cwCacheOwnerKey();
   const endMode = opts.animeCwEnd ?? "hide";
+  const caughtUpMode = opts.hideCaughtUp ? "hide" : "keep";
   const out = new Map<string, ResurfaceTarget>();
   const candidates = library.filter((i) => {
     if (i.type !== "series" && !ANIME_ID.test(i._id)) return false;
@@ -177,7 +195,7 @@ export async function resurfaceCandidates(
   for (const i of candidates) {
     const cur = currentEpisode(i)!;
     const isAnime = isAnimeCwItem(i) || ANIME_ID.test(i._id);
-    const key = `${profileScope}|${endMode}|${i._id}:${cur.season}:${cur.episode}`;
+    const key = `${ownerScope}|${endMode}|${caughtUpMode}|${i._id}:${cur.season}:${cur.episode}`;
     const cached = cache.get(key);
     let nx: ResurfaceTarget | null;
     const meta: Meta = {
@@ -187,8 +205,17 @@ export async function resurfaceCandidates(
       poster: i.poster,
       background: i.background,
     };
+    const canKeepCaughtUp =
+      endMode === "timer" && !opts.hideCaughtUp && i.external !== "simkl" && i.external !== "trakt";
+    const caughtUpTarget = (): ResurfaceTarget => ({
+      season: cur.season,
+      episode: cur.episode,
+      caughtUp: true,
+    });
     if (cached && now - cached.t < RESURFACE_TTL) {
       nx = cached.next;
+      // Invalidate a timer decision cached before the strict air-date rule.
+      if (nx?.waitingForAir && !nx.airDate) nx = canKeepCaughtUp ? caughtUpTarget() : null;
     } else {
       try {
         const adj = await fetchAdjacentEpisodes(meta, cur, { tmdbKey: opts.tmdbKey });
@@ -204,48 +231,52 @@ export async function resurfaceCandidates(
           } else if (!isAnime && !adj.next.airDate && adj.next.season > cur.season) {
             // A future season's placeholder episode is not a countdown target.
             nx = null;
-          } else if (endMode === "timer") {
+          } else if (endMode === "timer" && adj.next.airDate) {
             nx = {
               season: adj.next.season,
               episode: adj.next.episode,
               waitingForAir: true,
               airDate: adj.next.airDate,
             };
+          } else if (canKeepCaughtUp) {
+            // A known next episode without an air date is not a countdown. Keep
+            // the show as a neutral caught-up card instead.
+            nx = caughtUpTarget();
           } else {
             nx = null;
           }
-        } else if (
-          endMode === "timer" &&
-          !opts.hideCaughtUp &&
-          i.external !== "simkl" &&
-          i.external !== "trakt"
-        ) {
-          nx = { season: cur.season, episode: cur.episode, waitingForAir: true };
+        } else if (canKeepCaughtUp) {
+          nx = caughtUpTarget();
         } else {
           nx = null;
         }
         const airTime = adj.next?.airDate ? Date.parse(adj.next.airDate) : NaN;
+        // A negative answer is the common case while a show is caught up; do not
+        // hide a newly available episode behind the six-hour positive TTL.
         const cacheTtl =
-          Number.isFinite(airTime) && airTime > now
-            ? Math.max(1000, Math.min(RESURFACE_TTL, airTime - now + 1000))
-            : RESURFACE_TTL;
+          nx == null
+            ? RESURFACE_NEGATIVE_TTL
+            : Number.isFinite(airTime) && airTime > now
+              ? Math.max(1000, Math.min(RESURFACE_TTL, airTime - now + 1000))
+              : RESURFACE_TTL;
         cache.set(key, { next: nx, t: now - (RESURFACE_TTL - cacheTtl) });
       } catch {
         // A failed lookup must remain retryable on the next refresh.
         continue;
       }
     }
-    if (nx && !nx.waitingForAir && watchedFor && watchedFor(i, cur)(nx.season, nx.episode)) {
+    if (
+      nx &&
+      !nx.waitingForAir &&
+      !nx.caughtUp &&
+      watchedFor &&
+      watchedFor(i, cur)(nx.season, nx.episode)
+    ) {
       nx = await fetchEpisodeList(meta, { tmdbKey: opts.tmdbKey })
         .then((list) => {
           const target = nextUnwatchedAfter(list, cur, watchedFor(i, cur));
           if (!target) {
-            return i.external !== "simkl" &&
-              i.external !== "trakt" &&
-              endMode === "timer" &&
-              !opts.hideCaughtUp
-              ? { season: cur.season, episode: cur.episode, waitingForAir: true }
-              : null;
+            return canKeepCaughtUp ? caughtUpTarget() : null;
           }
           const entry = list.find(
             (e) => e.season === target.season && e.episode === target.episode,
@@ -259,15 +290,15 @@ export async function resurfaceCandidates(
               airDate: entry.airDate,
             };
           }
-          if (endMode === "timer") {
+          if (endMode === "timer" && entry?.airDate) {
             return {
               season: target.season,
               episode: target.episode,
               waitingForAir: true,
-              airDate: entry?.airDate,
+              airDate: entry.airDate,
             };
           }
-          return null;
+          return canKeepCaughtUp ? caughtUpTarget() : null;
         })
         .catch(() => null);
       // Cache episode availability only. Watched history can change independently

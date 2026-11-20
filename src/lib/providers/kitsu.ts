@@ -110,8 +110,23 @@ function rememberSource(url: string, value: unknown, freshUntil: number): void {
   );
 }
 
-async function get<T>(path: string, maxAge?: number, identity = false): Promise<T | null> {
-  if (addonOnlyMetadata() && !identity) return null;
+/** A strict caller cannot read a Kitsu outage as "no mapping". */
+export class KitsuUnavailableError extends Error {
+  constructor() {
+    super("kitsu unavailable");
+    this.name = "KitsuUnavailableError";
+  }
+}
+
+async function get<T>(
+  path: string,
+  maxAge?: number,
+  identity = false,
+  strict = false,
+): Promise<T | null> {
+  // An identity-only check must still run with addon-only metadata enabled:
+  // refusing to ask is not the same answer as "no such anime".
+  if (addonOnlyMetadata() && !identity && !strict) return null;
   const url = `${KITSU}${path}`;
   const now = Date.now();
   const hit = lruGet(cache, url);
@@ -123,6 +138,36 @@ async function get<T>(path: string, maxAge?: number, identity = false): Promise<
   )
     return hit.v as T;
   const generation = mediaCacheGeneration();
+  if (strict) {
+    // Bypass the negative-caching loader: this caller must be able to tell a 404
+    // from a failure, and a failure must not be remembered as a miss.
+    const value = await requests.schedule(url, async () => {
+      let response: Response;
+      try {
+        response = await safeFetch(url, {
+          headers: { Accept: "application/vnd.api+json" },
+          signal: AbortSignal.timeout(15000),
+        });
+      } catch {
+        throw new KitsuUnavailableError();
+      }
+      if (response.status === 429) requests.pauseFor(1000);
+      if (response.status === 404) return null;
+      if (!response.ok) throw new KitsuUnavailableError();
+      try {
+        return (await response.json()) as T;
+      } catch {
+        throw new KitsuUnavailableError();
+      }
+    });
+    if (value && generation === mediaCacheGeneration()) {
+      const t = Date.now();
+      const freshUntil = t + metadataCacheTtl(value, t);
+      rememberSource(url, value, freshUntil);
+      lruSet(cache, url, { v: value, t, freshUntil, loadedAt: Date.now() }, CACHE_MAX);
+    }
+    return value;
+  }
   return loadMedia<T>(
     "kitsu-resource",
     [url],
@@ -153,6 +198,11 @@ async function get<T>(path: string, maxAge?: number, identity = false): Promise<
 }
 
 export { get as kitsuMappingRequest };
+
+/** Strict counterpart: throws on a provider failure, returns null only on a real 404. */
+export function kitsuMappingRequestStrict<T>(path: string, maxAge?: number): Promise<T | null> {
+  return get<T>(path, maxAge, false, true);
+}
 
 export type KitsuEpisode = {
   id: number;

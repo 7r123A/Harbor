@@ -347,8 +347,6 @@ export type Settings = {
   autoNextStreamOnStallSec: number;
   fullscreenMode: "fullscreen" | "borderless" | "maximized";
   seasonSourceLock: boolean;
-  rememberLastStream: boolean;
-  keepSourceNextEpisode: boolean;
   /** Automatically download the upcoming episode without affecting active playback. */
   autoPreDownloadNextEpisode: boolean;
   /** Show the compact Up Next pre-download event icons. */
@@ -443,7 +441,6 @@ export type Settings = {
   autoSyncApplyStructural: boolean;
   autoSyncDrift: boolean;
   subtitleAutoSyncAsr: boolean;
-  subtitleAutoSyncEngine: "automatic" | "moonshine";
   subtitleMoonshineLanguage: string;
   subtitleAutoSyncPivot: boolean;
   subtitleAutoSyncCrowd: boolean;
@@ -677,6 +674,12 @@ export type Settings = {
   animeOnlyInAnimeRoom: boolean;
   animeCwEnd: "hide" | "timer";
   cwAdvanceNext: boolean;
+  /** Experimental local anime identity pack used for CW grouping and tracker targeting. */
+  animeIdentityEnabled: boolean;
+  /** Opt-in, display-only repair of a checkpoint with proven native episode ownership. */
+  animeIdentityRepairEnabled: boolean;
+  /** Apply the verified anime episode only to live provider scrobbles. */
+  animeIdentityLiveScrobbleEnabled: boolean;
   cwHideCaughtUp: boolean;
   /** Whether Continue Watching may play an episode whose release date is still in the future. */
   cwPlayUnreleased: boolean;

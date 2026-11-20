@@ -21,6 +21,8 @@ import { readEmbedRect } from "@/lib/player/embed-rect";
 import { svpEnsureRunning, svpStatus } from "@/lib/svp";
 import { isSvpActiveForMedia } from "@/lib/player/svp-policy";
 import { ensureNativeMemory } from "@/lib/native-memory";
+import { isLocalEngineUrl } from "@/lib/stremio-server";
+import { withoutInitialBufferGate } from "@/lib/player/buffer-profile";
 import { pickBridge } from "../player-utils";
 
 function snapChangedIgnoringClock(a: PlayerSnapshot, b: PlayerSnapshot): boolean {
@@ -160,6 +162,15 @@ export function usePlayerBridge(params: {
       const getEmbedRect = () => readEmbedRect(videoMountRef.current);
       // Size manual buffer modes from the real machine, not the fallback.
       await ensureNativeMemory();
+      const mergedExtraOptions = [
+        mergeMpvOptions(settings, svpOn, { anime4k: anime4kOn }),
+        shaderCompanionOptions(settings),
+      ]
+        .filter(Boolean)
+        .join("\n");
+      const playerExtraOptions = isLocalEngineUrl(src.url)
+        ? withoutInitialBufferGate(mergedExtraOptions)
+        : mergedExtraOptions;
       const { bridge: choose, engine: chosen } = await pickBridge(want, src.notWebReady === true, {
         anime4k: anime4kOn,
         hdrToSdr: settings.playerHdrToSdr,
@@ -180,12 +191,7 @@ export function usePlayerBridge(params: {
             ? settings.playerSeparateDisplay.monitor
             : null,
         separateCoverTaskbar: settings.playerSeparateCoverTaskbar,
-        extraOptions: [
-          mergeMpvOptions(settings, svpOn, { anime4k: anime4kOn }),
-          shaderCompanionOptions(settings),
-        ]
-          .filter(Boolean)
-          .join("\n"),
+        extraOptions: playerExtraOptions,
         getEmbedRect,
         external: externalMpv
           ? {

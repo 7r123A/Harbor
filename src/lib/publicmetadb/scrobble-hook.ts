@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
+import type { LiveScrobbleResolution } from "@/lib/identity/use-live-scrobble";
 import { getPlaybackPosition } from "@/lib/player/playback-clock";
 import { useSettings } from "@/lib/settings";
 import type { PlayerSrc } from "@/lib/view";
@@ -21,10 +22,15 @@ const COMPLETION_RATIO = 0.9;
 const MIN_SAVE_INTERVAL_MS = 60_000;
 const SEEK_SAVE_DEBOUNCE_MS = 800;
 
-export function usePublicMetaDbScrobble({ src, snap }: { src: PlayerSrc; snap: Snap }): void {
+export function usePublicMetaDbScrobble({
+  src, snap, liveScrobble = { phase: "off", proof: null },
+}: { src: PlayerSrc; snap: Snap; liveScrobble?: LiveScrobbleResolution }): void {
   const { isConnected } = usePublicMetaDb();
   const { settings } = useSettings();
-  const enabled = isConnected && settings.publicmetadbScrobbleEnabled;
+  const verifiedTarget = liveScrobble.proof?.pmdbTarget ?? null;
+  const enabled = isConnected && settings.publicmetadbScrobbleEnabled &&
+    liveScrobble.phase !== "resolving" &&
+    (!liveScrobble.proof || verifiedTarget != null);
 
   const targetRef = useRef<PmdbTarget | null>(null);
   const durationRef = useRef(0);
@@ -47,8 +53,15 @@ export function usePublicMetaDbScrobble({ src, snap }: { src: PlayerSrc; snap: S
   const metaId = src.meta.id;
   const season = src.episode?.season;
   const episode = src.episode?.episode;
-  const key = `${metaId}|${season ?? ""}|${episode ?? ""}`;
+  const nativeProofKey = liveScrobble.phase === "resolving" ? "resolving"
+    : liveScrobble.proof
+      ? `${liveScrobble.proof.work.entryId}:${liveScrobble.proof.work.entryEpisode}:${JSON.stringify(verifiedTarget)}`
+      : liveScrobble.phase;
+  const key = `${metaId}|${season ?? ""}|${episode ?? ""}|${nativeProofKey}`;
   const lastKeyRef = useRef<string | null>(null);
+  // Keep the outgoing owner's eligibility: a new proof may render in
+  // `resolving` while the old verified session still needs a close save.
+  const previousEligibilityRef = useRef({ key, enabled });
 
   const clearPendingSeek = () => {
     if (pendingSeekTimerRef.current != null) {
@@ -107,17 +120,21 @@ export function usePublicMetaDbScrobble({ src, snap }: { src: PlayerSrc; snap: S
     const prevKey = lastKeyRef.current;
     if (prevKey && prevKey !== key) {
       clearPendingSeek();
-      if (enabledRef.current) {
+      if (previousEligibilityRef.current.key === prevKey &&
+          previousEligibilityRef.current.enabled) {
         const t = targetRef.current;
         const d = durationRef.current;
         const p = lastPosRef.current;
         if (t && d >= STUB_MAX_SEC && p > 0) saveOrWatched(t, p, d);
       }
     }
+    // A changed verified owner owns a new playback ID. Ordinary metadata
+    // enrichment of the *same* proof must keep the completion guard intact.
     if (prevKey !== key || !playbackRef.current) {
       if (playbackRef.current) endPmdbPlayback(playbackRef.current);
       playbackRef.current = startPmdbPlayback();
       lastKeyRef.current = key;
+      previousEligibilityRef.current = { key, enabled };
       durationRef.current = snap.durationSec >= STUB_MAX_SEC ? snap.durationSec : 0;
       maxPosRef.current = 0;
       lastPosRef.current = 0;
@@ -132,8 +149,12 @@ export function usePublicMetaDbScrobble({ src, snap }: { src: PlayerSrc; snap: S
 
     void (async () => {
       let resolved: PmdbTarget | null = null;
-      if (src.episode) {
-        resolved = await resolvePmdbEpisodeTarget(
+      if (src.episode && liveScrobble.proof && !verifiedTarget) {
+        // A verified native episode without a verified PMDB window must not
+        // write a different season or title through catalog fallbacks.
+        resolved = null;
+      } else if (src.episode) {
+        resolved = verifiedTarget ?? await resolvePmdbEpisodeTarget(
           metaId,
           {
             season: src.episode.season,
@@ -177,7 +198,16 @@ export function usePublicMetaDbScrobble({ src, snap }: { src: PlayerSrc; snap: S
     src.episode?.absoluteNumber,
     src.imdbId,
     src.meta.type,
+    verifiedTarget,
+    liveScrobble.proof,
   ]);
+
+  // The target effect runs first on each change, so it can flush the outgoing
+  // session with the previous eligibility before recording the incoming one.
+  useEffect(() => {
+    if (lastKeyRef.current === key)
+      previousEligibilityRef.current = { key, enabled };
+  }, [key, enabled]);
 
   // Active playback interval: periodically saves progress & detects seeks.
   useEffect(() => {

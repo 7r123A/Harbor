@@ -386,6 +386,11 @@ const music: Record<string, string> = {
   "music.audio.preferredSource": "Preferred source",
   "music.audio.preferredSourceHint":
     "Harbor plays from this first, then falls back to any source that works.",
+  "music.audio.videoQuality": "Default video quality",
+  "music.audio.videoQualityHint":
+    "Used for music videos. A quality you pick while watching lasts until the next song.",
+  "Video quality": "Video quality",
+  Auto: "Auto",
   "music.spotify.connect": "Spotify Premium",
   "music.spotify.connectDetail": "Connect once for native, ad-free playback.",
   "music.spotify.connectAction": "Connect",
@@ -471,6 +476,7 @@ const music: Record<string, string> = {
   "music.row.artistsSubtitle": "From your library and your history",
   "music.row.charts": "Charts",
   "music.row.chartsSubtitle": "What listeners are actually playing right now",
+  "music.row.ytPlaylists": "Your YouTube Music playlists",
   "music.habit.season.spooky": "Spooky season",
   "music.habit.season.spooky.subtitle": "Halloween is close enough to justify it",
   "music.habit.season.festive": "Festive",
@@ -563,6 +569,21 @@ const music: Record<string, string> = {
   "music.connections.capability.play": "Play",
   "music.connections.capability.library": "Library",
   "music.connections.capability.scrobble": "Scrobble",
+  "music.youtubeAccount.intro":
+    "Harbor browses YouTube Music anonymously. Sign in inside the YouTube Music window to use your own home, mixes and a signed-in stream.",
+  "music.youtubeAccount.signedIn": "Signed in as {account}.",
+  "music.youtubeAccount.open": "Open YouTube Music",
+  "music.youtubeAccount.use": "Use this session",
+  "music.youtubeAccount.checking": "Checking the session",
+  "music.youtubeAccount.signOut": "Sign out",
+  "music.youtubeAccount.hint":
+    "Sign in inside the YouTube Music window, then choose Use this session.",
+  "music.youtubeAccount.sessionNote":
+    "Harbor borrows the session from that window and keeps it in memory; no password is stored.",
+  "music.ytLibrary.title": "YouTube Music library",
+  "music.ytLibrary.notSignedIn":
+    "Sign in to YouTube Music to see your playlists, liked songs and artists here.",
+  "music.ytLibrary.empty": "Your YouTube Music library is empty.",
   "music.footer.setup": "Setup",
   "music.footer.harbor": "Harbor",
   "music.footer.connections": "Connections",
@@ -715,7 +736,7 @@ const music: Record<string, string> = {
   "music.spotifySetup.pairBody":
     "Play Spotify directly in Harbor with Premium. Enter the pairing code at spotify.com/pair and approve it. No Developer app or Client ID is required.",
   "music.spotifySetup.intro":
-    "Pair Spotify to stream music in Harbor. Spotify Premium is required. Browsing with your own Developer app is optional.",
+    "Pair Spotify to stream music in Harbor. Spotify Premium is required. A separate Developer app is recommended for browsing.",
   "music.spotifySetup.browseOptional": "Optional",
   "music.spotify.browsingLabel": "Browsing",
   "music.spotify.browsingOwnApp": "Own app authorized",
@@ -735,7 +756,7 @@ const music: Record<string, string> = {
   "music.spotifySetup.pairManual": "Advanced Spotify browsing",
   "music.spotifySetup.browseRecommended": "Recommended",
   "music.spotifySetup.browseBody":
-    "Optional: authorize your own Spotify Developer app for a separate browsing quota. This does not enable local playback.",
+    "Authorize your own Spotify Developer app for a separate browsing quota. Recommended for browsing, not required for playback.",
   "music.spotifyBrowse.title": "Browsing shares Spotify's rate limit",
   "music.spotifyBrowse.body":
     "Playback is paired and working. Browsing currently shares librespot's Spotify quota, which saturates often — sign in with your own Spotify app to give browsing its own quota. Playback stays paired.",

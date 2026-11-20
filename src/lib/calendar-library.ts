@@ -12,7 +12,10 @@ import {
   tmdbTvUpcoming,
 } from "./providers/tmdb/tmdb-calendar";
 import { aniZipByAnilist, aniZipByKitsu, aniZipByMal, pickEpisodeTitle } from "./providers/anizip";
-import { imdbToKitsu, tmdbTvToKitsu } from "./providers/anime-mapping";
+import { anilistAnimeEntry } from "./anilist/entry";
+import { fetchAnilistAiringSchedule, type AnilistAiringSchedule } from "./anilist/next-airing";
+import { imdbToKitsu, kitsuToAnilist, tmdbTvToKitsu } from "./providers/anime-mapping";
+import { resolveTrackerAnimeEntry } from "./anime-tracker-entry";
 import { franchiseRoot } from "./providers/anime-franchise-root";
 import type { CalendarItem } from "./calendar-core";
 import { localDateTimeFromIso } from "./calendar-time";
@@ -109,6 +112,26 @@ function animeNumericId(id: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Preserve entry-relative episode numbers when correcting a library calendar. */
+export function applyAnilistCalendarDates(
+  episodes: ResolvedEpisode[],
+  schedule: AnilistAiringSchedule | null,
+): void {
+  if (!schedule) return;
+  // A single AniList entry must never date episodes from another cour.
+  const seasons = new Set(episodes.filter((ep) => ep.season > 0).map((ep) => ep.season));
+  if (seasons.size !== 1) return;
+  for (const episode of episodes) {
+    if (episode.season <= 0) continue;
+    const airingAt = schedule[episode.number];
+    if (!Number.isFinite(airingAt) || airingAt <= 0) continue;
+    const { date, time, atMs } = localDateTimeFromIso(new Date(airingAt * 1000).toISOString());
+    episode.airDate = date;
+    episode.releaseTime = time;
+    episode.releaseAtMs = atMs;
+  }
+}
+
 async function animeUpcoming(
   id: string,
   inWindow: (date: string) => boolean,
@@ -125,7 +148,7 @@ async function animeUpcoming(
   const episodes: ResolvedEpisode[] = [];
   for (const [k, ep] of Object.entries(mapping.episodes)) {
     const { date, time, atMs } = localDateTimeFromIso(ep.airDateUtc ?? ep.airDate ?? ep.airdate);
-    if (!date || !inWindow(date)) continue;
+    if (!date) continue;
     episodes.push({
       season: ep.seasonNumber ?? 1,
       number: ep.episodeNumber ?? (Number(k) || 0),
@@ -138,6 +161,19 @@ async function animeUpcoming(
       voteAverage: 0,
     });
   }
+  // AniZip episode dates can lag the cour by a week. Prefer the exact AniList
+  // schedule for the requested entry, not a sibling sharing its TVDB series.
+  const anilistId = id.startsWith("anilist:")
+    ? numId
+    : id.startsWith("mal:")
+      ? ((await anilistAnimeEntry(numId, "mal").catch(() => null))?.id ?? null)
+      : await kitsuToAnilist(numId).catch(() => null);
+  if (anilistId != null) {
+    const schedule = await fetchAnilistAiringSchedule(anilistId).catch(() => null);
+    applyAnilistCalendarDates(episodes, schedule);
+  }
+  // AniList may move an episode across month boundaries; filter after correction.
+  const upcomingEpisodes = episodes.filter((episode) => inWindow(episode.airDate));
   // AniZip has no series-poster field, only small per-episode stills, so the
   // per-episode images are frequently low-resolution. Resolve a proper poster
   // via the TMDB cross-reference AniZip already supplies, when available.
@@ -151,7 +187,7 @@ async function animeUpcoming(
     name: mapping.titles?.en ?? mapping.titles?.["x-jat"] ?? "",
     poster,
     isAnime: true,
-    episodes,
+    episodes: upcomingEpisodes,
   };
 }
 
@@ -197,36 +233,88 @@ async function cinemetaSeriesUpcoming(
   return { name: m.name, poster: m.poster ?? null, isAnime: isAnimationGenre(m.genres), episodes };
 }
 
+/** Use verified native cour episode owners for IMDb/TMDB library calendar rows. */
+async function correctCatalogAnimeAirings(
+  metaId: string,
+  series: ResolvedSeries,
+  year: number,
+  month: number,
+): Promise<ResolvedSeries> {
+  if (!series.isAnime || series.episodes.length === 0) return series;
+  const start = new Date(year, month, -7).getTime();
+  const end = new Date(year, month + 1, 8).getTime();
+  // Keep the same-date sequel rather than a parent S1E14 proxy for S2E03.
+  const highestSeason = new Map<string, number>();
+  for (const ep of series.episodes) {
+    highestSeason.set(ep.airDate, Math.max(highestSeason.get(ep.airDate) ?? 0, ep.season));
+  }
+  const episodes = series.episodes.filter((ep) => ep.season === highestSeason.get(ep.airDate));
+  const near = episodes.filter((ep) => {
+    const date = Date.parse(ep.airDate);
+    return ep.season > 0 && ep.number > 0 && Number.isFinite(date) && date >= start && date < end;
+  });
+  await mapLimit(near, 4, async (episode) => {
+    const owner = await resolveTrackerAnimeEntry(metaId, {
+      season: episode.season,
+      episode: episode.number,
+    }).catch(() => null);
+    if (!owner) return;
+    const match = /^anilist:([1-9]\d*)$/.exec(owner.id);
+    const kitsu = /^kitsu:([1-9]\d*)$/.exec(owner.id);
+    const anilistId = match
+      ? Number(match[1])
+      : kitsu
+        ? await kitsuToAnilist(Number(kitsu[1])).catch(() => null)
+        : null;
+    if (anilistId == null) return;
+    const schedule = await fetchAnilistAiringSchedule(anilistId).catch(() => null);
+    const airingAt = schedule?.[owner.episode];
+    if (!Number.isFinite(airingAt) || !airingAt || airingAt <= 0) return;
+    const { date, time, atMs } = localDateTimeFromIso(new Date(airingAt * 1000).toISOString());
+    episode.airDate = date;
+    episode.releaseTime = time;
+    episode.releaseAtMs = atMs;
+  });
+  return { ...series, episodes };
+}
+
 async function seriesUpcoming(
   c: Candidate,
   inWindow: (date: string) => boolean,
   tmdbKey: string,
+  year: number,
+  month: number,
 ): Promise<ResolvedSeries | null> {
   if (isAnimeId(c.id)) return animeUpcoming(c.id, inWindow, tmdbKey);
   if (c.id.startsWith("tt")) {
     const cm = await cinemetaSeriesUpcoming(c.id, inWindow);
-    if (cm) return cm;
+    if (cm) return correctCatalogAnimeAirings(c.id, cm, year, month);
   }
   if (tmdbKey) {
     const t = await tmdbSeries(c.id, inWindow, tmdbKey).catch(() => null);
-    if (t) return t;
+    if (t) return correctCatalogAnimeAirings(c.id, t, year, month);
   } else if (c.id.startsWith("tt")) {
     const up = await tvmazeUpcoming(c.id.split(":")[0], inWindow).catch(() => null);
     if (up) {
-      return {
-        name: up.show.name,
-        poster: up.show.image,
-        isAnime: up.show.isAnime,
-        episodes: up.episodes.map((e) => ({
-          season: e.season,
-          number: e.number,
-          name: e.name,
-          airDate: e.airdate,
-          image: e.image,
-          overview: e.summary,
-          voteAverage: 0,
-        })),
-      };
+      return correctCatalogAnimeAirings(
+        c.id,
+        {
+          name: up.show.name,
+          poster: up.show.image,
+          isAnime: up.show.isAnime,
+          episodes: up.episodes.map((e) => ({
+            season: e.season,
+            number: e.number,
+            name: e.name,
+            airDate: e.airdate,
+            image: e.image,
+            overview: e.summary,
+            voteAverage: 0,
+          })),
+        },
+        year,
+        month,
+      );
     }
   }
   return null;
@@ -445,11 +533,14 @@ export async function fetchLibraryCalendar(
 async function resolveSeriesCached(
   c: SavedCandidate,
   tmdbKey: string,
+  year: number,
+  month: number,
 ): Promise<ResolvedSeries | null> {
-  const hit = seriesCache.get(c.id);
+  const cacheKey = `${c.id}:${year}-${month}`;
+  const hit = seriesCache.get(cacheKey);
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.series;
-  const series = await seriesUpcoming(c, wideWindow(), tmdbKey).catch(() => null);
-  seriesCache.set(c.id, { at: Date.now(), series });
+  const series = await seriesUpcoming(c, wideWindow(), tmdbKey, year, month).catch(() => null);
+  seriesCache.set(cacheKey, { at: Date.now(), series });
   return series;
 }
 
@@ -582,7 +673,7 @@ export async function resolveSavedCalendar(
     mapLimit(
       series,
       seriesConc,
-      async (c) => ({ c, r: await resolveSeriesCached(c, opts.tmdbKey) }),
+      async (c) => ({ c, r: await resolveSeriesCached(c, opts.tmdbKey, year, month) }),
       (rows) => {
         seriesResults = rows;
         emitProgress();

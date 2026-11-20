@@ -50,6 +50,12 @@ function harness(successfulScheme: "tmdb" | "imdb") {
       isStremioLocalAddon: () => false,
     },
     "./cached": { hasUncachedMarker: () => false },
+    "./addon-priority": {
+      declaresStream: (a: any) =>
+        (a.manifest.resources ?? []).some((r: any) =>
+          typeof r === "string" ? r === "stream" : r.name === "stream",
+        ),
+    },
     "@/lib/torrent/magnet": { infoHashFromSources: () => null, infoHashFromUrl: () => null },
     "./plugins/addon": {
       isPluginAddon: () => false,

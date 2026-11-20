@@ -19,7 +19,8 @@ function playbackAt(i: LibraryItem): number {
   return resume?.t ?? 0;
 }
 
-function progressRatio(i: LibraryItem): number {
+// Copy ranking uses only stored offset; dismissals also consider resume progress.
+function rankProgressRatio(i: LibraryItem): number {
   const duration = i.state?.duration ?? 0;
   return duration > 0 ? Math.min(1, (i.state?.timeOffset ?? 0) / duration) : 0;
 }
@@ -32,7 +33,7 @@ export function isFurther(incoming: LibraryItem, existing: LibraryItem): boolean
   const incomingRank = episodeRank(incoming);
   const existingRank = episodeRank(existing);
   if (incomingRank !== existingRank) return incomingRank > existingRank;
-  return progressRatio(incoming) > progressRatio(existing);
+  return rankProgressRatio(incoming) > rankProgressRatio(existing);
 }
 
 function memberKey(i: LibraryItem): string {
@@ -79,6 +80,19 @@ export function titleKeys(item: LibraryItem): string[] {
 function sharesContentId(a: LibraryItem, b: LibraryItem): boolean {
   const ids = new Set(itemIds(b));
   return itemIds(a).some((id) => ids.has(id));
+}
+
+/** The show's IMDb id: the record's own id first, then a stored alias. */
+export function imdbIdOf(item: LibraryItem): string | null {
+  if (/^tt\d+$/.test(item._id)) return item._id;
+  return item.altIds?.find((id) => /^tt\d+$/.test(id)) ?? null;
+}
+
+/** Two records that both name an IMDb title, and name different ones. */
+export function differentImdbTitles(a: LibraryItem, b: LibraryItem): boolean {
+  const left = imdbIdOf(a);
+  const right = imdbIdOf(b);
+  return left != null && right != null && left !== right;
 }
 
 /** Keep every source checkpoint so dismissing the survivor clears all copies. */
@@ -137,6 +151,16 @@ export function dedupeCwItems(items: LibraryItem[], limit: number): LibraryItem[
     // Identity is judged against the card that is actually shown: sharing a
     // content id verifies the pair, whichever index found it.
     if (!sharesContentId(item, existing)) {
+      // Two different IMDb titles are two different shows; a shared name is
+      // not enough to give one card the other's slot.
+      if (differentImdbTitles(existing, item)) {
+        if (out.length >= limit) continue;
+        const next = out.length;
+        out.push(item);
+        for (const id of itemIds(item)) idIndex.set(id, next);
+        for (const key of keys) if (!nameIndex.has(key)) nameIndex.set(key, next);
+        continue;
+      }
       // Track the ids so a later copy of this duplicate still finds the card,
       // without promoting them to verified aliases.
       for (const id of itemIds(item)) aliasIndex.set(id, index);

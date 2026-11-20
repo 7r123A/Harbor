@@ -18,10 +18,14 @@ unsafe impl libmpv2::GetData for NativeFlag {
 }
 use serde::Serialize;
 
+/// Position updates reach the host at most this often; see `spawn_mpv_events`.
+const POSITION_EVENT_GAP: std::time::Duration = std::time::Duration::from_millis(200);
+
 #[derive(Default)]
 struct Deck {
     player: Option<Arc<Mpv>>,
     generation: Arc<AtomicU64>,
+    threads: Vec<std::thread::JoinHandle<()>>,
     track_id: Option<String>,
     connector_id: Option<String>,
     source_url: Option<String>,
@@ -51,6 +55,7 @@ pub struct MusicMpvEngine {
     meter_enabled: bool,
     broadcast_device: Option<String>,
     broadcast_generation: Arc<AtomicU64>,
+    sync_threads: Vec<std::thread::JoinHandle<()>>,
 }
 
 impl Default for MusicMpvEngine {
@@ -58,13 +63,44 @@ impl Default for MusicMpvEngine {
         Self { decks: [
             Deck { volume: 0.82, gain: 1.0, ..Deck::default() },
             Deck { volume: 0.82, gain: 0.0, ..Deck::default() },
-        ], crossfade: -1.0, settings: MusicAudioSettings::default(), meter_enabled: false, broadcast_device: None, broadcast_generation: Arc::new(AtomicU64::new(0)) }
+        ], crossfade: -1.0, settings: MusicAudioSettings::default(), meter_enabled: false, broadcast_device: None, broadcast_generation: Arc::new(AtomicU64::new(0)), sync_threads: Vec::new() }
     }
 }
 
 fn deck_index(deck: u8) -> Result<usize, String> {
     (deck <= 1).then_some(usize::from(deck))
         .ok_or_else(|| "Music deck must be 0 or 1".into())
+}
+
+/// Replacing a session must leave nothing of the outgoing one alive: libmpv teardown
+/// resets FFmpeg's process-wide callback, so a context destroyed after its successor
+/// starts can take the new player down with it. Signal the event loop, join it, then drop
+/// the player. Concurrent decks (A/B, broadcast) remain deliberate and unaffected.
+fn retire_player(deck: &mut Deck) -> Result<(), String> {
+    deck.generation.fetch_add(1, Ordering::SeqCst);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    join_threads(&mut deck.threads, deadline)?;
+    deck.player = None;
+    Ok(())
+}
+
+/// Join finished workers, bounded by `deadline`. On timeout every handle stays tracked,
+/// so a later retire can still finish the job instead of detaching threads.
+fn join_threads(
+    threads: &mut Vec<std::thread::JoinHandle<()>>,
+    deadline: std::time::Instant,
+) -> Result<(), String> {
+    while let Some(thread) = threads.pop() {
+        while !thread.is_finished() {
+            if std::time::Instant::now() >= deadline {
+                threads.push(thread);
+                return Err("Music player is still shutting down. Try again.".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let _ = thread.join();
+    }
+    Ok(())
 }
 
 fn checked_level(value: f64) -> Result<f64, String> {
@@ -150,6 +186,8 @@ fn new_player(label: &str) -> Result<Mpv, String> {
             ("video", "no"), ("vo", "null"), ("force-window", "no"),
             ("terminal", "no"), ("idle", "yes"), ("keep-open", "yes"),
             ("ytdl", "no"), ("volume-max", "600"),
+            // mpv's default of 0 lets a stalled HTTP read wait forever.
+            ("network-timeout", "30"),
         ] {
             init.set_property(key, value)?;
         }
@@ -204,8 +242,18 @@ impl MusicMpvEngine {
         if track_id.len() > 1024 {
             return Err("Music track identifier too long".into());
         }
+        // A track change during a broadcast retires the mirror and deck B before the
+        // replacement primary exists, so no outgoing context outlives a new one.
+        let restart_broadcast = if index == 0 { self.broadcast_device.clone() } else { None };
+        if restart_broadcast.is_some() {
+            self.broadcast_stop()?;
+        }
         // Stop the prior event loop before replacing its native session.
-        let generation = self.decks[index].generation.fetch_add(1, Ordering::SeqCst) + 1;
+        {
+            let deck = &mut self.decks[index];
+            retire_player(deck)?;
+        }
+        let generation = self.decks[index].generation.load(Ordering::SeqCst);
         let player = new_player(if index == 0 { "Harbor Music" } else { "Harbor Music B" })?;
         apply_audio(&player,&self.settings)?;
         apply_stream_headers(&player,headers)?;
@@ -218,17 +266,23 @@ impl MusicMpvEngine {
         // as a single argument rather than interpolated into a shell command.
         let player = Arc::new(player);
         let spectrum = Arc::new(Mutex::new(spectrum::Spectrum::default()));
-        spawn_mpv_events(player.clone(), self.decks[index].generation.clone(), generation,
+        let thread = spawn_mpv_events(player.clone(), self.decks[index].generation.clone(), generation,
             track_id.to_owned(), connector_id.map(str::to_owned), deck, spectrum.clone())?;
-        mpv_argv_command(&player, &["loadfile", url, "replace"])?;
-        self.decks[index].player = Some(player);
+        // Track the session before the fallible load: a failed loadfile must still be
+        // retired with its worker instead of leaving a detached thread and player behind.
+        self.decks[index].threads.push(thread);
+        self.decks[index].player = Some(player.clone());
+        if let Err(error) = mpv_argv_command(&player, &["loadfile", url, "replace"]) {
+            let _ = retire_player(&mut self.decks[index]);
+            return Err(error);
+        }
         self.decks[index].track_id = Some(track_id.to_owned());
         self.decks[index].connector_id = connector_id.map(str::to_owned);
         self.decks[index].source_url=Some(url.to_owned());
         self.decks[index].volume = self.settings.clamp_volume(volume);
         self.decks[index].spectrum = spectrum;
         if index==0 {
-            if let Some(device)=self.broadcast_device.clone() {
+            if let Some(device)=restart_broadcast {
                 self.broadcast_start(&device)?;
             }
         }
@@ -291,6 +345,7 @@ impl MusicMpvEngine {
         let track=self.decks[0].track_id.clone();
         let connector=self.decks[0].connector_id.clone();
         if let (Some(source),Some(track))=(source,track) {
+            retire_player(&mut self.decks[1])?;
             let player=new_player("Harbor Music Broadcast")?;
             let mut settings=self.settings.clone();
             settings.device=device.to_owned();
@@ -300,18 +355,23 @@ impl MusicMpvEngine {
                 .map_err(|e|e.to_string())?;
             let original=self.snapshot(0)?;
             let player=Arc::new(player);
-            let generation=self.decks[1].generation.fetch_add(1,Ordering::SeqCst)+1;
+            let generation=self.decks[1].generation.load(Ordering::SeqCst);
             let spectrum=Arc::new(Mutex::new(spectrum::Spectrum::default()));
-            spawn_mpv_events(player.clone(),self.decks[1].generation.clone(),generation,
+            let thread=spawn_mpv_events(player.clone(),self.decks[1].generation.clone(),generation,
                 track.clone(),connector.clone(),1,spectrum.clone())?;
-            mpv_argv_command(&player,&["loadfile",&source,"replace"])?;
+            // Track the session before the fallible load, exactly as normal playback does.
+            self.decks[1].threads.push(thread);
+            self.decks[1].player=Some(player.clone());
+            if let Err(error)=mpv_argv_command(&player,&["loadfile",&source,"replace"]){
+                let _=retire_player(&mut self.decks[1]);
+                return Err(error);
+            }
             if let Some(position)=original.position_seconds.filter(|value|*value>0.05){
                 let _=mpv_argv_command(&player,&["seek",&position.to_string(),"absolute"]);
             }
             if original.paused.unwrap_or(false){
                 let _=player.set_property("pause",true);
             }
-            self.decks[1].player=Some(player);
             self.decks[1].track_id=Some(track);
             self.decks[1].connector_id=connector;
             self.decks[1].source_url=Some(source);
@@ -324,7 +384,7 @@ impl MusicMpvEngine {
             let active=self.broadcast_generation.clone();
             let source=source.clone();
             let mirror=mirror.clone();
-            std::thread::spawn(move||{
+            let handle=std::thread::spawn(move||{
                 while active.load(Ordering::SeqCst)==generation {
                     std::thread::sleep(std::time::Duration::from_millis(250));
                     if active.load(Ordering::SeqCst)!=generation {break;}
@@ -339,15 +399,18 @@ impl MusicMpvEngine {
                     }
                 }
             });
+            self.sync_threads.push(handle);
         }
         Ok(self.broadcast_status())
     }
 
     pub fn broadcast_stop(&mut self)->Result<serde_json::Value,String>{
-        self.broadcast_generation.fetch_add(1,Ordering::SeqCst);
+        self.retire_sync_threads()?;
         if self.broadcast_device.is_some(){
+            // Retire deck B first: if its worker will not exit, the broadcast stays marked
+            // active so a later play() cannot slip in a new primary beside the old mirror.
+            self.stop_deck(1)?;
             self.broadcast_device=None;
-            self.stop(1)?;
         }
         Ok(self.broadcast_status())
     }
@@ -439,16 +502,35 @@ impl MusicMpvEngine {
 
     pub fn stop(&mut self, deck: u8) -> Result<(), String> {
         let index = deck_index(deck)?;
-        self.decks[index].generation.fetch_add(1, Ordering::SeqCst);
-        self.decks[index].player = None;
+        if index == 1 && self.broadcast_device.is_some() {
+            // Deck B is the broadcast mirror: stopping it stops the broadcast, so its
+            // synchronization worker is retired with it instead of outliving the player.
+            return self.broadcast_stop().map(|_| ());
+        }
+        self.stop_deck(index)
+    }
+
+    fn stop_deck(&mut self, index: usize) -> Result<(), String> {
+        if index==0 && self.broadcast_device.is_some(){
+            self.retire_sync_threads()?;
+            // The mirror outlived its source: retire deck B before deck A.
+            self.stop_deck(1)?;
+        }
+        retire_player(&mut self.decks[index])?;
         self.decks[index].track_id = None;
         self.decks[index].connector_id = None;
         self.decks[index].source_url=None;
-        if index==0 && self.broadcast_device.is_some(){
-            self.broadcast_generation.fetch_add(1,Ordering::SeqCst);
-            self.stop(1)?;
-        }
         Ok(())
+    }
+
+    /// The broadcast mirror holds both deck players. Bump its generation and join it so
+    /// the outgoing sessions are released before any replacement is created.
+    fn retire_sync_threads(&mut self) -> Result<(), String> {
+        self.broadcast_generation.fetch_add(1, Ordering::SeqCst);
+        join_threads(
+            &mut self.sync_threads,
+            std::time::Instant::now() + std::time::Duration::from_secs(2),
+        )
     }
 
     pub fn crossfade(&mut self, position: f64) -> Result<(), String> {
@@ -536,7 +618,7 @@ fn spawn_mpv_events(
     connector_id: Option<String>,
     deck: u8,
     spectrum: Arc<Mutex<spectrum::Spectrum>>,
-) -> Result<(), String> {
+) -> Result<std::thread::JoinHandle<()>, String> {
     let mut context=EventContext::new(player.ctx);
     for (name,format,id) in [
         ("time-pos",Format::Double,1),("duration",Format::Double,2),
@@ -546,8 +628,9 @@ fn spawn_mpv_events(
         context.observe_property(name,format,id)
             .map_err(|e|format!("Music event subscription: {e}"))?;
     }
-    std::thread::spawn(move || {
+    Ok(std::thread::spawn(move || {
         let mut eof_signaled = false;
+        let mut last_position = std::time::Instant::now() - POSITION_EVENT_GAP;
         while active_generation.load(Ordering::SeqCst)==generation {
             let Some(Ok(event))=context.wait_event(0.25) else {continue};
             if let Event::LogMessage {prefix,text,..} = &event {
@@ -558,6 +641,14 @@ fn spawn_mpv_events(
             }
             if matches!(event,Event::Seek){
                 if let Ok(mut value)=spectrum.lock(){value.clear();}
+            }
+            // Observed `time-pos` fires at mpv's own cadence, often many times a second. Each
+            // event is a JSON line on the event pipe plus an IPC message and a host re-render, so
+            // emitting all of them saturates the UI main thread for no extra accuracy. Keep the
+            // same 5 Hz the in-process deck delivers.
+            if matches!(event,Event::PropertyChange{name:"time-pos",..}) {
+                if last_position.elapsed()<POSITION_EVENT_GAP {continue;}
+                last_position=std::time::Instant::now();
             }
             // keep-open retains the file at EOF, so EndFile may never arrive.
             let end_reason = playback_end_reason(&event, &mut eof_signaled);
@@ -590,14 +681,28 @@ fn spawn_mpv_events(
                     "trackId":track_id,"connectorId":connector_id,"deck":deck}));
             }
         }
-    });
-    Ok(())
+    }))
 }
 #[cfg(test)]
 mod tests {
     use super::*;
     fn eof_event(reached: bool) -> Event<'static> {
         Event::PropertyChange { name: "eof-reached", change: PropertyData::Flag(reached), reply_userdata: 5 }
+    }
+
+    #[test]
+    fn a_timed_out_retire_keeps_every_worker_tracked() {
+        let mut threads = vec![std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(400))
+        })];
+        assert!(join_threads(&mut threads, std::time::Instant::now()).is_err());
+        assert_eq!(threads.len(), 1, "an unfinished worker must stay tracked");
+        assert!(join_threads(
+            &mut threads,
+            std::time::Instant::now() + std::time::Duration::from_secs(2)
+        )
+        .is_ok());
+        assert!(threads.is_empty(), "a later retire finishes the job");
     }
 
     #[test]

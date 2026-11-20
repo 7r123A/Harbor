@@ -1068,11 +1068,13 @@ export function buildNuvioPlaybackItems(
  * Fetches Nuvio playback items for a profile slot, pulling latest from cloud
  * and safely falling back to local cache if network is unavailable.
  */
+export type NuvioPlaybackFetchResult = { items: LibraryItem[]; fresh: boolean };
+
 export async function fetchNuvioPlaybackItems(
   targetSlot?: number,
   force = false,
-): Promise<LibraryItem[]> {
-  if (!isNuvioSignedIn()) return [];
+): Promise<NuvioPlaybackFetchResult> {
+  if (!isNuvioSignedIn()) return { items: [], fresh: false };
 
   const accountId = getNuvioAccountId();
   const activeSlot = resolveNuvioProfileIndex();
@@ -1100,7 +1102,10 @@ export async function fetchNuvioPlaybackItems(
     getNuvioAccountId() !== accountId ||
     resolveNuvioProfileIndex() !== activeSlot
   )
-    return [];
+    return { items: [], fresh: false };
+  // A disk-cache fallback is a valid card source but is not a fresh read; the
+  // external-CW refresh must not treat it as a successful synchronization.
+  const fresh = records !== null && watched !== null && dismissedKeys !== null;
   const safeAccountId = accountId ?? undefined;
   if (records === null) {
     records = readCachedWatchProgress(profileIndex, safeAccountId);
@@ -1120,5 +1125,5 @@ export async function fetchNuvioPlaybackItems(
     cwKeepsCaughtUpForTimer(),
   );
   writeCachedNuvioPlaybackItems(profileIndex, items, safeAccountId);
-  return items;
+  return { items, fresh };
 }

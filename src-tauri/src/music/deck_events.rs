@@ -144,6 +144,19 @@ pub(super) fn spawn_event_loop(loop_state: EventLoop) {
                         });
                     }
                     let shutdown = matches!(event, Event::Shutdown);
+                    if matches!(event, Event::FileLoaded) {
+                        crate::music::trace::log(format!("file-loaded track={}", track.id));
+                    }
+                    if let Event::EndFile(reason) = &event {
+                        crate::music::trace::log(format!(
+                            "end-file reason={reason} track={}",
+                            track.id
+                        ));
+                        // A URL that failed mid-play must not be handed to mpv again.
+                        if *reason == 4 {
+                            forget_dead_stream(&app, &track);
+                        }
+                    }
                     if let Some(mut payload) = event_payload(event) {
                         payload["trackId"] = json!(track.id);
                         payload["connectorId"] = json!(track.connector_id);
@@ -171,6 +184,12 @@ pub(super) fn spawn_event_loop(loop_state: EventLoop) {
         }
         drop(mpv);
     });
+}
+
+/// A failed stream URL stays valid in the cache until it expires, so a retry replayed the
+/// same dead URL. Dropping it forces the next attempt to resolve a fresh one.
+fn forget_dead_stream(app: &AppHandle, track: &MusicTrack) {
+    crate::music::forget_dead_stream(app, &track.id);
 }
 
 pub(super) fn spawn_drain_loop(

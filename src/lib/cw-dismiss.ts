@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { noteNotify } from "./render-cause";
 import { clearResume, readResumeEntry } from "./resume";
+import { flattenCwSourceMembers } from "./cw-members";
 import { setItemWithRecovery } from "./storage-recovery";
 import { episodeFromVideoId, type LibraryItem } from "./stremio";
 import { cloudLibraryPut } from "./stremio-write-queue";
@@ -175,7 +176,10 @@ function parseMs(v: unknown): number {
   return Number.isFinite(p) ? p : 0;
 }
 
-function resolveEpisode(item: LibraryItem): { season?: number; episode?: number } {
+// Resume matching intentionally accepts partial coordinates: a known season may
+// survive while the episode comes from the video id. Display coordinates must use
+// resolvedEpisodeCoords() instead.
+export function resolveEpisode(item: LibraryItem): { season?: number; episode?: number } {
   const vid = item.state?.video_id ?? "";
   const kitsuThreeSeg = /^(kitsu|mal|anilist|anidb):/.test(item._id) && vid.split(":").length === 3;
   const se = kitsuThreeSeg ? null : episodeFromVideoId(item.state?.video_id);
@@ -196,7 +200,7 @@ function itemActivity(item: LibraryItem): number {
   return Math.max(t, entry?.t ?? 0);
 }
 
-function progressRatio(item: LibraryItem): number {
+function dismissProgressRatio(item: LibraryItem): number {
   const duration = item.state?.duration ?? 0;
   if (!(duration > 0)) return 0;
   const { season, episode } = resolveEpisode(item);
@@ -299,7 +303,7 @@ function isDismissedCheckpoint(
   const curVid = item.state?.video_id;
   // Further-ahead position on the same episode un-dismisses even when its timestamp
   // predates the dismissal (e.g. dismissed after watching elsewhere).
-  if (pos != null && progressRatio(item) > pos.p + 0.01) {
+  if (pos != null && dismissProgressRatio(item) > pos.p + 0.01) {
     if (season === pos.s && episode === pos.e) return false;
   }
   if (dismissedVid && typeof curVid === "string" && curVid) {
@@ -497,7 +501,11 @@ export function dismissCw(
 ): void | Promise<CwDismissResult> {
   loadDismissed();
   const providerSources = providerDismissSources();
-  const members = (item as LibraryItem & { cwMembers?: LibraryItem[] }).cwMembers;
+  const rawMembers = (item as LibraryItem & { cwMembers?: LibraryItem[] }).cwMembers;
+  // Accept old/nested group shapes as well as the new flat groups. A tracker
+  // source buried inside an earlier local+provider merge still needs its own
+  // dismissal marker and provider cleanup.
+  const members = rawMembers?.length ? flattenCwSourceMembers(rawMembers) : undefined;
   if (members?.length) {
     // A provider's pause time can be ahead of the local clock. The dismissal
     // must cover every member's activity or the hidden survivor's member
@@ -550,7 +558,7 @@ export function dismissCw(
       const vid = typeof member.state?.video_id === "string" ? member.state.video_id : undefined;
       const keys = ids.map((entryId) => groupedDismissalKey(source, entryId, vid, season, episode));
       const checkpoint = member.state
-        ? { s: season, e: episode, p: progressRatio(member) }
+        ? { s: season, e: episode, p: dismissProgressRatio(member) }
         : undefined;
       for (const key of keys) apply(key, checkpoint, vid);
 
@@ -606,6 +614,9 @@ export function dismissCw(
     const cloudWrites: Promise<boolean>[] = [];
     let cleanupError: unknown;
     for (const member of [item, ...members]) {
+      // A display-only repaired proxy has never existed in the remote library.
+      // Only its genuine original members can authorize a cloud cleanup.
+      if (member.cwRepairSourceId) continue;
       const id = member._id;
       if (!id) continue;
       const { season, episode } = resolveEpisode(member);
@@ -671,7 +682,9 @@ export function dismissCw(
   const ids = itemIds(item);
   const dismissVid = typeof item.state?.video_id === "string" ? item.state.video_id : undefined;
   const { season, episode } = resolveEpisode(item);
-  const checkpoint = item.state ? { s: season, e: episode, p: progressRatio(item) } : undefined;
+  const checkpoint = item.state
+    ? { s: season, e: episode, p: dismissProgressRatio(item) }
+    : undefined;
   for (const entryId of ids) {
     times.set(entryId, nowMs);
     if (checkpoint) {

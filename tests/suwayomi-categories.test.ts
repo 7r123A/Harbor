@@ -21,7 +21,7 @@ function load(path: string, mocks: Record<string, unknown>) {
 
 function setup(
   mode: "rest" | "graphql",
-  options: { failCategories?: boolean; failCategory?: boolean } = {},
+  options: { failCategories?: boolean; failCategory?: boolean; failSources?: boolean; fallback?: "rest" | "graphql" } = {},
 ) {
   const calls: { path: string; query?: string; variables?: any }[] = [];
   const sources = [
@@ -42,8 +42,8 @@ function setup(
     server: { base: "https://server.example" },
     async getJson(path: string) {
       calls.push({ path });
-      if (mode !== "rest") return null;
-      if (path === "/api/v1/source/list") return sources;
+      if (mode !== "rest" && options.fallback !== "rest") return null;
+      if (path === "/api/v1/source/list") return mode === "rest" && options.failSources ? null : sources;
       if (path === "/api/v1/category") return options.failCategories ? null : categories;
       if (path.startsWith("/api/v1/category/"))
         return options.failCategory ? null : path.endsWith("/3") ? [] : [...manga, manga[0]];
@@ -53,10 +53,12 @@ function setup(
     },
     async postJson(path: string, body: any) {
       calls.push({ path, ...body });
-      if (mode !== "graphql") return null;
+      if (mode !== "graphql" && options.fallback !== "graphql") return null;
       const { query, variables } = body;
       if (query.includes("aboutServer")) return { data: { aboutServer: { version: "test" } } };
-      if (query.includes("sources {")) return { data: { sources: { nodes: sources } } };
+      if (query.includes("sources {")) return mode === "graphql" && options.failSources
+        ? { errors: [{ message: "source list unavailable" }] }
+        : { data: { sources: { nodes: sources } } };
       if (query.includes("categories {"))
         return options.failCategories
           ? { errors: [{}] }
@@ -110,7 +112,7 @@ function setup(
     },
     "./source-events": { subscribeSuwayomiSourcesChanged: () => {} },
   }).makeSuwayomiProvider(client.server.base);
-  return { provider, calls, rest, graphql, client };
+  return { provider, calls, rest, graphql, transport, client };
 }
 
 for (const mode of ["rest", "graphql"] as const) {
@@ -187,4 +189,51 @@ test("aggregate categories remain owned by their server, including duplicate cat
     (await aggregateProvider.search("Saved 64", 0, "first::category:7"))[0].id,
     "first::9~64",
   );
+});
+
+test("failed Suwayomi source discovery does not cache category-only tags", async () => {
+  for (const mode of ["rest", "graphql"] as const) {
+    const { provider } = setup(mode, { failSources: true });
+    await assert.rejects(provider.tags(), /suwayomi_(rest|graphql)_sources_unavailable/);
+  }
+});
+
+test("source discovery falls back from REST to GraphQL and from GraphQL to REST", async () => {
+  for (const mode of ["rest", "graphql"] as const) {
+    const fallback = mode === "rest" ? "graphql" : "rest";
+    const { client, transport, provider } = setup(mode, { failSources: true, fallback });
+    const sources = await transport.loadSources(client, mode);
+    assert.deepEqual(sources.map((source: { id: string }) => source.id), ["7", "9"]);
+    assert.ok((await provider.tags()).some((tag: { id: string }) => tag.id === "7"));
+  }
+});
+
+test("GraphQL source listing works without the optional isLocal schema field", async () => {
+  const { graphql, client } = setup("graphql");
+  const sources = await graphql.gqlSources({
+    ...client,
+    postJson: async (_path: string, { query }: { query: string }) => {
+      assert.doesNotMatch(query, /isLocal/);
+      return { data: { sources: { nodes: [
+        { id: "0", name: "Local source", lang: "localsourcelang" },
+        { id: "7", name: "English source", lang: "en" },
+      ] } } };
+    },
+  });
+  assert.deepEqual(sources.map((source: { isLocal: boolean }) => source.isLocal), [true, false]);
+});
+
+test("malformed source responses are errors, but an explicitly empty REST list is valid", async () => {
+  const { rest, graphql, client } = setup("rest");
+  await assert.rejects(rest.restSources({ ...client, getJson: async () => null }), /rest_sources_unavailable/);
+  await assert.rejects(graphql.gqlSources({ ...client, postJson: async () => ({ errors: [{ message: "failure" }] }) }),
+    /graphql_sources_unavailable/);
+  assert.deepEqual(await rest.restSources({ ...client, getJson: async () => [] }), []);
+});
+
+test("language-filter refresh retains the last good extension filters while loading", () => {
+  const file = readFileSync(new URL("../src/views/manga/manga-browse/filters.tsx", import.meta.url), "utf8");
+  assert.match(file, /subscribeMangaLangFilter\(\(\) => load\(\)\)/);
+  assert.match(file, /console\.warn\("\[manga\] filter list refresh failed", err\)/);
+  assert.match(file, /retryTimer = window\.setTimeout\(\(\) => load\(undefined, true\), delay\)/);
 });

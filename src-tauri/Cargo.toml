@@ -1,6 +1,6 @@
 [package]
 name = "harbor"
-version = "1.0.3"
+version = "1.0.4"
 description = "A Stremio client built for adventure"
 edition = "2021"
 
@@ -93,6 +93,10 @@ quick-xml = { version = "=0.38.4", features = ["serialize"] }
 yaml-rust2 = { version = "0.13", default-features = false }
 uuid = { version = "1", features = ["v4"] }
 futures-util = "0.3"
+tokio-tungstenite = { version = "0.28", default-features = false, features = [
+  "connect",
+  "handshake",
+] }
 gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
 libc = "0.2"
 socket2 = "0.5"
@@ -102,7 +106,7 @@ sha1 = "0.10"
 png = "0.17"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 hound = "3.5"
-kothok-edge-tts = "0.2.10"
+edge-tts-rust = "0.1.7"
 discord-rich-presence = "1.1"
 rust_cast = { path = "vendor/rust_cast", version = "0.20" }
 mdns-sd = "0.13"
@@ -147,6 +151,7 @@ notify-rust = "4"
 # both halves or Cargo turns reqwest's defaults back on for every target.
 reqwest = { version = "0.12", default-features = false, features = ["native-tls"] }
 rusqlite = { version = "0.32.0", features = ["bundled"] }
+zstd = "0.13"
 async-trait = { version = "0.1", optional = true }
 md5 = "0.7"
 sha2 = "0.10"
@@ -214,6 +219,7 @@ libpulse-binding = "2.30"
 [dev-dependencies]
 sevenz-rust2 = { version = "=0.20.2", default-features = false, features = ["compress"] }
 crc32fast = "1"
+tauri = { version = "2.12.0", features = ["test"] }
 
 [profile.dev]
 debug = "line-tables-only"

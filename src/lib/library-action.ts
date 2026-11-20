@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { activeScopedProfileId } from "./active-profile-id";
+import { notifyTrackerStatusChanged } from "./tracker-status-events";
 import {
   setContextWatchlist,
   type MediaActionResult,
@@ -173,11 +174,21 @@ export async function setLibraryMembership(
   const localFailed = base.outcomes.some(
     (outcome) => outcome.provider === "Harbor" && outcome.status === "failed",
   );
-  if (localFailed || scope !== "all" || !isAnimeInput(input)) {
-    return { ...base, scope };
+  const extras =
+    !localFailed && scope === "all" && isAnimeInput(input)
+      ? await additiveAnimeTrackers(input, on)
+      : [];
+  const outcomes = [...base.outcomes, ...extras];
+  if (
+    outcomes.some(
+      ({ provider, status }) =>
+        status === "updated" &&
+        (provider === "AniList" || provider === "MyAnimeList" || provider === "Simkl"),
+    )
+  ) {
+    notifyTrackerStatusChanged();
   }
-  const extras = await additiveAnimeTrackers(input, on);
-  return { ...base, scope, outcomes: [...base.outcomes, ...extras] };
+  return { ...base, scope, outcomes };
 }
 
 if (typeof window !== "undefined") {

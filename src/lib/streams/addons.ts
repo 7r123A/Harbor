@@ -13,7 +13,7 @@ import {
   isStatusOnlyAddon,
   isStremioLocalAddon,
 } from "./addon-detect";
-import type { AddonRankFn } from "./addon-priority";
+import { declaresStream, type AddonRankFn } from "./addon-priority";
 import { hasUncachedMarker } from "./cached";
 import { infoHashFromSources, infoHashFromUrl } from "@/lib/torrent/magnet";
 import {
@@ -199,7 +199,12 @@ export async function fetchAddonStreams(
       skipped.push(`${addon.manifest.name}(retired)`);
       continue;
     }
-    const forcedId = forcedBases.get(addonBaseUrl(addon.transportUrl));
+    // A catalogue's origin addon is asked by its original base so the item resolves
+    // through the addon that listed it. Metadata addons (Cinemeta, say) can be that
+    // origin but serve no streams, so the force must never turn into a stream query.
+    const forcedId = declaresStream(addon)
+      ? forcedBases.get(addonBaseUrl(addon.transportUrl))
+      : undefined;
     const ids =
       forcedId != null
         ? [forcedId]

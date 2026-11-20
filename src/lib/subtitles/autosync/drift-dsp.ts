@@ -206,17 +206,19 @@ function speechTimingAnchors(
   const anchors: SpeechTimingAnchor[] = [];
   const spokenPhrases = phraseIntervals(speech);
   const subtitlePhrases = phraseIntervals(cues);
-  let previousEnd = -Infinity;
+  let previousAcceptedEnd = -Infinity;
   for (const { startSec, lenSec } of windows.slice().sort((a, b) => a.startSec - b.startSec)) {
     if (
       !Number.isFinite(startSec) ||
       !Number.isFinite(lenSec) ||
       lenSec < 5 ||
       lenSec > 120 ||
-      startSec < previousEnd
+      startSec < previousAcceptedEnd
     )
       continue;
-    previousEnd = startSec + lenSec;
+    // Overlapping Moonshine windows are alternative observations, not
+    // independent anchors. If the first is rejected, still inspect the next;
+    // only a successfully matched window excludes its overlapping siblings.
     const n = Math.round(lenSec * hz);
     const spoken = maskSpeech(spokenPhrases, startSec, n, hz);
     let onsets = 0;
@@ -249,6 +251,7 @@ function speechTimingAnchors(
       accepted,
     });
     if (accepted) {
+      previousAcceptedEnd = startSec + lenSec;
       // The lag is audio time minus subtitle time, so the regression's x axis
       // must be subtitle time, not the audio-window center.
       anchors.push({ sourceSec: startSec + lenSec / 2 - best.lag, lagSec: best.lag });

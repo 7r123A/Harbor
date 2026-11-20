@@ -46,6 +46,14 @@ function hostOf(url: string): string {
   }
 }
 
+/**
+ * The provider host the viewer picked. Playback may run through the local relay
+ * (127.0.0.1), whose address says nothing to the viewer and cannot be checked.
+ */
+function sourceHost(src: { url: string; historyUrl?: string }): string {
+  return hostOf(src.historyUrl ?? "") || hostOf(src.url);
+}
+
 export function useAutoRetry(params: {
   bridgeRef: RefObject<PlayerBridge | null>;
   src: PlayerSrc;
@@ -81,6 +89,13 @@ export function useAutoRetry(params: {
     src.continuation?.id,
   ]);
   const ENGINE_FIRST_FRAME_GRACE_MS = 20_000;
+  /**
+   * The engine now fails a stream request after ~12 s without a byte from the
+   * swarm. Treat a load error after that window as a real source failure instead
+   * of a slow start, so the picker moves on instead of waiting for the 20 s
+   * first-frame grace.
+   */
+  const ENGINE_LOAD_ERROR_GRACE_MS = 10_000;
   const ENGINE_HARD_CEILING_MS = 75_000;
   const ENGINE_COMPLETE_RELOAD_MS = 8_000;
   const ENGINE_COMPLETE_FAILURE_MS = 20_000;
@@ -258,14 +273,14 @@ export function useAutoRetry(params: {
       // or a genuine mpv error own the visible failure state.
       if (!instantPlay && !inRoom) {
         console.warn(`[player] manual source failed (${reason})`);
-        setSourceError((prev) => prev ?? { status: 0, host: hostOf(src.url) });
+        setSourceError((prev) => prev ?? { status: 0, host: sourceHost(src) });
         return;
       }
       const currentAttempt = src.attempt ?? 0;
       if (currentAttempt >= MAX_AUTORETRY_ATTEMPTS) {
         console.warn(`[player] giving up after ${currentAttempt} attempts (${reason})`);
         if (!isP2pEngine && getPlaybackPosition() < 0.5) {
-          setSourceError((prev) => prev ?? { status: 0, host: hostOf(src.url), exhausted: true });
+          setSourceError((prev) => prev ?? { status: 0, host: sourceHost(src), exhausted: true });
         }
         return;
       }
@@ -330,11 +345,7 @@ export function useAutoRetry(params: {
       return;
     }
     if (playedPastStartRef.current || getPlaybackPosition() > 5) return;
-    if (
-      isP2pEngine &&
-      !engineFailure &&
-      Date.now() - urlAtRef.current < ENGINE_FIRST_FRAME_GRACE_MS
-    )
+    if (isP2pEngine && !engineFailure && Date.now() - urlAtRef.current < ENGINE_LOAD_ERROR_GRACE_MS)
       return;
     const recoveryBridge = bridgeRef.current;
     if (!recoveryBridge) return;
@@ -663,7 +674,7 @@ export function useAutoRetry(params: {
           return;
         }
         console.warn(`[player] source never started within ${NEVER_STARTED_CEILING_MS}ms`);
-        setSourceError((prev) => prev ?? { status: 0, host: hostOf(src.url) });
+        setSourceError((prev) => prev ?? { status: 0, host: sourceHost(src) });
       },
       Math.max(0, remaining),
     );

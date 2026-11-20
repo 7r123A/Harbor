@@ -104,17 +104,14 @@ export function createPluginStore<P extends WithId, R extends WithUrl = WithUrl>
   }
 
   async function remove(storeName: string, key: string): Promise<void> {
-    try {
-      const db = await openDb();
-      await new Promise<void>((resolve) => {
-        const tx = db.transaction(storeName, "readwrite");
-        tx.objectStore(storeName).delete(key);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => resolve();
-      });
-    } catch {
-      /* ignore */
-    }
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(storeName, "readwrite");
+      tx.objectStore(storeName).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("Plugin deletion failed"));
+      tx.onabort = () => reject(tx.error ?? new Error("Plugin deletion aborted"));
+    });
   }
 
   return {

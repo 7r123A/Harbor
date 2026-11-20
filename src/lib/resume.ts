@@ -91,7 +91,89 @@ function writeAll(all: Record<string, Entry>, key: string, acknowledged = false)
   } catch (error) {
     parsedResume.delete(key);
     if (acknowledged) throw error;
+  } finally {
+    // writeAll updates the cached source object in place. A previously
+    // assembled shared+private view would otherwise retain its old winner
+    // through later saves and even clears until an unrelated storage update.
+    mergedResumeCache.clear();
   }
+}
+
+/**
+ * Storage keys whose entries form the active profile's resume view.
+ *
+ * Nuvio accounts read their own slot only. A private profile (`cwPerProfile`
+ * with a shared Stremio profile) keeps the private-only behavior. Otherwise the
+ * shared store and the active profile's private store are merged: tracker
+ * imports land in the shared store while a previous private-mode session may
+ * have written progress privately, and either side can be the newer one.
+ */
+function mergedReadKeys(ownerId?: string): string[] {
+  const eff = effectiveOwner(ownerId);
+  if (eff && eff.startsWith("nuvio-")) {
+    return [`${PRIVATE_PREFIX}${nuvioAccountId()}.${eff}`];
+  }
+  const privateId = privateCwProfileId();
+  if (privateId) return [PRIVATE_PREFIX + privateId];
+  const profileId = activeResumeProfileId(ownerId);
+  return profileId ? [KEY, PRIVATE_PREFIX + profileId] : [KEY];
+}
+
+/** Active local profile id without pulling the settings/roster scope helpers in. */
+let cachedProfileRosterRaw: string | null | undefined;
+let cachedProfileRosterId = "";
+
+function activeResumeProfileId(ownerId?: string): string {
+  if (ownerId) return ownerId;
+  try {
+    const raw = localStorage.getItem("harbor.profiles.v1");
+    if (raw === cachedProfileRosterRaw) return cachedProfileRosterId;
+    const roster = JSON.parse(raw ?? "null") as {
+      activeId?: string;
+      profiles?: Array<{ id?: string; isPrimary?: boolean }>;
+    } | null;
+    cachedProfileRosterRaw = raw;
+    cachedProfileRosterId = roster?.activeId ??
+      roster?.profiles?.find((profile) => profile?.isPrimary)?.id ?? "";
+    return cachedProfileRosterId;
+  } catch {
+    // A transient storage failure must not pin a stale profile identity.
+    cachedProfileRosterRaw = undefined;
+    cachedProfileRosterId = "";
+    return "";
+  }
+}
+
+const mergedResumeCache = new Map<
+  string,
+  { sources: Record<string, Entry>[]; entries: Record<string, Entry> }
+>();
+
+function readAllMerged(ownerId?: string): Record<string, Entry> {
+  const keys = mergedReadKeys(ownerId);
+  if (keys.length === 1) return readAll(keys[0]);
+  const cacheKey = keys.join("|");
+  const sources = keys.map((key) => readAll(key));
+  const cached = mergedResumeCache.get(cacheKey);
+  // readAll returns a new object whenever the stored raw value changes, so
+  // reference equality is enough to know the merged view is still valid.
+  if (
+    cached &&
+    cached.sources.length === sources.length &&
+    cached.sources.every((source, index) => source === sources[index])
+  )
+    return cached.entries;
+  const entries: Record<string, Entry> = { ...sources[0] };
+  for (const source of sources.slice(1)) {
+    for (const [key, entry] of Object.entries(source)) {
+      const held = entries[key];
+      // The `source` field rides on the winning entry, so an import cannot
+      // borrow ownership from a newer local playback entry or vice versa.
+      if (!held || entry.t > held.t) entries[key] = entry;
+    }
+  }
+  mergedResumeCache.set(cacheKey, { sources, entries });
+  return entries;
 }
 
 export function saveResumeMs(
@@ -176,7 +258,7 @@ export function readResumeMs(
   episode?: number,
   ownerId?: string,
 ): number {
-  const all = readAll(readKey(ownerId));
+  const all = readAllMerged(ownerId);
   return all[entryKey(id, season, episode)]?.ms ?? 0;
 }
 
@@ -186,7 +268,7 @@ export function readResumeEntry(
   episode?: number,
   ownerId?: string,
 ): { ms: number; t: number; s?: number; pct?: number; source?: ExternalCwSource } | null {
-  const all = readAll(readKey(ownerId));
+  const all = readAllMerged(ownerId);
   const e = all[entryKey(id, season, episode)];
   return e
     ? {
@@ -201,7 +283,7 @@ export function readResumeEntry(
 
 /** One synchronous episode scan reads its profile and storage snapshot once. */
 export function createResumeReader(ownerId?: string) {
-  const entries = { ...readAll(readKey(ownerId)) };
+  const entries = { ...readAllMerged(ownerId) };
   return (id: string, season?: number, episode?: number): ReturnType<typeof readResumeEntry> => {
     const entry = entries[entryKey(id, season, episode)];
     return entry ? { ...entry } : null;
@@ -214,7 +296,7 @@ export function readResumeSource(
   episode?: number,
   ownerId?: string,
 ): ExternalCwSource | undefined {
-  return readAll(readKey(ownerId))[entryKey(id, season, episode)]?.source;
+  return readAllMerged(ownerId)[entryKey(id, season, episode)]?.source;
 }
 
 export function clearAllNuvioResume(): void {
@@ -230,7 +312,9 @@ export function clearAllNuvioResume(): void {
       localStorage.removeItem(k);
       parsedResume.delete(k);
     }
-  } catch {}
+  } catch {} finally {
+    mergedResumeCache.clear();
+  }
 }
 
 export function clearAllResumeForProfile(profileId?: string): void {
@@ -242,7 +326,9 @@ export function clearAllResumeForProfile(profileId?: string): void {
     }
     localStorage.removeItem(KEY);
     parsedResume.delete(KEY);
-  } catch {}
+  } catch {} finally {
+    mergedResumeCache.clear();
+  }
 }
 
 export function clearResume(
@@ -310,7 +396,7 @@ export function lastPlayedEpisode(seriesId: string): {
   pct?: number;
   source?: ExternalCwSource;
 } | null {
-  const all = readAll();
+  const all = readAllMerged();
   const prefix = `${seriesId}|s`;
   let best: {
     season: number;

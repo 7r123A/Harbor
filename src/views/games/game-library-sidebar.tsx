@@ -67,7 +67,7 @@ import { CollectionCover } from "./game-personal-collections";
 import { CollectionContextMenu } from "./game-collection-context-menu";
 import {
   managementCommand,
-  managementFile,
+  openGameFolder,
   type LibraryAction,
 } from "@/lib/games/library-management";
 import { osClass } from "@/lib/platform";
@@ -439,17 +439,14 @@ export function GameLibrarySidebar({
       } else window.open(url, "_blank", "noopener,noreferrer");
       return;
     }
-    if (action === "browse" || action === "properties" || action === "uninstall") {
+    if (action === "browse") {
+      await openGameFolder(game);
+      return;
+    }
+    if (action === "properties" || action === "uninstall") {
       const command = managementCommand(game, action);
       if (command) {
         await invoke(command.command, command.args);
-        return;
-      }
-      if (action === "browse") {
-        const path = managementFile(game);
-        if (!path) throw Error("game_changed");
-        const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
-        await revealItemInDir(path);
         return;
       }
       if (

@@ -36,6 +36,9 @@ type Overrides = {
   imdbKitsu?: number | null;
   checkpointKitsu?: number | null;
   tmdbKitsu?: number | null;
+  titleGeneration?: () => number;
+  onRemember?: () => boolean;
+  fetchGate?: Promise<void>;
 };
 
 function load({
@@ -43,6 +46,9 @@ function load({
   imdbKitsu = null,
   checkpointKitsu = null,
   tmdbKitsu = null,
+  titleGeneration = () => 0,
+  onRemember = () => false,
+  fetchGate,
 }: Overrides = {}) {
   const anizip = (key: string) => async () => ({
     titles: ANIZIP[key] ?? null,
@@ -61,7 +67,10 @@ function load({
       getAnimeCwId: () => cwId,
       notifyAnimeCwIds: () => {},
     },
-    "@/lib/anime-title-key": { rememberAnimeTitle: () => false },
+    "@/lib/anime-title-key": {
+      animeTitleKeysGeneration: titleGeneration,
+      rememberAnimeTitle: onRemember,
+    },
     "@/lib/cw-anime-identity": {
       cwAnimeIdentityKey: (_id: string, videoId?: string | null) =>
         videoId ? (checkpointKitsu == null ? null : `kitsu:${checkpointKitsu}`) : cwId,
@@ -72,6 +81,18 @@ function load({
       imdbToKitsu: async () => imdbKitsu,
       tmdbTvToKitsu: async () => tmdbKitsu,
     },
+    "@/lib/anilist/entry": {
+      anilistAnimeEntry: async (id: number, scheme: "mal" | "anilist") => {
+        const title = {
+          english:
+            "Magic Repo Man: Dumped by My Party, I'll Cash In With a Cute Support Fairy to Become the Strongest!",
+          romaji: "Kashita Maryoku wa [Revo Barai] de Kyousei Choushuu",
+        };
+        if ((scheme === "mal" && id === 62922) || (scheme === "anilist" && id === 202250))
+          return { id: 202250, idMal: 62922, type: "ANIME", title };
+        return null;
+      },
+    },
     "@/lib/providers/kitsu": {
       parseKitsuId: (id: string) => {
         const m = /^kitsu:(\d+)/.exec(id);
@@ -80,6 +101,7 @@ function load({
     },
   };
   const fetchStub = async (url: string) => {
+    if (fetchGate) await fetchGate;
     const id = Number(/anime\/(\d+)/.exec(url)?.[1]);
     const titles = KITSU_TITLES[id];
     return { ok: !!titles, json: async () => ({ data: { attributes: { titles } } }) };
@@ -198,7 +220,68 @@ test("a non-anime Cinemeta row resolves to nothing", async () => {
   assert.equal(await api.resolvePreferredAnimeTitle("tt1234567", "romaji"), null);
 });
 
+test("a title resolved under the current owner is remembered", async () => {
+  let remembered = 0;
+  const api = load({
+    onRemember: () => {
+      remembered += 1;
+      return true;
+    },
+  });
+  assert.equal(await api.resolvePreferredAnimeTitle("kitsu:12", "romaji"), "One Piece");
+  assert.equal(remembered, 1);
+});
+
+test("an old owner's title lookup cannot repopulate a cleared cache", async () => {
+  let generation = 0;
+  let remembered = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const api = load({
+    titleGeneration: () => generation,
+    onRemember: () => {
+      remembered += 1;
+      return true;
+    },
+    fetchGate: gate,
+  });
+  const pending = api.resolvePreferredAnimeTitle("kitsu:12", "romaji");
+  generation += 1; // clearAnimeTitleKeys()
+  release();
+  assert.equal(await pending, "One Piece");
+  assert.equal(remembered, 0, "the pre-clear lookup must not write");
+});
+
 test("the Continue Watching card resolves titles for detected Cinemeta rows too", () => {
   const src = readFileSync("src/components/continue-card.tsx", "utf8");
-  assert.match(src, /if \(!isAnimeCwItem\(item\) && getAnimeCwId\(item\._id\) == null\) return;/);
+  assert.match(
+    src,
+    /if \(!isAnimeCwItem\(item\) && getAnimeCwId\(item\._id\) == null && !sourceIdentity\) return;/,
+  );
+});
+
+test("a new anime with no AniZip or Kitsu entry uses the AniList English title", async () => {
+  const api = load();
+  assert.equal(
+    await api.resolvePreferredAnimeTitle("mal:62922", "english"),
+    "Magic Repo Man: Dumped by My Party, I'll Cash In With a Cute Support Fairy to Become the Strongest!",
+  );
+  assert.equal(
+    await api.resolvePreferredAnimeTitle("anilist:202250", "romaji"),
+    "Kashita Maryoku wa [Revo Barai] de Kyousei Choushuu",
+  );
+});
+
+test("a checkpoint mapped to Kitsu still recovers the AniList English title by native id", async () => {
+  const api = load({ checkpointKitsu: 50993 });
+  assert.equal(
+    await api.resolvePreferredAnimeTitle("mal:62922", "english", {
+      videoId: "mal:62922:1:6",
+      season: 1,
+      episode: 6,
+    }),
+    "Magic Repo Man: Dumped by My Party, I'll Cash In With a Cute Support Fairy to Become the Strongest!",
+  );
 });

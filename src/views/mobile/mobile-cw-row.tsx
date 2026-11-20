@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/auth";
 import { providerMappedEpisode } from "@/lib/cw-anime-episode";
 import { resolveCwAnimeVideo } from "@/lib/cw-anime-video";
 import { dedupeCwItems } from "@/lib/cw-dedupe";
+import { sortCwFinal } from "@/lib/cw-order";
 import { useInViewport } from "@/lib/visibility";
 import { anyProfileSharesStremioWith, useProfiles } from "@/lib/profiles";
 import { useHideAnime } from "@/lib/anime-hide";
@@ -15,7 +16,7 @@ import { useHeroLogos } from "@/components/anime-hero/use-hero-logos";
 import { dismissCw, isCwDismissed, useCwDismissVersion } from "@/lib/cw-dismiss";
 import {
   clearLocalCw,
-  listLocalCw,
+  listLocalCwMerged,
   localCwSourceEnabled,
   subscribeLocalCw,
   type LocalCwEntry,
@@ -193,7 +194,7 @@ export function useMobileCw(limit = 14): LibraryItem[] {
       if (disabledSources.has(i.external)) return false;
       if (hideSharedCw) return false;
       if (i.external === "simkl" || i.external === "trakt" || i.external === "publicmetadb") {
-        if (i.upNext || i.waitingForAir) return true;
+        if (i.upNext || i.waitingForAir || i.caughtUp) return true;
         const offset = i.state?.timeOffset ?? 0;
         const dur = i.state?.duration ?? 0;
         if (offset <= 0 || (i.state?.flaggedWatched ?? 0) > 0) return false;
@@ -212,7 +213,7 @@ export function useMobileCw(limit = 14): LibraryItem[] {
           ];
     const merged = [
       ...base,
-      ...listLocalCw(isNuvioProvider ? false : hideSharedCw)
+      ...listLocalCwMerged(isNuvioProvider ? false : hideSharedCw)
         .filter((e) => isNuvioProvider || localCwSourceEnabled(e, settings.cwSources))
         .map((e) =>
           isNuvioProvider
@@ -231,7 +232,7 @@ export function useMobileCw(limit = 14): LibraryItem[] {
       .map((i) => ({ i, k: cwSortKey(i) }))
       .sort((a, b) => b.k - a.k)
       .map((e) => e.i);
-    return dedupeCwItems(dedupeAnimeCw(merged), limit);
+    return sortCwFinal(dedupeCwItems(dedupeAnimeCw(merged), Infinity)).slice(0, limit);
   }, [
     items,
     externalCw,

@@ -48,6 +48,8 @@ import {
   subscribeAnimeCwIds,
 } from "@/lib/anime-cw-ids";
 import { rememberCardCoords } from "@/lib/cw-card-coords";
+import { provenCwAnimeIdentity } from "@/lib/cw-anime-identity";
+import { useDetectedAnimeVersion } from "@/lib/anime-detect";
 import {
   aniZipLookupKey,
   applyAniZipEpisode,
@@ -161,6 +163,7 @@ export const ContinueCard = memo(function ContinueCard({
   const progress = dur > 0 ? Math.min(1, off / dur) : 0;
   const remaining = dur > 0 && !isExternal ? formatRemaining(t, dur - off) : "";
   const upNext = item.upNext === true;
+  const caughtUp = item.caughtUp === true;
   const waitingForAir = (item as Record<string, unknown>).waitingForAir === true;
   const nextAirDate = waitingForAir
     ? ((item as Record<string, unknown>).nextAirDate as string | undefined)
@@ -209,13 +212,70 @@ export const ContinueCard = memo(function ContinueCard({
   const [logo, setLogo] = useState<string | undefined>();
   const [metaBg, setMetaBg] = useState<string | undefined>();
   const [hydratedMeta, setHydratedMeta] = useState<Meta | null>(null);
-  const [kitsuVideo, setKitsuVideo] = useState<AnimeKitsuVideo | null>(null);
+  const [resolvedCour, setResolvedCour] = useState<{
+    key: string;
+    video: AnimeKitsuVideo;
+  } | null>(null);
+  const [observedKey, setObservedKey] = useState<string | null>(null);
   const [absoluteNumber, setAbsoluteNumber] = useState<number | null>(null);
   const [epTitle, setEpTitle] = useState<string | null>(null);
   const [epStill, setEpStill] = useState<string | null>(null);
-  const [translatedTitle, setTranslatedTitle] = useState<string | null>(null);
+  const [translated, setTranslated] = useState<{
+    key: string;
+    value: string | null;
+  } | null>(null);
   const [imgIdx, setImgIdx] = useState(0);
   const cardRef = useRef<HTMLButtonElement>(null);
+  const itemRef = useRef(item);
+  itemRef.current = item;
+  const mountedRef = useRef(true);
+  const attemptRef = useRef<{ successKey: string; cancel: () => void } | null>(null);
+  const inFlightRef = useRef<{ successKey: string } | null>(null);
+  const animeIdsVersion = useSyncExternalStore(subscribeAnimeCwIds, animeCwIdsVersion);
+  const detectedVersion = useDetectedAnimeVersion();
+  const nativeRow = /^(kitsu|mal|anilist|anidb):/.test(item._id);
+  const requestKey = [
+    item._id,
+    item.state?.video_id ?? "",
+    item.state?.season ?? "",
+    item.state?.episode ?? "",
+    authKey ?? "",
+  ].join("|");
+  const nativeKey = `native|${requestKey}`;
+  const playedStream = /^(kitsu|mal|anilist|anidb):([1-9]\d*):[1-9]\d*$/.exec(
+    item.state?.video_id ?? "",
+  );
+  const sourceIdentity = nativeRow
+    ? item._id
+    : playedStream
+      ? `${playedStream[1]}:${playedStream[2]}`
+      : (provenCwAnimeIdentity(item) ?? getAnimeCwId(item._id) ?? "");
+  const successKey = `${requestKey}|${sourceIdentity}`;
+  const currentCourKey = nativeRow ? nativeKey : successKey;
+  const effectiveKitsuVideo = resolvedCour?.key === currentCourKey ? resolvedCour.video : null;
+  const titleKey = [
+    item._id,
+    sourceIdentity,
+    effectiveKitsuVideo?.id ?? item.state?.video_id ?? "",
+    settings.animeTitleLanguage,
+    item.state?.season ?? "",
+    item.state?.episode ?? "",
+  ].join("|");
+  const translatedTitle = translated?.key === titleKey ? translated.value : null;
+  const requestKeyRef = useRef("");
+  const successKeyRef = useRef("");
+  requestKeyRef.current = requestKey;
+  successKeyRef.current = successKey;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      attemptRef.current?.cancel();
+      attemptRef.current = null;
+      inFlightRef.current = null;
+    };
+  }, []);
 
   const candidates = useMemo(() => {
     const thumb = upNext ? undefined : snapshot;
@@ -252,9 +312,10 @@ export const ContinueCard = memo(function ContinueCard({
     setLogo(undefined);
     setMetaBg(undefined);
     setHydratedMeta(null);
-    setKitsuVideo(null);
+    setResolvedCour(null);
+    setObservedKey(null);
     setAbsoluteNumber(null);
-    setTranslatedTitle(null);
+    setTranslated(null);
     setImgIdx(0);
     const el = cardRef.current;
     if (!el) return;
@@ -263,20 +324,7 @@ export const ContinueCard = memo(function ContinueCard({
     const start = () => {
       if (started) return;
       started = true;
-      // Catalog anime rows do not pass through the native Kitsu branch below.
-      // Resolve their exact cour too so a base Bleach row uses TYBW's title.
-      if (
-        !/^(kitsu|mal|anilist|anidb):/.test(item._id) &&
-        (isAnimeCwItem(item) || getAnimeCwId(item._id) != null) &&
-        ep
-      ) {
-        void resolveCwAnimeVideo(item, ep)
-          .then((video) => {
-            if (!cancelled && video) setKitsuVideo(video);
-          })
-          .catch(() => {});
-      }
-      if (/^(kitsu|mal|anilist|anidb):/.test(item._id)) {
+      if (nativeRow) {
         animeKitsuMeta(item._id)
           .then((m) => {
             if (cancelled || !m) return;
@@ -306,7 +354,7 @@ export const ContinueCard = memo(function ContinueCard({
                 season: ep?.season ?? 1,
                 episode: ep?.episode ?? animeEp,
               });
-              if (vid) setKitsuVideo(vid);
+              if (vid) setResolvedCour({ key: nativeKey, video: vid });
             }
             const key = aniZipLookupKey(item._id);
             if (key && animeEp != null && Number.isFinite(animeEp) && animeEp > 0) {
@@ -383,6 +431,7 @@ export const ContinueCard = memo(function ContinueCard({
     const io = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) {
+          setObservedKey(requestKey);
           start();
           io.disconnect();
         }
@@ -394,21 +443,104 @@ export const ContinueCard = memo(function ContinueCard({
       cancelled = true;
       io.disconnect();
     };
-  }, [item._id, item.type, item.state?.video_id, item.state?.season, item.state?.episode, authKey]);
+  }, [
+    item._id,
+    item.type,
+    item.state?.video_id,
+    item.state?.season,
+    item.state?.episode,
+    authKey,
+    requestKey,
+    nativeKey,
+    nativeRow,
+  ]);
 
-  const animeIdsVersion = useSyncExternalStore(subscribeAnimeCwIds, animeCwIdsVersion);
+  // Resolve the exact Kitsu cour for catalog anime rows once the card is
+  // visible. Detection and mapping live in separate stores, so both versions
+  // participate; successful work is cached by the source identity, not by the
+  // global counters.
+  useEffect(() => {
+    if (nativeRow) return;
+    if (!observedKey || observedKey !== requestKey) return;
+    if (!ep) return;
+    if (!sourceIdentity) return;
+    if (resolvedCour?.key === successKey) return;
+    if (inFlightRef.current?.successKey === successKey) return;
+
+    const startedRequestKey = requestKey;
+    const startedSuccessKey = successKey;
+    let cancelled = false;
+    const attempt = {
+      successKey: startedSuccessKey,
+      cancel: () => {
+        cancelled = true;
+      },
+    };
+    inFlightRef.current = attempt;
+    attemptRef.current = attempt;
+
+    void resolveCwAnimeVideo(itemRef.current, ep)
+      .then((video) => {
+        if (!video || cancelled || !mountedRef.current) return;
+        if (
+          requestKeyRef.current !== startedRequestKey ||
+          successKeyRef.current !== startedSuccessKey
+        ) {
+          return;
+        }
+        setResolvedCour({ key: startedSuccessKey, video });
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (inFlightRef.current === attempt) {
+          inFlightRef.current = null;
+          attemptRef.current = null;
+        }
+      });
+
+    return () => {
+      // A global version bump keeps the lookup alive; a changed checkpoint or
+      // identity invalidates it. Unmount is handled by the mount effect.
+      if (
+        requestKeyRef.current !== startedRequestKey ||
+        successKeyRef.current !== startedSuccessKey
+      ) {
+        cancelled = true;
+        if (inFlightRef.current === attempt) {
+          inFlightRef.current = null;
+          attemptRef.current = null;
+        }
+      }
+    };
+  }, [
+    nativeRow,
+    observedKey,
+    requestKey,
+    successKey,
+    sourceIdentity,
+    ep?.season,
+    ep?.episode,
+    authKey,
+    animeIdsVersion,
+    detectedVersion,
+    resolvedCour?.key,
+    effectiveKitsuVideo?.id,
+  ]);
+
   // The preferred title is a display preference the user can change at any time,
   // so it resolves in its own effect: a language change must not tear down the
   // card's artwork hydration above.
   useEffect(() => {
     // Any anime row qualifies: native anime ids, detected Cinemeta rows, and
-    // Cinemeta rows whose detail page recorded an anime mapping.
-    if (!isAnimeCwItem(item) && getAnimeCwId(item._id) == null) return;
+    // Cinemeta rows whose detail page recorded an anime mapping or a checkpoint
+    // proof.
+    if (!isAnimeCwItem(item) && getAnimeCwId(item._id) == null && !sourceIdentity) return;
     let cancelled = false;
+    const key = titleKey;
     // Once the episode resolves to its exact Kitsu cour, use that entry for the
     // title too. A base Bleach row with TYBW progress must display TYBW, not the
     // 2004 series it shares a provider id with.
-    const titleVideoId = kitsuVideo?.id ?? item.state?.video_id;
+    const titleVideoId = effectiveKitsuVideo?.id ?? item.state?.video_id;
     resolvePreferredAnimeTitle(item._id, settings.animeTitleLanguage, {
       videoId: titleVideoId,
       season: item.state?.season,
@@ -418,7 +550,7 @@ export const ContinueCard = memo(function ContinueCard({
         (/^tt\d+$/.test(item._id) ? item._id : undefined),
     })
       .then((tt) => {
-        if (!cancelled) setTranslatedTitle(tt?.trim() || null);
+        if (!cancelled) setTranslated({ key, value: tt?.trim() || null });
       })
       .catch(() => {});
     return () => {
@@ -431,7 +563,10 @@ export const ContinueCard = memo(function ContinueCard({
     item.state?.episode,
     settings.animeTitleLanguage,
     animeIdsVersion,
-    kitsuVideo?.id,
+    detectedVersion,
+    effectiveKitsuVideo?.id,
+    titleKey,
+    sourceIdentity,
   ]);
 
   useEffect(() => {
@@ -457,20 +592,27 @@ export const ContinueCard = memo(function ContinueCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item._id, ep?.season, ep?.episode, kitsuThreeSeg]);
 
-  const episodeTitle = epTitle ?? kitsuVideo?.title ?? null;
+  const episodeTitle = epTitle ?? effectiveKitsuVideo?.title ?? null;
 
   const isAnimeItem = /^(kitsu|mal|anilist|anidb):/.test(item._id);
   const cardKitsuId =
     parseKitsuId(item._id) ??
-    parseKitsuId(kitsuVideo?.id ?? "") ??
+    parseKitsuId(effectiveKitsuVideo?.id ?? "") ??
     parseKitsuId(getAnimeCwId(item._id) ?? "");
   const seasonForeignCard = isForeignSplitSeason(
     isSplitFranchiseKitsu(cardKitsuId),
     ep?.season,
-    kitsuVideo?.imdbSeason,
+    effectiveKitsuVideo?.imdbSeason,
   );
   const partSeasonCard = splitFranchiseDisplaySeason(cardKitsuId);
-  const animeSeasonMapped = providerMappedEpisode(kitsuVideo, ep, seasonForeignCard);
+  // The next-episode worker can verify the provider numbering before card
+  // metadata hydrates. Replay that display-only proof while the exact cour
+  // video is loading; the live video mapping takes precedence when available.
+  const animeSeasonMapped =
+    providerMappedEpisode(effectiveKitsuVideo, ep, seasonForeignCard) ??
+    (upNext
+      ? providerMappedEpisode(item.cwVerifiedProviderMapping, ep, seasonForeignCard)
+      : null);
   const displaySeason = animeSeasonMapped?.season ?? partSeasonCard ?? ep?.season;
   const displayEpisode = animeSeasonMapped?.episode ?? ep?.episode;
   useEffect(() => {
@@ -507,13 +649,19 @@ export const ContinueCard = memo(function ContinueCard({
         background: item.background,
       };
 
+  // Identity repair only changes the displayed work. Playback must continue
+  // reading the original source checkpoint; the episode carries the native
+  // Kitsu stream/sourceMetaId for correct picker and tracker targeting.
+  const playbackMeta: Meta = item.cwRepairSourceId
+    ? { ...meta, id: item.cwRepairSourceId }
+    : meta;
   const rawTitle = translatedTitle || hydratedMeta?.name?.trim() || item.name;
   const displayTitle = isAnimeCwItem(item)
     ? stripAnimeArcSuffix(stripFranchiseSuffix(rawTitle)) || rawTitle
     : rawTitle;
 
   const onOpenDetails = () => {
-    const kitsuId = kitsuVideo ? parseKitsuId(kitsuVideo.id) : null;
+    const kitsuId = effectiveKitsuVideo ? parseKitsuId(effectiveKitsuVideo.id) : null;
     const animeEntry = kitsuId != null ? `kitsu:${kitsuId}` : getAnimeCwId(item._id);
     const detailId = animeEntry ?? meta.id;
     const isAnime = /^(kitsu|mal|anilist|anidb):/.test(detailId);
@@ -537,10 +685,12 @@ export const ContinueCard = memo(function ContinueCard({
     // instead of the row's base entry.
     // The card's own video is the exact episode; hand it over so a split cour
     // can never fall back to a sibling entry's season-1 episode.
-    const video = kitsuVideo ?? (ep ? await resolveCwAnimeVideo(item, ep).catch(() => null) : null);
+    const video =
+      effectiveKitsuVideo ?? (ep ? await resolveCwAnimeVideo(item, ep).catch(() => null) : null);
     const stateStreamId = item.state?.video_id;
     const directStreamId =
-      video?.id ?? (/^kitsu:\d+:\d+$/.test(stateStreamId ?? "") ? stateStreamId : undefined);
+      item.cwRepairNativeStreamId ?? video?.id ??
+      (/^kitsu:\d+:\d+$/.test(stateStreamId ?? "") ? stateStreamId : undefined);
     const animePlay = await resolveCwAnimePlayEpisode({
       metaId: item._id,
       videoId: item.state?.video_id,
@@ -551,7 +701,20 @@ export const ContinueCard = memo(function ContinueCard({
       kitsuStreamId: directStreamId,
       name: episodeTitle ?? video?.title ?? undefined,
     });
-    if (animePlay) return animePlay;
+    if (animePlay) {
+      // The native Kitsu stream owns tracker progress, but the ORIGINAL
+      // catalog row's provider S/E owns resume and Stremio playback history.
+      // A split cour can have native episode 1 at provider S2E13.
+      if (item.cwRepairSourceId && item.cwRepairNativeStreamId && ep)
+        return {
+          ...animePlay,
+          season: ep.season,
+          episode: ep.episode,
+          sourceMetaId: item._id,
+          kitsuStreamId: item.cwRepairNativeStreamId,
+        };
+      return animePlay;
+    }
     let episode: PlayEpisode | undefined = item.type === "series" && ep ? ep : undefined;
     if (!episode && kitsuThreeSeg) {
       if (video) {
@@ -594,6 +757,16 @@ export const ContinueCard = memo(function ContinueCard({
     // ordinary series) still gives the presence an episode name.
     if (episode && !episode.name && episodeTitle) episode = { ...episode, name: episodeTitle };
     if (episode && !episode.still && epStill) episode = { ...episode, still: epStill };
+    // The original checkpoint owns playback, while the verified Kitsu entry
+    // owns this stream and its AniList/MAL/Simkl episode progress.
+    if (episode && item.cwRepairSourceId && /^kitsu:[1-9]\d*$/.test(item._id)) {
+      const saved = item.cwRepairNativeStreamId ??
+        (/^kitsu:[1-9]\d*:[1-9]\d*$/.test(item.state?.video_id ?? "")
+          ? item.state?.video_id
+          : episode.kitsuStreamId);
+      if (saved?.startsWith(`${item._id}:`))
+        episode = { ...episode, sourceMetaId: item._id, kitsuStreamId: saved };
+    }
     return episode;
   };
 
@@ -604,12 +777,12 @@ export const ContinueCard = memo(function ContinueCard({
   ) => {
     const stream = () => {
       assertCurrent();
-      openPicker(meta, episode, { autoPlay: !chooseEveryTime, resume: !chooseEveryTime });
+      openPicker(playbackMeta, episode, { autoPlay: !chooseEveryTime, resume: !chooseEveryTime });
     };
-    const tmdbMatch = meta.id.match(/^tmdb:(?:movie|tv):(\d+)$/);
+    const tmdbMatch = playbackMeta.id.match(/^tmdb:(?:movie|tv):(\d+)$/);
     const identity = {
       tmdbId: tmdbMatch ? Number(tmdbMatch[1]) : undefined,
-      imdbId: meta.id.startsWith("tt") ? meta.id : undefined,
+      imdbId: playbackMeta.id.startsWith("tt") ? playbackMeta.id : undefined,
     };
     const kind = episode ? "series" : "movie";
     const connections = mediaServerConnections();
@@ -623,7 +796,7 @@ export const ContinueCard = memo(function ContinueCard({
       episode?.episode,
     );
     const serverCopies = serverPlayableCopies(serverItems, connections);
-    const local = resolveLocalPlayVersions(meta, episode ?? null, identity.imdbId);
+    const local = resolveLocalPlayVersions(playbackMeta, episode ?? null, identity.imdbId);
     const playLocal = (entry: (typeof local)[number]) => {
       assertCurrent();
       const source = localPlayerSrc(entry, undefined, episode);
@@ -631,9 +804,9 @@ export const ContinueCard = memo(function ContinueCard({
         ...source,
         meta: {
           ...source.meta,
-          id: meta.id,
-          poster: meta.poster ?? source.meta.poster,
-          background: meta.background,
+          id: playbackMeta.id,
+          poster: playbackMeta.poster ?? source.meta.poster,
+          background: playbackMeta.background,
         },
       });
     };
@@ -645,7 +818,7 @@ export const ContinueCard = memo(function ContinueCard({
       );
       if (!connection || !item) return;
       const source = await createMediaServerPlayerSrc({
-        meta,
+        meta: playbackMeta,
         imdbId: identity.imdbId,
         episode,
         connection,
@@ -697,7 +870,7 @@ export const ContinueCard = memo(function ContinueCard({
   ): Promise<boolean> => {
     // Continue Watching already knows the source that played a moment ago.
     // Opening it directly avoids waiting for the picker's source pipeline.
-    const actual = readActualPlaybackForTarget(meta.id, episode?.season, episode?.episode);
+    const actual = readActualPlaybackForTarget(playbackMeta.id, episode?.season, episode?.episode);
     if (!actual) {
       return false;
     }
@@ -708,7 +881,7 @@ export const ContinueCard = memo(function ContinueCard({
     if (src.homeServer) return false;
     if (actual.requiresSourceRefresh || src.streamRef?.infoHash) {
       assertCurrent();
-      openPicker(meta, episode, {
+      openPicker(playbackMeta, episode, {
         autoPlay: true,
         resume: true,
         continuation: continuationFor(actual, capturePlaybackActor()),
@@ -717,7 +890,7 @@ export const ContinueCard = memo(function ContinueCard({
     }
     if (!canReuseRecentRemotePlayback(actual)) return false;
     const resumeMs =
-      readResumeEntry(meta.id, episode?.season, episode?.episode)?.ms ?? actual.positionMs;
+      readResumeEntry(playbackMeta.id, episode?.season, episode?.episode)?.ms ?? actual.positionMs;
     const actor = capturePlaybackActor();
     const historyUrl = src.historyUrl ?? src.url;
     const url = await resolvePlaybackRedirect({
@@ -822,14 +995,14 @@ export const ContinueCard = memo(function ContinueCard({
       meta,
       isValid: commands.isValid,
       watchScope: item.type === "series" ? "episode" : "title",
-      episode: kitsuVideo
+      episode: effectiveKitsuVideo
         ? {
-            season: kitsuVideo.season || 1,
-            episode: kitsuVideo.episode,
-            kitsuStreamId: kitsuVideo.id,
-            imdbId: kitsuVideo.imdb_id,
-            imdbSeason: kitsuVideo.imdbSeason,
-            imdbEpisode: kitsuVideo.imdbEpisode,
+            season: effectiveKitsuVideo.season || 1,
+            episode: effectiveKitsuVideo.episode,
+            kitsuStreamId: effectiveKitsuVideo.id,
+            imdbId: effectiveKitsuVideo.imdb_id,
+            imdbSeason: effectiveKitsuVideo.imdbSeason,
+            imdbEpisode: effectiveKitsuVideo.imdbEpisode,
           }
         : (ep ?? undefined),
       primary: commands.primary,
@@ -899,7 +1072,7 @@ export const ContinueCard = memo(function ContinueCard({
             </div>
           )}
           <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-canvas/80 to-transparent" />
-          {(sub || remaining || isExternal || upNext || episodeTitle) && (
+          {(sub || remaining || isExternal || upNext || caughtUp || episodeTitle) && (
             <div className="absolute bottom-2 start-2 flex max-w-[calc(100%-16px)] items-center gap-1.5 rounded-md bg-canvas/95 px-2 py-1 text-[11px]">
               {isExternal ? (
                 <img
@@ -916,6 +1089,11 @@ export const ContinueCard = memo(function ContinueCard({
                 <>
                   {sub && <span className="shrink-0 text-ink-subtle">·</span>}
                   <span className="shrink-0 font-medium text-amber-500">{countdown}</span>
+                </>
+              ) : caughtUp ? (
+                <>
+                  {sub && <span className="shrink-0 text-ink-subtle">·</span>}
+                  <span className="shrink-0 font-medium text-ink-muted">{t("Caught up")}</span>
                 </>
               ) : upNext ? (
                 <>

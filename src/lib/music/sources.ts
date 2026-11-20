@@ -108,11 +108,15 @@ export function getMusicHealth(): Promise<MusicConnectorHealth[]> {
   return invoke<MusicConnectorHealth[]>("music_health");
 }
 
-export function getMusicSourceCandidates(track: MusicTrack): Promise<MusicSourceCandidate[]> {
-  return invoke<MusicSourceCandidate[]>("music_source_candidates", { track }).then((candidates) =>
-    filterMusicSourceCandidates(
-      candidates.filter((candidate) => compatibleVocalVersion(track, candidate.track)),
-    ),
+export function getMusicSourceCandidates(
+  track: MusicTrack,
+  connector?: string,
+): Promise<MusicSourceCandidate[]> {
+  return invoke<MusicSourceCandidate[]>("music_source_candidates", { track, connector }).then(
+    (candidates) =>
+      filterMusicSourceCandidates(
+        candidates.filter((candidate) => compatibleVocalVersion(track, candidate.track)),
+      ),
   );
 }
 

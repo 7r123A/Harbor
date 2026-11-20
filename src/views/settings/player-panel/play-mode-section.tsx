@@ -8,13 +8,7 @@ import { Dropdown } from "@/components/dropdown";
 import { mediaServerConnections } from "@/lib/media-server/connections";
 import { Anchored, Nested } from "./choice";
 import { PressPlayPreview } from "./press-play-preview";
-import {
-  RememberStreamArt,
-  ResumeArt,
-  ResumePromptArt,
-  SeasonLockArt,
-  StallSkipArt,
-} from "./setting-art";
+import { ResumeArt, ResumePromptArt, SeasonLockArt, StallSkipArt } from "./setting-art";
 
 export function PlayModeChoice() {
   const { settings, update } = useSettings();
@@ -133,17 +127,6 @@ export function PlayModePanel() {
             onChange={(v) => update({ instantPlaybackPreparation: v })}
           />
         </Anchored>
-        <Anchored id="set-remember-last-stream">
-          <ToggleRow
-            label={t("Remember last stream")}
-            preview={<RememberStreamArt />}
-            sub={t(
-              "When you resume something you were watching, replay the exact stream you last used (same addon and source) instead of opening the picker again. Turn off to always choose fresh.",
-            )}
-            value={settings.rememberLastStream}
-            onChange={(v) => update({ rememberLastStream: v })}
-          />
-        </Anchored>
       </SettingGroup>
 
       <SettingGroup label={t("Resume")}>
@@ -200,14 +183,6 @@ export function PlayModePanel() {
             </SettingRow>
           </Nested>
         )}
-        <ToggleRow
-          label={t("Keep same source on next episode")}
-          sub={t(
-            "When auto-playing the next episode, keep the same release/source you were just watching instead of Harbor's top-ranked stream. Falls back to the best stream if that source isn't available.",
-          )}
-          value={settings.keepSourceNextEpisode}
-          onChange={(v) => update({ keepSourceNextEpisode: v })}
-        />
         <ToggleRow
           label={t("Download the whole file while streaming")}
           sub={t(
