@@ -134,6 +134,8 @@ function fixture({
         kitsuStudios: async () => [],
         kitsuStreamingLinks: async () => [],
       },
+      // Airing dates have an isolated suite; keep cache/performance fixtures offline.
+      "@/lib/anilist/next-airing": { fetchAnilistAiringSchedule: async () => null },
       "@/lib/providers/anizip": { aniZipByKitsu: no },
       "@/lib/providers/anime-entry": {},
       "@/lib/providers/anime-episode-build": {
