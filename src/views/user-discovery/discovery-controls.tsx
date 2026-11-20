@@ -16,6 +16,7 @@ export type DiscoveryOptions = {
   minMatch: number | null;
   minShared: number;
   minRatings: number;
+  canvas: boolean;
   orders: DiscoveryOrder[];
   reviewDirection: "asc" | "desc";
 };
@@ -24,6 +25,7 @@ export const DEFAULT_DISCOVERY_OPTIONS: DiscoveryOptions = {
   minMatch: null,
   minShared: 10,
   minRatings: 0,
+  canvas: false,
   orders: [],
   reviewDirection: "desc",
 };
@@ -48,6 +50,8 @@ export function DiscoveryControls({
     { value: "username", label: t("A–Z") },
     { value: "activity", label: t("Recent activity") },
     { value: "reviews", label: t("Written reviews") },
+    { value: "newest", label: t("Newest members") },
+    { value: "oldest", label: t("Oldest members") },
   ];
   const update = (patch: Partial<DiscoveryOptions>) =>
     onChange((previous) => ({ ...previous, ...patch }));
@@ -117,7 +121,12 @@ export function DiscoveryControls({
                 ...previous,
                 orders: previous.orders.includes(value as DiscoveryOrder)
                   ? previous.orders.filter((key) => key !== value)
-                  : [...previous.orders, value as DiscoveryOrder],
+                  : value === "newest" || value === "oldest"
+                    ? [value]
+                    : [
+                        ...previous.orders.filter((key) => key !== "newest" && key !== "oldest"),
+                        value as DiscoveryOrder,
+                      ],
               }))
             }
             className="w-full sm:w-56"
@@ -163,6 +172,17 @@ export function DiscoveryControls({
         ))}
         <button
           type="button"
+          aria-pressed={options.canvas}
+          title={t(
+            "Profiles with a custom HTML/CSS layout enabled or saved. Choosing a theme alone does not count.",
+          )}
+          onClick={() => update({ canvas: !options.canvas })}
+          className={`min-h-9 rounded-full px-3.5 text-xs font-medium ring-1 transition-colors ${options.canvas ? "bg-accent/15 text-accent ring-accent/40" : "bg-canvas text-ink-muted ring-edge-soft hover:bg-elevated"}`}
+        >
+          {t("Custom profile")}
+        </button>
+        <button
+          type="button"
           aria-label={t("Customize filters")}
           title={t("Customize filters")}
           aria-expanded={custom}
@@ -174,6 +194,7 @@ export function DiscoveryControls({
         {(options.query ||
           options.minMatch != null ||
           options.minRatings > 0 ||
+          options.canvas ||
           options.orders.length > 0) && (
           <button
             type="button"

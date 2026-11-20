@@ -2,7 +2,7 @@ import type { FriendStatus } from "./friend-command";
 import type { MutualMatch } from "./mutual-score";
 import { socialGet } from "./client";
 
-export type DiscoveryOrder = "username" | "activity" | "reviews";
+export type DiscoveryOrder = "username" | "activity" | "reviews" | "newest" | "oldest";
 export type DiscoverySort = "newest" | "oldest" | "random" | DiscoveryOrder;
 export type DiscoveredUser = {
   id: string;
@@ -48,7 +48,8 @@ export function fetchDiscoveredUsers(
     sort: filters.sort,
     limit: "24",
   });
-  if (filters.orders?.length) params.set("order", filters.orders.join(","));
+  const dateSort = filters.sort === "newest" || filters.sort === "oldest";
+  if (filters.orders?.length && !dateSort) params.set("order", filters.orders.join(","));
   if (filters.orders?.length === 1 && filters.orders[0] === "reviews" && filters.reviewDirection)
     params.set("reviewDirection", filters.reviewDirection);
   if (filters.seed) params.set("seed", filters.seed);
@@ -69,7 +70,10 @@ export function fetchDiscoveredUsers(
       (page.filterVersion ?? 0) < 4
     )
       throw new Error("These discovery filters require the latest backend deployment.");
-    if ((filters.sort === "random" || filters.orders?.length) && (page.filterVersion ?? 0) < 3)
+    if (
+      (filters.sort === "random" || (!dateSort && filters.orders?.length)) &&
+      (page.filterVersion ?? 0) < 3
+    )
       throw new Error("These discovery filters require the latest backend deployment.");
     if (
       (filters.match || (filters.rated && (filters.minRatings ?? 1) > 1)) &&

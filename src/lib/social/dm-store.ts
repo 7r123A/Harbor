@@ -39,6 +39,8 @@ const previewListeners = new Set<() => void>();
 
 let inFlight: Promise<void> | null = null;
 let inboxVersion = 0;
+let inboxController: AbortController | null = null;
+let isStoreSessionCurrent = captureSessionScope();
 let initialLoaded = false;
 const lastSeenMessage = new Map<string, string>();
 // An opened thread can be absent from an older server's hidden inbox response.
@@ -175,9 +177,28 @@ function detectIncoming(rows: DmConversation[]): void {
   }
 }
 
+function resetDmSession(): void {
+  inboxVersion++;
+  inboxController?.abort();
+  inboxController = null;
+  inFlight = null;
+  openedConversations.clear();
+  initialLoaded = false;
+  lastSeenMessage.clear();
+  isStoreSessionCurrent = captureSessionScope();
+  setState({
+    authed: !!currentAuthor(),
+    conversations: [],
+    unread: 0,
+    loading: false,
+    error: null,
+  });
+}
+
 export async function refreshDm(
   opts: { silent?: boolean; signal?: AbortSignal; afterMutation?: boolean } = {},
 ): Promise<void> {
+  if (!isStoreSessionCurrent()) resetDmSession();
   if (!currentAuthor()) {
     openedConversations.clear();
     initialLoaded = false;
@@ -186,16 +207,25 @@ export async function refreshDm(
     return;
   }
   if (inFlight) {
-    if (opts.afterMutation)
-      return inFlight.then(() => refreshDm({ ...opts, afterMutation: false }));
+    if (opts.afterMutation) {
+      const isCurrent = captureSessionScope();
+      return inFlight.then(() => {
+        if (isCurrent()) return refreshDm({ ...opts, afterMutation: false });
+      });
+    }
     return inFlight;
   }
   const version = inboxVersion;
   const isCurrent = captureSessionScope();
   if (!opts.silent) setState({ loading: true, error: null });
-  inFlight = listDmConversations(opts.signal)
+  const controller = new AbortController();
+  inboxController = controller;
+  const signal = opts.signal
+    ? AbortSignal.any([controller.signal, opts.signal])
+    : controller.signal;
+  const request = listDmConversations(signal)
     .then((res) => {
-      if (!isCurrent() || version !== inboxVersion) return;
+      if (signal.aborted || !isCurrent() || version !== inboxVersion) return;
       if (!currentAuthor()) {
         initialLoaded = false;
         lastSeenMessage.clear();
@@ -213,7 +243,7 @@ export async function refreshDm(
       setState({ authed: true, conversations, unread, loading: false, error: null });
     })
     .catch((err: unknown) => {
-      if (!isCurrent() || version !== inboxVersion) return;
+      if (signal.aborted || !isCurrent() || version !== inboxVersion) return;
       if ((err as { name?: string }).name === "AbortError") return;
       setState({
         loading: false,
@@ -221,10 +251,22 @@ export async function refreshDm(
       });
     })
     .finally(() => {
-      inFlight = null;
+      if (inFlight === request) {
+        inFlight = null;
+        inboxController = null;
+        if (signal.aborted) setState({ loading: false });
+      }
     });
-  return inFlight;
+  inFlight = request;
+  return request;
 }
+
+// Account isolation belongs to the shared store, including when polling is not mounted.
+subscribeAuthor(() => {
+  if (isStoreSessionCurrent()) return;
+  resetDmSession();
+  if (stopPolling) void refreshDm();
+});
 
 /** Idempotent process-wide polling. The launcher owns the mount for the app's lifetime. */
 export function startDmPolling(): () => void {
@@ -239,12 +281,6 @@ export function startDmPolling(): () => void {
   const onVisible = () => {
     if (!document.hidden) void refreshDm({ silent: true });
   };
-  const unsubAuthor = subscribeAuthor(() => {
-    openedConversations.clear();
-    initialLoaded = false;
-    lastSeenMessage.clear();
-    void refreshDm();
-  });
   document.addEventListener("visibilitychange", onVisible);
   window.addEventListener("focus", tick);
 
@@ -252,7 +288,6 @@ export function startDmPolling(): () => void {
     window.clearInterval(timer);
     document.removeEventListener("visibilitychange", onVisible);
     window.removeEventListener("focus", tick);
-    unsubAuthor();
     stopPolling = null;
   };
   return stopPolling;

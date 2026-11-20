@@ -12,14 +12,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ProfileThemePicker } from "@/views/profile/profile-theme-picker";
 import type { ProfileSummary } from "@/views/profile/profile-types";
 
-test("match presets, customization and Refresh replace the previous discovery chips", async () => {
-  const dom = new JSDOM("<div id='root'></div>");
+test("match presets, custom profiles, member sorts and Refresh work together", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true });
   Object.assign(globalThis, {
     window: dom.window,
     document: dom.window.document,
     HTMLElement: dom.window.HTMLElement,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
     IS_REACT_ACT_ENVIRONMENT: true,
   });
+  dom.window.matchMedia = () => ({ matches: true }) as MediaQueryList;
   const { createRoot } = await import("react-dom/client");
   const root = createRoot(document.getElementById("root")!);
   let selected!: DiscoveryOptions;
@@ -42,7 +46,33 @@ test("match presets, customization and Refresh replace the previous discovery ch
   try {
     await React.act(() => root.render(<Harness />));
     assert.equal(document.body.textContent?.includes("Has ratings"), false);
-    assert.equal(document.body.textContent?.includes("Custom profile"), false);
+    assert.ok(button("Custom profile").title.includes("HTML/CSS"));
+    await React.act(() => button("Custom profile").click());
+    assert.equal(selected.canvas, true);
+    assert.equal(button("Custom profile").getAttribute("aria-pressed"), "true");
+    await React.act(() =>
+      (document.querySelector('button[aria-haspopup="listbox"]') as HTMLButtonElement).click(),
+    );
+    const chooseSort = async (name: string) => {
+      const item = [...document.querySelectorAll('[role="option"]')].find(
+        (option) => option.textContent === name,
+      )!;
+      assert.ok(item, name);
+      await React.act(() => (item as HTMLElement).click());
+    };
+    await chooseSort("Newest members");
+    assert.deepEqual(selected.orders, ["newest"]);
+    await chooseSort("Oldest members");
+    assert.deepEqual(selected.orders, ["oldest"]);
+    await chooseSort("Written reviews");
+    assert.deepEqual(selected.orders, ["reviews"]);
+    await chooseSort("Recent activity");
+    assert.deepEqual(selected.orders, ["reviews", "activity"]);
+    await chooseSort("Newest members");
+    assert.deepEqual(selected.orders, ["newest"]);
+    await React.act(() =>
+      (document.querySelector('button[aria-haspopup="listbox"]') as HTMLButtonElement).click(),
+    );
     for (const score of [75, 50, 25]) {
       await React.act(() => button(score + "% Match & above").click());
       assert.equal(selected.minMatch, score);
@@ -58,10 +88,12 @@ test("match presets, customization and Refresh replace the previous discovery ch
     await React.act(() => button("Refresh").click());
     assert.equal(refreshes, 1);
     assert.equal(selected.minMatch, 25, "refresh keeps filters");
+    assert.equal(selected.canvas, true, "refresh keeps custom-profile filtering");
     await React.act(() => button("Clear filters").click());
     await React.act(() => button("Refresh").click());
     assert.equal(refreshes, 2, "refresh works without match or sort selections");
     assert.deepEqual(selected.orders, []);
+    assert.equal(selected.canvas, false);
   } finally {
     await React.act(() => root.unmount());
     dom.window.close();
@@ -194,4 +226,36 @@ test("ascending review order reaches the backend only for the sole review sort",
     fetchDiscoveredUsers({ ...filters, orders: [...filters.orders] }),
     /latest backend deployment/,
   );
+});
+
+test("restored member sorts and custom profile filtering use the existing backend contract", async (t) => {
+  let query!: URLSearchParams;
+  t.mock.method(globalThis, "fetch", async (input) => {
+    query = new URL(String(input)).searchParams;
+    return Response.json({ filterVersion: 4, users: [], total: 0 });
+  });
+  for (const sort of ["newest", "oldest"] as const) {
+    await fetchDiscoveredUsers({
+      query: "",
+      sort,
+      orders: [sort],
+      seed: "restored",
+      canvas: true,
+      rated: true,
+      minRatings: 400,
+      match: true,
+      minMatch: 75,
+      minShared: 30,
+    });
+    assert.equal(query.get("sort"), sort);
+    assert.equal(
+      query.has("order"),
+      false,
+      "legacy date sorts must not send unsupported combined orders",
+    );
+    assert.equal(query.get("canvas"), "1");
+    assert.equal(query.get("minRatings"), "400");
+    assert.equal(query.get("minMatch"), "75");
+    assert.equal(query.get("minShared"), "30");
+  }
 });

@@ -77,10 +77,7 @@ export class ProfileApiError extends Error {
 }
 
 function foldHandle(s: string): string {
-  return s
-    .replace(/[‎‏‪-‮⁦-⁩]/g, "")
-    .trim()
-    .toLowerCase();
+  return s.replace(/[‎‏‪-‮⁦-⁩]/g, "").trim().toLowerCase();
 }
 
 function sameHandle(mine: string | null | undefined, viewing: string): boolean {

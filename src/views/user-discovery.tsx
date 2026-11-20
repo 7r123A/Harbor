@@ -28,7 +28,7 @@ export function UserDiscoveryView({ onClose }: { onClose: () => void }) {
       orders: options.orders,
       seed,
       rated: options.minRatings > 0,
-      canvas: false,
+      canvas: options.canvas,
       minRatings: options.minRatings || 1,
       match: !!viewer && options.minMatch != null,
       minMatch: options.minMatch ?? 50,

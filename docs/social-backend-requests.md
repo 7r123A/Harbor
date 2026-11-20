@@ -12,7 +12,7 @@ The client already calls some of the missing routes on purpose (for example
 ## 1. Vocabulary, for whoever is reading this first
 
 - **Backend**: the server and database that own the accounts, ratings, reviews, comments and
-  friendships. It is the only copy that is authoritative. The desktop app (the *frontend*) has no
+  friendships. It is the only copy that is authoritative. The desktop app (the _frontend_) has no
   database of its own beyond a local cache.
 - **API / endpoint**: a URL the app is allowed to call, e.g.
   `GET /themes/api/social/u/{handle}/ratings`. Each endpoint has a request shape and a response
@@ -39,19 +39,19 @@ Conventions the current API already follows and new routes should keep:
 
 Verified working:
 
-| Route | Notes |
-| --- | --- |
-| `GET /social/u/{handle}` | public profile |
-| `GET /social/u/{handle}/friends` | accepted friends |
-| `GET /social/u/{handle}/ratings?type=&cursor=` | 20 per page, includes `review`, `spoiler`, `at`, `createdAt` |
-| `GET /social/u/{handle}/badges` | |
-| `GET /social/u/{handle}/activity?limit=` | |
-| `GET /social/u/{handle}/comments` (+ `POST`, `DELETE /{id}`, `POST|DELETE /{id}/like`) | comments live on a **profile** |
-| `GET /social/friends`, `/friends/pending`, `POST /friends/request`, `POST /friends/{edge}/accept|decline`, `POST /friends/remove` | |
-| `POST /social/ratings`, `POST /social/ratings/delete`, `/social/ratings/me`, `/social/ratings/bulk` | rating upsert/delete/import |
-| `GET /social/groups/discover`, `GET /social/groups/{id}`, `/groups/{id}/join|leave|posts`, `/groups/mine`, `/groups/invites`, `/groups/{id}/members/{userId}/role` | |
-| `GET /social/me/feed`, `/social/me/watching`, `/social/me/notifications`, `POST /me/notifications/read`, `PATCH /me/profile`, `/u/me/stats` | |
-| `GET /social/presence` (per profile fields `online`, `presence`) | |
+| Route                                                                                                                                       | Notes                                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `GET /social/u/{handle}`                                                                                                                    | public profile                                               |
+| `GET /social/u/{handle}/friends`                                                                                                            | accepted friends                                             |
+| `GET /social/u/{handle}/ratings?type=&cursor=`                                                                                              | 20 per page, includes `review`, `spoiler`, `at`, `createdAt` |
+| `GET /social/u/{handle}/badges`                                                                                                             |                                                              |
+| `GET /social/u/{handle}/activity?limit=`                                                                                                    |                                                              |
+| `GET /social/u/{handle}/comments` (+ `POST`, `DELETE /{id}`, `POST                                                                          | DELETE /{id}/like`)                                          | comments live on a **profile**                                                  |
+| `GET /social/friends`, `/friends/pending`, `POST /friends/request`, `POST /friends/{edge}/accept                                            | decline`, `POST /friends/remove`                             |                                                                                 |
+| `POST /social/ratings`, `POST /social/ratings/delete`, `/social/ratings/me`, `/social/ratings/bulk`                                         | rating upsert/delete/import                                  |
+| `GET /social/groups/discover`, `GET /social/groups/{id}`, `/groups/{id}/join                                                                | leave                                                        | posts`, `/groups/mine`, `/groups/invites`, `/groups/{id}/members/{userId}/role` |     |
+| `GET /social/me/feed`, `/social/me/watching`, `/social/me/notifications`, `POST /me/notifications/read`, `PATCH /me/profile`, `/u/me/stats` |                                                              |
+| `GET /social/presence` (per profile fields `online`, `presence`)                                                                            |                                                              |
 
 Verified **missing** (404/405 today): `/social/users`, `/social/users/search`, every per-title
 review route, every star/like route on a rating, and any comment route keyed to a rating.
@@ -63,22 +63,22 @@ review route, every star/like route on a rating, and any comment route keyed to 
 These routes now exist and are called by the app. Everything here is authoritative over the
 "missing" list in section 2 and over any Priority 1 item it contradicts.
 
-| Route | Used for |
-| --- | --- |
-| `GET /social/users?q=&sort=&limit=&cursor=&rated=1&canvas=1` | user directory and search. `sort`: `newest` (default), `oldest`, `username`, `relevance`. `rated`/`canvas` filter and combine. Each row carries `ratingCount` and `hasCanvas` |
-| `GET /social/u/{handle}/quick?sort=&cursor=&limit=` | profile card + first page of that author's reviews in one round trip |
-| `GET /social/u/{handle}/reviews` | reviews authored by one person, author-scoped, paginated |
-| `POST|DELETE /social/reviews/{id}/reaction` | stars on a review; response carries the authoritative count |
-| `GET /social/dm/conversations`, `POST /social/dm/conversations` | DM inbox and starting a conversation |
-| `GET|POST /social/dm/conversations/{id}/messages` | thread history and sending |
-| `POST /social/dm/conversations/{id}/read|mute|hide` | read state, mute, hide-for-me |
-| `PATCH|DELETE /social/dm/messages/{id}` | edit and delete an own message |
-| `PUT|DELETE /social/dm/messages/{id}/reaction` | reactions on a message |
-| `GET /social/parties/room/{code}/invites` | pending/recent invitations for a room |
-| `POST /social/parties/invites` | invite people to a watch party; skips blocked, banned, unknown and already-invited recipients |
-| `POST /social/parties/invites/{id}/accept|decline`, `DELETE /social/parties/invites/{id}` | respond to, or revoke, an invitation |
-| `PATCH /social/me/profile` (card fields) | `profileCard` appearance: validated and returned with every profile |
-| `GET /social/feed` | derived activity feed, including "`{user}` joined `{group}`" rows |
+| Route                                                           | Used for                                                                                                                                                                      |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /social/users?q=&sort=&limit=&cursor=&rated=1&canvas=1`    | user directory and search. `sort`: `newest` (default), `oldest`, `username`, `relevance`. `rated`/`canvas` filter and combine. Each row carries `ratingCount` and `hasCanvas` |
+| `GET /social/u/{handle}/quick?sort=&cursor=&limit=`             | profile card + first page of that author's reviews in one round trip                                                                                                          |
+| `GET /social/u/{handle}/reviews`                                | reviews authored by one person, author-scoped, paginated                                                                                                                      |
+| `POST                                                           | DELETE /social/reviews/{id}/reaction`                                                                                                                                         | stars on a review; response carries the authoritative count |
+| `GET /social/dm/conversations`, `POST /social/dm/conversations` | DM inbox and starting a conversation                                                                                                                                          |
+| `GET                                                            | POST /social/dm/conversations/{id}/messages`                                                                                                                                  | thread history and sending                                  |
+| `POST /social/dm/conversations/{id}/read                        | mute                                                                                                                                                                          | hide`                                                       | read state, mute, hide-for-me |
+| `PATCH                                                          | DELETE /social/dm/messages/{id}`                                                                                                                                              | edit and delete an own message                              |
+| `PUT                                                            | DELETE /social/dm/messages/{id}/reaction`                                                                                                                                     | reactions on a message                                      |
+| `GET /social/parties/room/{code}/invites`                       | pending/recent invitations for a room                                                                                                                                         |
+| `POST /social/parties/invites`                                  | invite people to a watch party; skips blocked, banned, unknown and already-invited recipients                                                                                 |
+| `POST /social/parties/invites/{id}/accept                       | decline`, `DELETE /social/parties/invites/{id}`                                                                                                                               | respond to, or revoke, an invitation                        |
+| `PATCH /social/me/profile` (card fields)                        | `profileCard` appearance: validated and returned with every profile                                                                                                           |
+| `GET /social/feed`                                              | derived activity feed, including "`{user}` joined `{group}`" rows                                                                                                             |
 
 Deliberately **not** built: per-title review routes. A title's reviews are assembled from
 `/social/u/{handle}/ratings` and `/social/u/{handle}/reviews`, and posters use the batch summary
@@ -237,18 +237,18 @@ Bulk variant for rails/home: `GET /social/titles/summary?items=tmdb:movie:809:mo
 
 ## 4. Priority 2 — mandatory for existing/future social features
 
-| Gap | Why it blocks something real | Proposed route(s) |
-| --- | --- | --- |
-| No blocking / muting | `friendStatus` already has `"blocked"`, but nothing can set it; blocked people still appear in feeds, reviews and comments | `POST/DELETE /social/users/{handle}/block`, `POST/DELETE /social/users/{handle}/mute` |
-| No reporting | Reviews and comments can be posted but not reported; moderation is off-platform | `POST /social/reviews/{id}/report`, `POST /social/u/{handle}/comments/{id}/report`, `POST /social/reviews/{id}/comments/{id}/report`, body `{ reason: "spam|abuse|spoiler|other", note? }` |
-| Comment editing | Composer writes only; a typo can only be deleted | `PATCH /social/u/{handle}/comments/{id}` (mirror the review comment route) |
-| Notification entity types | Notifications exist, but nothing emits/links "someone starred your review" or "replied to your review" | add `review_star`, `review_comment`, `review_reply` with `entityType: "review"`, `entityId: <review id>`; the client already renders arbitrary `entityType`/`targetId` |
-| Paginated friends | `/social/u/{handle}/friends` returns everything; large accounts are one big payload | `?cursor=&limit=` on the existing route, same page envelope |
-| Presence batch | Avatars ask per profile; a list of 40 reviews needs 40 presence reads | `GET /social/presence?handles=a,b,c` → `{ "a": { online, presence }, … }` |
-| Review discovery | Nothing to power "reviews your friends liked" or a reviews rail | `GET /social/reviews/top?window=week&mediaType=&limit=`, `GET /social/reviews/search?q=` |
-| Activity visibility | Activity is per-profile and friends-only; no global or topic feed | `GET /social/activity?scope=friends|everyone&cursor=` |
-| New media types | `mediaType` is `movie|series|anime|manga` only; books/eBooks/games/music are not rateable in Harbor | if Harbor starts rating them, extend the enum **and** the rating table before the UI ships, so history stays consistent |
-| Direct messages / parties | Explicitly out of scope now, but the current model has no thread or membership primitive | `GET/POST /social/dm/threads`, `POST /social/dm/threads/{id}/messages`, later `GET /social/realtime/ticket` |
+| Gap                       | Why it blocks something real                                                                                               | Proposed route(s)                                                                                                                                                      |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No blocking / muting      | `friendStatus` already has `"blocked"`, but nothing can set it; blocked people still appear in feeds, reviews and comments | `POST/DELETE /social/users/{handle}/block`, `POST/DELETE /social/users/{handle}/mute`                                                                                  |
+| No reporting              | Reviews and comments can be posted but not reported; moderation is off-platform                                            | `POST /social/reviews/{id}/report`, `POST /social/u/{handle}/comments/{id}/report`, `POST /social/reviews/{id}/comments/{id}/report`, body `{ reason: "spam            | abuse             | spoiler                                                          | other", note? }`                                                                                                        |
+| Comment editing           | Composer writes only; a typo can only be deleted                                                                           | `PATCH /social/u/{handle}/comments/{id}` (mirror the review comment route)                                                                                             |
+| Notification entity types | Notifications exist, but nothing emits/links "someone starred your review" or "replied to your review"                     | add `review_star`, `review_comment`, `review_reply` with `entityType: "review"`, `entityId: <review id>`; the client already renders arbitrary `entityType`/`targetId` |
+| Paginated friends         | `/social/u/{handle}/friends` returns everything; large accounts are one big payload                                        | `?cursor=&limit=` on the existing route, same page envelope                                                                                                            |
+| Presence batch            | Avatars ask per profile; a list of 40 reviews needs 40 presence reads                                                      | `GET /social/presence?handles=a,b,c` → `{ "a": { online, presence }, … }`                                                                                              |
+| Review discovery          | Nothing to power "reviews your friends liked" or a reviews rail                                                            | `GET /social/reviews/top?window=week&mediaType=&limit=`, `GET /social/reviews/search?q=`                                                                               |
+| Activity visibility       | Activity is per-profile and friends-only; no global or topic feed                                                          | `GET /social/activity?scope=friends                                                                                                                                    | everyone&cursor=` |
+| New media types           | `mediaType` is `movie                                                                                                      | series                                                                                                                                                                 | anime             | manga` only; books/eBooks/games/music are not rateable in Harbor | if Harbor starts rating them, extend the enum **and** the rating table before the UI ships, so history stays consistent |
+| Direct messages / parties | Explicitly out of scope now, but the current model has no thread or membership primitive                                   | `GET/POST /social/dm/threads`, `POST /social/dm/threads/{id}/messages`, later `GET /social/realtime/ticket`                                                            |
 
 ---
 
