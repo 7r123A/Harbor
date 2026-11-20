@@ -17,51 +17,70 @@ export function MoonshineModelRow() {
   const [manageLanguage, setManageLanguage] = useState<MoonshineLanguage>(
     isMoonshineLanguage(selectedPreference) ? selectedPreference : "en",
   );
-  const [status, setStatus] = useState<MoonshineModelStatus | null>(null);
+  const [statusSnapshot, setStatusSnapshot] = useState<{
+    language: MoonshineLanguage;
+    revision: number;
+    value: MoonshineModelStatus;
+  } | null>(null);
+  const [statusRevision, setStatusRevision] = useState(0);
   const [busy, setBusy] = useState<"runtime" | "download" | "remove" | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errorSnapshot, setErrorSnapshot] = useState<{
+    language: MoonshineLanguage;
+    message: string;
+  } | null>(null);
+  const status =
+    statusSnapshot?.language === manageLanguage && statusSnapshot.revision === statusRevision
+      ? statusSnapshot.value
+      : null;
+  const error = errorSnapshot?.language === manageLanguage ? errorSnapshot.message : null;
 
   useEffect(() => {
     if (isMoonshineLanguage(selectedPreference)) setManageLanguage(selectedPreference);
   }, [selectedPreference]);
 
   useEffect(() => {
+    setErrorSnapshot(null);
+  }, [manageLanguage]);
+
+  useEffect(() => {
     let active = true;
-    setStatus(null);
-    setError(null);
     void invoke<MoonshineModelStatus>("moonshine_model_status", { language: manageLanguage })
       .then((result) => {
-        if (active) setStatus(result);
+        if (active)
+          setStatusSnapshot({
+            language: manageLanguage,
+            revision: statusRevision,
+            value: result,
+          });
       })
       .catch((reason) => {
-        if (active) setError(String(reason));
+        if (active) setErrorSnapshot({ language: manageLanguage, message: String(reason) });
       });
     return () => {
       active = false;
     };
-  }, [manageLanguage]);
+  }, [manageLanguage, statusRevision]);
 
   async function perform(mode: "runtime" | "download" | "remove") {
     if (busy) return;
+    const operationLanguage = manageLanguage;
     setBusy(mode);
-    setError(null);
+    setErrorSnapshot(null);
     try {
       if (mode === "runtime") {
         await invoke("moonshine_runtime_install");
       } else {
         await invoke(mode === "download" ? "moonshine_model_download" : "moonshine_model_remove", {
-          language: manageLanguage,
+          language: operationLanguage,
         });
       }
-      setStatus(
-        await invoke<MoonshineModelStatus>("moonshine_model_status", {
-          language: manageLanguage,
-        }),
-      );
     } catch (cause) {
-      setError(String(cause));
+      setErrorSnapshot({ language: operationLanguage, message: String(cause) });
     } finally {
       setBusy(null);
+      // Always re-query the currently managed language. An earlier operation
+      // must not publish its previous language's installed state into this row.
+      setStatusRevision((revision) => revision + 1);
     }
   }
 
@@ -76,6 +95,7 @@ export function MoonshineModelRow() {
         <select
           value={selectedPreference}
           onChange={(event) => update({ subtitleMoonshineLanguage: event.target.value })}
+          disabled={busy !== null}
           aria-label={t("Moonshine language selection")}
           className="min-h-10 rounded-lg border border-edge-soft bg-elevated px-3 text-sm text-ink"
         >
