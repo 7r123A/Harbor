@@ -753,13 +753,15 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         // the peaks: a 720p stream averaging 2.5 Mbit/s can reach 6 Mbit/s. Without a declared
         // peak the picture is encoded with the capped maxrate instead.
         if let Some(limit) = device_kbps {
-            let average_kbps = video_average_rate(input.probe, v) / 1000;
-            let peak_kbps = v.max_bitrate / 1000;
-            let reason = if average_kbps > u64::from(limit) {
-                Some(format!("{average_kbps} kbit/s above {limit} kbit/s"))
-            } else if peak_kbps > u64::from(limit) {
-                Some(format!("{peak_kbps} kbit/s peak above {limit} kbit/s"))
-            } else if peak_kbps == 0 {
+            // Compared in bit/s: dividing first would round 3,000,999 bit/s down to a 3000 kbit/s
+            // limit. The rates shown round up for the same reason.
+            let limit_bps = u64::from(limit) * 1_000;
+            let average = video_average_rate(input.probe, v);
+            let reason = if average > limit_bps {
+                Some(format!("{} kbit/s above {limit} kbit/s", average.div_ceil(1_000)))
+            } else if v.max_bitrate > limit_bps {
+                Some(format!("{} kbit/s peak above {limit} kbit/s", v.max_bitrate.div_ceil(1_000)))
+            } else if v.max_bitrate == 0 {
                 Some(format!("peak bit rate unknown, receiver limit {limit} kbit/s"))
             } else {
                 None
@@ -1514,6 +1516,18 @@ mod tests {
         let p = plan_with(&film(r#","bit_rate":"2500000","max_bit_rate":"6000000""#, ""), &CastOptions::default(), limits);
         assert!(reasons(&p).iter().any(|r| r == "6000 kbit/s peak above 3000 kbit/s"), "{:?}", reasons(&p));
         assert!(p.output.join(" ").contains("-maxrate 3000k"), "{:?}", p.output);
+        // At the boundary the comparison is exact: a peak of exactly 3,000,000 bit/s fits a
+        // 3000 kbit/s limit, one bit/s more does not (3,000,999 is not rounded down to 3000).
+        let p = plan_with(&film(r#","bit_rate":"2500000","max_bit_rate":"3000000""#, ""), &CastOptions::default(), limits);
+        assert_eq!(p.summary.video, "copy", "{:?}", reasons(&p));
+        for peak in ["3000001", "3000999"] {
+            let p = plan_with(&film(&format!(r#","bit_rate":"2500000","max_bit_rate":"{peak}""#), ""), &CastOptions::default(), limits);
+            assert_ne!(p.summary.video, "copy", "peak {peak}");
+            assert!(reasons(&p).iter().any(|r| r == "3001 kbit/s peak above 3000 kbit/s"), "{:?}", reasons(&p));
+        }
+        // The average is compared exactly too.
+        let p = plan_with(&film(r#","bit_rate":"3000999","max_bit_rate":"2900000""#, ""), &CastOptions::default(), limits);
+        assert!(reasons(&p).iter().any(|r| r == "3001 kbit/s above 3000 kbit/s"), "{:?}", reasons(&p));
         // An average below the limit proves nothing about the peaks: the stream's own rate, MKV's
         // statistics tag under either name, or the file's rate less its audio.
         for (video, format) in [
