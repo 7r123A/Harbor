@@ -43,6 +43,8 @@ struct Session {
     cast: Option<Arc<CastJob>>,
     /// Ends every response of this session when the cast is stopped or replaced.
     cancel: tokio_util::sync::CancellationToken,
+    /// The response currently converting this cast stream (MPEG-TS), so a new request ends it.
+    current_response: Arc<std::sync::Mutex<Option<tokio_util::sync::CancellationToken>>>,
 }
 
 #[derive(Clone)]
@@ -248,6 +250,7 @@ impl ProxyState {
                     created_at: Instant::now(),
                     cast: None,
                     cancel: tokio_util::sync::CancellationToken::new(),
+                    current_response: Default::default(),
                 };
                 self.sessions.write().await.insert(id.clone(), session);
                 let qs = query.map(|q| format!("?{}", q)).unwrap_or_default();
@@ -284,6 +287,7 @@ impl ProxyState {
             created_at: Instant::now(),
             cast: None,
             cancel: tokio_util::sync::CancellationToken::new(),
+            current_response: Default::default(),
         };
         self.sessions.write().await.insert(id.clone(), session);
         let suffix = if args.transcode { ".ts" } else { "" };
@@ -326,6 +330,7 @@ impl ProxyState {
                 created_at: Instant::now(),
                 cast: None,
                 cancel: tokio_util::sync::CancellationToken::new(),
+                current_response: Default::default(),
             };
             self.sessions.write().await.insert(id.clone(), session);
             let qs = query.map(|q| format!("?{}", q)).unwrap_or_default();
@@ -347,6 +352,7 @@ impl ProxyState {
             created_at: Instant::now(),
             cast: None,
             cancel: tokio_util::sync::CancellationToken::new(),
+            current_response: Default::default(),
         };
         self.sessions.write().await.insert(id.clone(), session);
         let suffix = if args.transcode { ".ts" } else { "" };
@@ -389,6 +395,7 @@ impl ProxyState {
             created_at: Instant::now(),
             cast: Some(Arc::new(job)),
             cancel: tokio_util::sync::CancellationToken::new(),
+            current_response: Default::default(),
         };
         self.sessions.write().await.insert(id.clone(), session);
         let url = format!("http://{}:{}/s/{}.ts", host, self.port, id);
@@ -932,9 +939,27 @@ fn prepared_prefix_response(session: &Session, headers: &HeaderMap) -> Option<Re
         .ok()
 }
 
+/// Makes `token` the one response converting a cast stream and ends the previous one. A TV that
+/// asks for the stream again (after a probe, a stall or its own retry) must not leave the earlier
+/// conversion running: two FFmpeg processes would share the GPU encoder and the disk for nothing.
+fn take_over_response(
+    current: &std::sync::Mutex<Option<tokio_util::sync::CancellationToken>>,
+    token: tokio_util::sync::CancellationToken,
+) {
+    let previous = current.lock().ok().and_then(|mut slot| slot.replace(token));
+    if let Some(previous) = previous {
+        previous.cancel();
+    }
+}
+
 /// One continuous MPEG-TS response converted on the fly. A HEAD request (receivers probe before
 /// they play) is answered without starting FFmpeg.
-async fn serve_cast_ts(job: Arc<CastJob>, cancel: tokio_util::sync::CancellationToken, head: bool) -> Response {
+async fn serve_cast_ts(
+    job: Arc<CastJob>,
+    cancel: tokio_util::sync::CancellationToken,
+    current: Arc<std::sync::Mutex<Option<tokio_util::sync::CancellationToken>>>,
+    head: bool,
+) -> Response {
     let mut headers = HeaderMap::new();
     headers.insert("content-type", HeaderValue::from_static("video/mp2t"));
     headers.insert("cache-control", HeaderValue::from_static("no-cache"));
@@ -950,6 +975,9 @@ async fn serve_cast_ts(job: Arc<CastJob>, cancel: tokio_util::sync::Cancellation
     let Some(ffmpeg) = crate::transcode::locate_ffmpeg() else {
         return (StatusCode::INTERNAL_SERVER_ERROR, "ffmpeg not found").into_response();
     };
+    // Ends with the cast (the session token) or with the next request for this stream.
+    let response = cancel.child_token();
+    take_over_response(&current, response.clone());
     let caps = crate::cast_transcode::caps().await;
     let mut cmd = tokio::process::Command::new(&ffmpeg);
     // The receiver's reading paces the conversion through the pipe, so no read-rate limit.
@@ -987,7 +1015,7 @@ async fn serve_cast_ts(job: Arc<CastJob>, cancel: tokio_util::sync::Cancellation
             let _owned = &child;
             chunk
         })
-        .take_until(cancel.cancelled_owned());
+        .take_until(response.cancelled_owned());
     (StatusCode::OK, headers, Body::from_stream(body)).into_response()
 }
 
@@ -1018,7 +1046,7 @@ async fn handle_stream(
     };
 
     if let Some(job) = session.cast.clone() {
-        return serve_cast_ts(job, session.cancel.clone(), method == axum::http::Method::HEAD).await;
+        return serve_cast_ts(job, session.cancel.clone(), session.current_response.clone(), method == axum::http::Method::HEAD).await;
     }
 
     if session.transcode {
@@ -1308,7 +1336,24 @@ mod tests {
             created_at,
             cast,
             cancel: tokio_util::sync::CancellationToken::new(),
+            current_response: Default::default(),
         }
+    }
+
+    #[test]
+    fn a_new_request_for_a_cast_stream_ends_the_previous_conversion() {
+        let session = tokio_util::sync::CancellationToken::new();
+        let current = std::sync::Mutex::new(None);
+        let first = session.child_token();
+        take_over_response(&current, first.clone());
+        assert!(!first.is_cancelled());
+        let second = session.child_token();
+        take_over_response(&current, second.clone());
+        assert!(first.is_cancelled(), "the earlier FFmpeg stops");
+        assert!(!second.is_cancelled());
+        // Stopping the cast still ends whichever response is running.
+        session.cancel();
+        assert!(second.is_cancelled());
     }
 
     #[test]

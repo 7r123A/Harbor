@@ -252,7 +252,7 @@ pub async fn probe_codecs(url: &str, headers: &HashMap<String, String>) -> Probe
         let mut has_ua = false;
         if let Some((_, ua)) = headers
             .iter()
-            .find(|(k, _)| k.to_lowercase() == "user-agent")
+            .find(|(k, v)| k.to_lowercase() == "user-agent" && !has_line_break(v))
         {
             cmd.arg("-user_agent").arg(ua);
             has_ua = true;
@@ -262,7 +262,7 @@ pub async fn probe_codecs(url: &str, headers: &HashMap<String, String>) -> Probe
         }
         let mut header_blob = String::new();
         for (k, v) in headers {
-            if k.to_lowercase() == "user-agent" {
+            if k.to_lowercase() == "user-agent" || has_line_break(k) || has_line_break(v) {
                 continue;
             }
             header_blob.push_str(&format!("{}: {}\r\n", k, v));
@@ -361,6 +361,11 @@ fn push_reconnect_args(cmd: &mut tokio::process::Command) {
         .arg("8");
 }
 
+/// A line break inside a header would start another header in FFmpeg's request.
+fn has_line_break(value: &str) -> bool {
+    value.contains(['\r', '\n'])
+}
+
 fn push_http_input(
     cmd: &mut tokio::process::Command,
     url: &str,
@@ -373,7 +378,7 @@ fn push_http_input(
     let mut has_ua = false;
     if let Some((_, ua)) = headers
         .iter()
-        .find(|(k, _)| k.to_lowercase() == "user-agent")
+        .find(|(k, v)| k.to_lowercase() == "user-agent" && !has_line_break(v))
     {
         cmd.arg("-user_agent").arg(ua);
         has_ua = true;
@@ -383,7 +388,7 @@ fn push_http_input(
     }
     let mut header_blob = String::new();
     for (k, v) in headers {
-        if k.to_lowercase() == "user-agent" {
+        if k.to_lowercase() == "user-agent" || has_line_break(k) || has_line_break(v) {
             continue;
         }
         header_blob.push_str(&format!("{}: {}\r\n", k, v));

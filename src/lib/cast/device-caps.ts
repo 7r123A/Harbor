@@ -203,6 +203,12 @@ const CAPS_AIRPLAY_GENERIC: DeviceCaps = {
 };
 
 const CAPS_AIRPLAY_APPLE_TV_HD: DeviceCaps = { ...CAPS_AIRPLAY_GENERIC, label: "Apple TV (1080p)" };
+// The second-generation Apple TV (AppleTV2,1) decodes H.264 up to 720p only.
+const CAPS_AIRPLAY_APPLE_TV_2: DeviceCaps = {
+  ...CAPS_AIRPLAY_GENERIC,
+  label: "Apple TV (720p)",
+  maxResolution: 720,
+};
 
 export function getDeviceCaps(device: Pick<CastDeviceInfo, "kind" | "name" | "model">): DeviceCaps {
   const model = (device.model ?? "").toLowerCase();
@@ -211,9 +217,11 @@ export function getDeviceCaps(device: Pick<CastDeviceInfo, "kind" | "name" | "mo
 
   if (device.kind === "roku") return CAPS_ROKU_4K;
   if (device.kind === "airplay") {
-    // AppleTV2,x to AppleTV5,x stop at 1080p H.264, and TV boxes with AirPlay claim to be the 3.
+    // AppleTV3,x to AppleTV5,x stop at 1080p H.264 and the 2 at 720p; TV boxes with AirPlay claim
+    // to be the 3.
     const generation = Number(/appletv(\d+),/.exec(model)?.[1] ?? 0);
-    if (generation > 0 && generation < 6) return CAPS_AIRPLAY_APPLE_TV_HD;
+    if (generation === 2) return CAPS_AIRPLAY_APPLE_TV_2;
+    if (generation > 2 && generation < 6) return CAPS_AIRPLAY_APPLE_TV_HD;
     if (/apple\s*tv|appletv/.test(blob)) return CAPS_AIRPLAY_APPLE_TV;
     if (/homepod/.test(blob))
       return { ...CAPS_AIRPLAY_GENERIC, label: "HomePod", maxResolution: 1080 };

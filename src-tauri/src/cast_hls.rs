@@ -77,9 +77,13 @@ async fn stop_session_resources(session: Arc<HlsSession>) {
             eprintln!("[cast-hls] ffmpeg reap failed: {error}");
         }
     }
-    if let Err(error) = tokio::fs::remove_dir_all(&session.temp_dir).await {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            eprintln!("[cast-hls] temporary session cleanup failed: {error}");
+    // On Windows a segment still being sent keeps the folder busy for a moment; try again briefly.
+    for attempt in 0..3 {
+        match tokio::fs::remove_dir_all(&session.temp_dir).await {
+            Ok(()) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) if attempt == 2 => eprintln!("[cast-hls] temporary session cleanup failed: {error}"),
+            Err(_) => tokio::time::sleep(Duration::from_millis(500)).await,
         }
     }
 }
@@ -596,6 +600,7 @@ async fn prune_after_serving(session: &HlsSession, filename: &str) {
 async fn handle_segment(
     State(state): State<HlsState>,
     Path((id, filename)): Path<(String, String)>,
+    headers: axum::http::HeaderMap,
 ) -> Response {
     if segment_number(&filename).is_none() && filename != FMP4_INIT {
         return (StatusCode::NOT_FOUND, "not a segment").into_response();
@@ -615,13 +620,14 @@ async fn handle_segment(
     }
     let path = session.temp_dir.join(&filename);
     let deadline = std::time::Instant::now() + SEGMENT_WAIT_MAX;
+    let range = headers.get(axum::http::header::RANGE).and_then(|v| v.to_str().ok()).map(str::to_string);
     loop {
         if path.is_file() {
             tokio::time::sleep(Duration::from_millis(80)).await;
-            if let Ok(bytes) = tokio::fs::read(&path).await {
-                if let Some(content_type) = finished_segment_type(&filename, &bytes) {
-                    prune_after_serving(&session, &filename).await;
-                    return binary_response(bytes, content_type);
+            if let Some(content_type) = ready_segment_type(&path, &filename).await {
+                prune_after_serving(&session, &filename).await;
+                if let Some(response) = file_response(&path, content_type, range.as_deref()).await {
+                    return response;
                 }
             }
         }
@@ -662,32 +668,88 @@ fn playlist_response(body: String) -> Response {
         .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "build").into_response())
 }
 
-fn binary_response(bytes: Vec<u8>, content_type: &'static str) -> Response {
-    let mut resp = Response::builder().status(StatusCode::OK);
+/// The content type of a segment once FFmpeg has finished it, from its first bytes only.
+async fn ready_segment_type(path: &std::path::Path, filename: &str) -> Option<&'static str> {
+    use tokio::io::AsyncReadExt;
+    let mut file = tokio::fs::File::open(path).await.ok()?;
+    let mut head = [0u8; 8];
+    let mut read = 0;
+    while read < head.len() {
+        match file.read(&mut head[read..]).await {
+            Ok(0) => break,
+            Ok(n) => read += n,
+            Err(_) => return None,
+        }
+    }
+    finished_segment_type(filename, &head[..read])
+}
+
+/// A single `Range: bytes=` request against a file of `len` bytes: `Some(Ok((first, last)))` to
+/// serve, `Some(Err(()))` when it starts past the end (416), `None` to send the whole file (no
+/// header, a multi-range request, or one this server does not parse, as RFC 9110 14.2 allows).
+fn byte_range(header: Option<&str>, len: u64) -> Option<Result<(u64, u64), ()>> {
+    let spec = header?.trim().strip_prefix("bytes=")?;
+    if spec.contains(',') || len == 0 {
+        return None;
+    }
+    let (first, last) = spec.split_once('-')?;
+    let (first, last) = (first.trim(), last.trim());
+    if first.is_empty() {
+        let suffix: u64 = last.parse().ok()?;
+        if suffix == 0 {
+            return Some(Err(()));
+        }
+        return Some(Ok((len - suffix.min(len), len - 1)));
+    }
+    let first: u64 = first.parse().ok()?;
+    let last = if last.is_empty() { len - 1 } else { last.parse::<u64>().ok()?.min(len - 1) };
+    if first >= len {
+        return Some(Err(()));
+    }
+    (first <= last).then_some(Ok((first, last)))
+}
+
+/// Streams a finished segment from disk (a copied 4K segment can be 100 MB, so it is not read into
+/// memory), honouring the byte ranges the response says it accepts.
+async fn file_response(path: &std::path::Path, content_type: &'static str, range: Option<&str>) -> Option<Response> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    let mut file = tokio::fs::File::open(path).await.ok()?;
+    let len = file.metadata().await.ok()?.len();
+    let (status, first, last) = match byte_range(range, len) {
+        None => (StatusCode::OK, 0, len.saturating_sub(1)),
+        Some(Ok((first, last))) => (StatusCode::PARTIAL_CONTENT, first, last),
+        Some(Err(())) => {
+            let mut resp = Response::builder().status(StatusCode::RANGE_NOT_SATISFIABLE);
+            if let Some(h) = resp.headers_mut() {
+                h.insert(HeaderName::from_static("content-range"), HeaderValue::from_str(&format!("bytes */{len}")).ok()?);
+                h.insert(HeaderName::from_static("access-control-allow-origin"), HeaderValue::from_static("*"));
+            }
+            return resp.body(Body::empty()).ok();
+        }
+    };
+    if first > 0 {
+        file.seek(std::io::SeekFrom::Start(first)).await.ok()?;
+    }
+    let length = if len == 0 { 0 } else { last - first + 1 };
+    let mut resp = Response::builder().status(status);
     if let Some(h) = resp.headers_mut() {
-        h.insert(
-            HeaderName::from_static("content-type"),
-            HeaderValue::from_static(content_type),
-        );
-        h.insert(
-            HeaderName::from_static("access-control-allow-origin"),
-            HeaderValue::from_static("*"),
-        );
+        h.insert(HeaderName::from_static("content-type"), HeaderValue::from_static(content_type));
+        h.insert(HeaderName::from_static("access-control-allow-origin"), HeaderValue::from_static("*"));
         h.insert(
             HeaderName::from_static("access-control-expose-headers"),
             HeaderValue::from_static("Content-Length, Content-Range"),
         );
-        h.insert(
-            HeaderName::from_static("accept-ranges"),
-            HeaderValue::from_static("bytes"),
-        );
-        h.insert(
-            HeaderName::from_static("content-length"),
-            HeaderValue::from_str(&bytes.len().to_string()).unwrap(),
-        );
+        h.insert(HeaderName::from_static("accept-ranges"), HeaderValue::from_static("bytes"));
+        h.insert(HeaderName::from_static("content-length"), HeaderValue::from(length));
+        if status == StatusCode::PARTIAL_CONTENT {
+            h.insert(
+                HeaderName::from_static("content-range"),
+                HeaderValue::from_str(&format!("bytes {first}-{last}/{len}")).ok()?,
+            );
+        }
     }
-    resp.body(Body::from(bytes))
-        .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "build").into_response())
+    let body = Body::from_stream(tokio_util::io::ReaderStream::new(file.take(length)));
+    resp.body(body).ok()
 }
 
 /// Drains FFmpeg's stderr into the session statistics and the log.
@@ -822,6 +884,47 @@ mod tests {
         assert!(out.contains("#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:10\n"), "{out}");
         assert!(out.find("MEDIA-SEQUENCE") < out.find("#EXT-X-MAP"), "the sequence precedes the map: {out}");
         assert!(!out.contains("seg00009.m4s"), "{out}");
+    }
+
+    #[test]
+    fn byte_ranges_are_honoured_as_advertised() {
+        assert_eq!(byte_range(None, 1000), None);
+        assert_eq!(byte_range(Some("bytes=0-"), 1000), Some(Ok((0, 999))));
+        assert_eq!(byte_range(Some("bytes=100-199"), 1000), Some(Ok((100, 199))));
+        assert_eq!(byte_range(Some("bytes=900-5000"), 1000), Some(Ok((900, 999))), "clamped to the end");
+        assert_eq!(byte_range(Some("bytes=-100"), 1000), Some(Ok((900, 999))), "the last 100 bytes");
+        assert_eq!(byte_range(Some("bytes=-5000"), 1000), Some(Ok((0, 999))));
+        assert_eq!(byte_range(Some("bytes=1000-"), 1000), Some(Err(())), "past the end");
+        assert_eq!(byte_range(Some("bytes=-0"), 1000), Some(Err(())));
+        assert_eq!(byte_range(Some("bytes=0-1,5-9"), 1000), None, "several ranges: the whole file");
+        assert_eq!(byte_range(Some("items=0-9"), 1000), None);
+        assert_eq!(byte_range(Some("bytes=9-3"), 1000), None, "an inverted range is ignored");
+    }
+
+    #[tokio::test]
+    async fn segments_stream_from_disk_whole_or_by_range() {
+        let dir = std::env::temp_dir().join(format!("harbor-hls-range-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("seg00003.ts");
+        let mut data = vec![0x47u8; 4096];
+        data[1000] = 7;
+        std::fs::write(&path, &data).unwrap();
+        assert_eq!(ready_segment_type(&path, "seg00003.ts").await, Some("video/mp2t"));
+        let whole = file_response(&path, "video/mp2t", None).await.unwrap();
+        assert_eq!(whole.status(), StatusCode::OK);
+        assert_eq!(whole.headers()["content-length"], "4096");
+        let body = axum::body::to_bytes(whole.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(body.as_ref(), &data[..]);
+        let part = file_response(&path, "video/mp2t", Some("bytes=1000-1009")).await.unwrap();
+        assert_eq!(part.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(part.headers()["content-range"], "bytes 1000-1009/4096");
+        assert_eq!(part.headers()["content-length"], "10");
+        let body = axum::body::to_bytes(part.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(body.as_ref(), &data[1000..1010]);
+        let past = file_response(&path, "video/mp2t", Some("bytes=5000-")).await.unwrap();
+        assert_eq!(past.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(past.headers()["content-range"], "bytes */4096");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
