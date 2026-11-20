@@ -495,17 +495,39 @@ test("reopening the popup returns from history to the watching queue", async () 
   }
 });
 
-test("the floating queue button hides when the queue is empty even if history remains", async () => {
+test("watching history stays accessible after the final queue item is removed", async () => {
   const h = await setup();
 
   try {
-    assert.ok(document.querySelector(".queue-basket-trigger"));
-    assert.equal(h.historyCount(), 1);
-
     await React.act(() => h.clearQueue());
 
+    const trigger = document.querySelector<HTMLButtonElement>(".queue-basket-trigger");
+    assert.ok(trigger, "history-only state must keep a floating entry point");
+    assert.equal(
+      trigger.querySelector(".queue-basket-trigger-label")?.textContent?.trim(),
+      "Watching history",
+    );
+    assert.match(trigger.getAttribute("aria-label") ?? "", /Watching history.*1 in history/);
+    assert.equal(trigger.querySelector(".queue-basket-count")?.textContent?.trim(), "1");
+    assert.equal(document.querySelector("h2")?.textContent, "Watching history");
+    assert.ok(document.querySelector("[data-history-item]"));
+    assert.equal(document.querySelector("[data-clear-confirm=queue]"), null);
+
+    await React.act(() =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!.click(),
+    );
+    assert.equal(trigger.hidden, false);
+    await React.act(() => trigger.click());
+    assert.equal(document.querySelector("h2")?.textContent, "Watching history");
+
+    await React.act(() =>
+      document.querySelector<HTMLButtonElement>("[data-clear-history]")!.click(),
+    );
+    await React.act(() =>
+      document.querySelector<HTMLButtonElement>('[data-clear-confirm="history"]')!.click(),
+    );
+    assert.equal(h.historyCount(), 0);
     assert.equal(document.querySelector(".queue-basket-trigger"), null);
-    assert.equal(h.historyCount(), 1);
   } finally {
     await h.cleanup();
   }

@@ -344,35 +344,40 @@ function QueueBasketContent() {
   }, []);
 
   useEffect(() => {
-    if (!hasItems) {
+    if (!hasItems && !hasHistory) {
       setOpen(false);
       setPanel("queue");
       setConfirmClear(null);
       return;
     }
+    if (!hasItems) setPanel("history");
 
     const dialog = dialogRef.current;
     if (!dialog) return;
 
     if (open && !dialog.open) dialog.showModal();
     if (!open && dialog.open) dialog.close();
-  }, [open, hasItems]);
+  }, [open, hasItems, hasHistory]);
 
   useEffect(() => {
     const wasOpen = wasOpenRef.current;
     wasOpenRef.current = open;
 
-    if (wasOpen && !open && hasItems) {
+    if (wasOpen && !open && (hasItems || hasHistory)) {
       triggerRef.current?.focus({ preventScroll: true });
     }
-  }, [open, hasItems]);
+  }, [open, hasItems, hasHistory]);
 
-  if (!hasItems) return null;
+  if (!hasItems && !hasHistory) return null;
 
   const queueCountLabel = t(
     queue.length === 1 ? "{count} item in queue" : "{count} items in queue",
     { count: queue.length },
   );
+  const triggerTitle = hasItems ? t("Watching queue") : t("Watching history");
+  const triggerCountLabel = hasItems
+    ? queueCountLabel
+    : t("{count} in history", { count: history.length });
 
   const iconButton =
     "flex size-9 shrink-0 items-center justify-center rounded-lg " +
@@ -386,9 +391,12 @@ function QueueBasketContent() {
         ref={triggerRef}
         type="button"
         hidden={open}
-        onClick={() => setOpen(true)}
-        title={t("Watching queue")}
-        aria-label={`${t("Watching queue")} · ${queueCountLabel}`}
+        onClick={() => {
+          setPanel(hasItems ? "queue" : "history");
+          setOpen(true);
+        }}
+        title={triggerTitle}
+        aria-label={`${triggerTitle} · ${triggerCountLabel}`}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={dialogId}
@@ -408,15 +416,19 @@ function QueueBasketContent() {
                 draggable={false}
                 onError={() => setFailedPoster(previewPoster)}
               />
-            ) : (
+            ) : hasItems ? (
               <ListVideo size={20} />
+            ) : (
+              <History size={20} />
             )}
           </span>
 
-          <span className="queue-basket-trigger-label">{t("Queue")}</span>
+          <span className="queue-basket-trigger-label">
+            {hasItems ? t("Queue") : t("Watching history")}
+          </span>
 
           <span className="queue-basket-count" aria-hidden="true">
-            {queue.length}
+            {hasItems ? queue.length : history.length}
           </span>
         </span>
       </button>
@@ -500,6 +512,13 @@ function QueueBasketContent() {
               <p aria-live="polite" aria-atomic="true" className="sr-only">
                 {announcement}
               </p>
+              {!hasItems && (
+                <p role="status" className="px-5 py-8 text-sm text-ink-subtle">
+                  {t(
+                    "Your queue is empty. Add movies or shows and they'll play back-to-back here.",
+                  )}
+                </p>
+              )}
               <ol ref={listRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
                 {queue.map((item, index) => (
                   <li
@@ -597,32 +616,34 @@ function QueueBasketContent() {
                 ))}
               </ol>
 
-              <footer className="flex flex-col gap-2 border-t border-edge p-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (startQueue({ resume: hasStartedQueue })) {
-                      setOpen(false);
-                    }
-                  }}
-                  className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-ink px-4 py-3 font-semibold text-canvas transition-opacity hover:opacity-85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-                >
-                  <Play size={18} fill="currentColor" aria-hidden="true" />
-                  {hasStartedQueue ? t("Continue your queue") : t("Start your queue")}
-                </button>
+              {hasItems && (
+                <footer className="flex flex-col gap-2 border-t border-edge p-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (startQueue({ resume: hasStartedQueue })) {
+                        setOpen(false);
+                      }
+                    }}
+                    className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-ink px-4 py-3 font-semibold text-canvas transition-opacity hover:opacity-85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                  >
+                    <Play size={18} fill="currentColor" aria-hidden="true" />
+                    {hasStartedQueue ? t("Continue your queue") : t("Start your queue")}
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    gesture.cancel();
-                    setConfirmClear("queue");
-                  }}
-                  className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-                >
-                  <Trash2 size={16} aria-hidden="true" />
-                  {t("Clear your queue")}
-                </button>
-              </footer>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      gesture.cancel();
+                      setConfirmClear("queue");
+                    }}
+                    className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                  >
+                    <Trash2 size={16} aria-hidden="true" />
+                    {t("Clear your queue")}
+                  </button>
+                </footer>
+              )}
             </>
           )}
         </div>

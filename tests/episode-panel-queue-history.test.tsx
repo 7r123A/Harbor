@@ -27,6 +27,13 @@ test("Up Next opens queue history and resumes an item outside the queue session"
     recordedAt: 2,
     reason: "skipped" as const,
   };
+  const queuedItem = {
+    id: "active-queue-item",
+    meta: { id: "queued-movie", name: "Queued movie", type: "movie" as const },
+    addedAt: 1,
+  };
+  let queueItems: Array<typeof queuedItem> = [];
+  let clearQueueCalls = 0;
   const openPickerCalls: unknown[][] = [];
   let closeCalls = 0;
 
@@ -39,6 +46,29 @@ test("Up Next opens queue history and resumes an item outside the queue session"
       Trash2: empty,
     },
     "@/components/icons/play-filled": { Play: empty },
+    "@/components/queue-basket/queue-clear-confirm": {
+      QueueClearConfirm: ({
+        onCancel,
+        onConfirm,
+      }: {
+        onCancel: () => void;
+        onConfirm: () => void;
+      }) =>
+        React.createElement(
+          "div",
+          { "data-queue-clear-dialog": "" },
+          React.createElement(
+            "button",
+            { type: "button", "data-cancel-clear": "", onClick: onCancel },
+            "Cancel",
+          ),
+          React.createElement(
+            "button",
+            { type: "button", "data-confirm-clear": "", onClick: onConfirm },
+            "Confirm",
+          ),
+        ),
+    },
     "@/components/queue-basket/queue-history-panel": {
       QueueHistoryPanel: ({
         history,
@@ -58,11 +88,13 @@ test("Up Next opens queue history and resumes an item outside the queue session"
         ),
     },
     "@/lib/queue": {
-      queueClear: () => {},
+      queueClear: () => {
+        clearQueueCalls += 1;
+      },
       queueIndexOf: () => -1,
       queueItemAfter: () => null,
       queueRemove: () => {},
-      useQueue: () => [],
+      useQueue: () => queueItems,
       useQueueHistory: () => [historyItem],
     },
     "@/lib/view": {
@@ -170,6 +202,27 @@ test("Up Next opens queue history and resumes an item outside the queue session"
     await React.act(() => renderPanel(false));
     await React.act(() => renderPanel(true, true));
     assert.equal(document.querySelector('button[aria-label="Watching history"]'), null);
+
+    await React.act(() => renderPanel(false));
+    queueItems = [queuedItem];
+    await React.act(() => renderPanel(true));
+    const clearButton = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
+      (button) => button.textContent?.trim() === "Clear",
+    );
+    assert.ok(clearButton);
+    await React.act(() => clearButton.click());
+    assert.equal(clearQueueCalls, 0, "opening confirmation must not clear the queue");
+    assert.ok(document.querySelector("[data-queue-clear-dialog]"));
+    await React.act(() =>
+      document.querySelector<HTMLButtonElement>("[data-cancel-clear]")!.click(),
+    );
+    assert.equal(clearQueueCalls, 0, "canceling must preserve the queue");
+    assert.equal(document.querySelector("[data-queue-clear-dialog]"), null);
+    await React.act(() => clearButton.click());
+    await React.act(() =>
+      document.querySelector<HTMLButtonElement>("[data-confirm-clear]")!.click(),
+    );
+    assert.equal(clearQueueCalls, 1, "confirming should clear the queue exactly once");
   } finally {
     await React.act(() => root.unmount());
     dom.window.close();

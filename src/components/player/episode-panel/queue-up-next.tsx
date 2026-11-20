@@ -15,6 +15,7 @@ import { splitFranchiseDisplaySeason } from "@/lib/streams/anime-identity-core";
 import { useT } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { QueueHistoryPanel } from "@/components/queue-basket/queue-history-panel";
+import { QueueClearConfirm } from "@/components/queue-basket/queue-clear-confirm";
 import { useSettings } from "@/lib/settings";
 
 export function QueueUpNext({
@@ -35,6 +36,7 @@ export function QueueUpNext({
   const queue = useQueue();
   const history = useQueueHistory();
   const [showHistory, setShowHistory] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
   const historyBackButtonRef = useRef<HTMLButtonElement>(null);
   const restoreHistoryButtonFocusRef = useRef(false);
@@ -42,6 +44,7 @@ export function QueueUpNext({
     if (!open || roomGuest) {
       restoreHistoryButtonFocusRef.current = false;
       setShowHistory(false);
+      setConfirmClear(false);
     }
   }, [open, roomGuest]);
   useEffect(() => {
@@ -124,7 +127,7 @@ export function QueueUpNext({
           {!roomGuest && queue.length > 0 && (
             <button
               type="button"
-              onClick={() => queueClear()}
+              onClick={() => setConfirmClear(true)}
               className="text-[11px] font-medium text-ink-subtle transition-colors hover:text-ink"
             >
               {t("Clear")}
@@ -227,6 +230,15 @@ export function QueueUpNext({
           </div>
         );
       })}
+      {confirmClear && (
+        <QueueClearConfirm
+          onCancel={() => setConfirmClear(false)}
+          onConfirm={() => {
+            setConfirmClear(false);
+            queueClear();
+          }}
+        />
+      )}
     </div>
   );
 }
