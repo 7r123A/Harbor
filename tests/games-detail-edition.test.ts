@@ -57,6 +57,7 @@ test("an explicit IGDB edition keeps original metadata even when its Steam port 
   assert.deepEqual(result.detail?.requirements, { minimum: "", recommended: "" });
   assert.ok(result.detail?.release.includes("1992"));
   assert.equal(result.steamLinkId, 99);
+  assert.equal(result.guideSteamId, 99, "the exact IGDB Steam association can supply written guides");
 });
 
 test("missing or stale atlas data cannot fall back to another edition or validate its Steam link", () => {
@@ -64,6 +65,7 @@ test("missing or stale atlas data cannot fall back to another edition or validat
     const result = resolveDetailEdition(selected, port, atlas);
     assert.equal(result.detail, null);
     assert.equal(result.steamLinkId, undefined);
+    assert.equal(result.guideSteamId, undefined);
     assert.equal(result.portableGame.id, "igdb:42");
     assert.equal(result.portableGame.steamId, undefined);
   }

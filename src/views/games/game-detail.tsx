@@ -369,7 +369,7 @@ export function GameDetailPage({
     revision,
     classicEdition,
   ]);
-  const { atlas, storeDetail, detail, portableGame, steamLinkId } = resolveDetailEdition(
+  const { atlas, storeDetail, detail, portableGame, steamLinkId, guideSteamId } = resolveDetailEdition(
     game,
     loadedStore,
     loadedAtlas,
@@ -398,7 +398,12 @@ export function GameDetailPage({
       (ROM_HACK_PLATFORMS as readonly number[]).includes(platform.id),
     );
   const hackProjectUrl = atlas ? hackRelease(atlas)?.page : undefined;
-  const hasGuides = useGuideAvailability(game.name, steamId, active && !!onGuides, romHack);
+  const hasGuides = useGuideAvailability(
+    portableGame.name,
+    guideSteamId,
+    active && !!onGuides,
+    romHack,
+  );
   const chosenBackground = prefs.background(metadataOwner, game);
   const nativeBackground =
     storeDetail?.libraryHero ||
@@ -694,8 +699,8 @@ export function GameDetailPage({
                     aria-label={t("games.guides.short")}
                     onClick={() =>
                       onGuides({
-                        ...game,
-                        steamId,
+                        ...portableGame,
+                        steamId: guideSteamId,
                         hero: detail?.libraryHero || detail?.hero || game.capsule,
                         logo: detail?.logo,
                       })
