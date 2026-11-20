@@ -5,9 +5,8 @@ import { useSettings } from "@/lib/settings";
 import type { PlayerSrc } from "@/lib/view";
 import { resolvePmdbEpisodeTarget, resolvePmdbTarget } from "./ids";
 import { usePublicMetaDb } from "./provider";
-import { pmdbDeleteResumeForTarget, pmdbSaveResume } from "./scrobble";
+import { endPmdbPlayback, startPmdbPlayback, syncPmdbPlayback } from "./scrobble";
 import { recordPendingResume, syncPendingResume } from "./pending-sync";
-import { markPmdbWatched } from "./history";
 import type { PmdbTarget } from "./types";
 
 type Snap = {
@@ -41,7 +40,8 @@ export function usePublicMetaDbScrobble({
   const lastSaveTimeRef = useRef(0);
   const lastSavedPosRef = useRef(-1);
   const endedHandledRef = useRef(false);
-  const completionRef = useRef({ inFlight: false, done: false, retryAt: 0 });
+  const playbackRef = useRef<ReturnType<typeof startPmdbPlayback> | null>(null);
+  const completionRetryAt = useRef(0);
   const seekTrackRef = useRef({ pos: 0, at: 0 });
   const pendingSeekTimerRef = useRef<number | null>(null);
 
@@ -53,11 +53,14 @@ export function usePublicMetaDbScrobble({
   const metaId = src.meta.id;
   const season = src.episode?.season;
   const episode = src.episode?.episode;
-  const key = `${metaId}|${season ?? ""}|${episode ?? ""}`;
+  const nativeProofKey = liveScrobble.phase === "resolving" ? "resolving"
+    : liveScrobble.proof
+      ? `${liveScrobble.proof.work.entryId}:${liveScrobble.proof.work.entryEpisode}:${JSON.stringify(verifiedTarget)}`
+      : liveScrobble.phase;
+  const key = `${metaId}|${season ?? ""}|${episode ?? ""}|${nativeProofKey}`;
   const lastKeyRef = useRef<string | null>(null);
-  // Preserve the outgoing episode's last eligibility even when the incoming
-  // episode is still resolving. The separately committed eligibility effect
-  // below updates A without resetting its playback progress or target.
+  // Keep the outgoing owner's eligibility: a new proof may render in
+  // `resolving` while the old verified session still needs a close save.
   const previousEligibilityRef = useRef({ key, enabled });
 
   const clearPendingSeek = () => {
@@ -75,7 +78,9 @@ export function usePublicMetaDbScrobble({
     durSec: number,
     mode: "live" | "unload" = "live",
   ) => {
-    if (!target || durSec < STUB_MAX_SEC) return;
+    const playback = playbackRef.current;
+    if (!target || !playback || playback.watched || playback.marking || durSec < STUB_MAX_SEC)
+      return;
     const clampedPos = Math.max(0, Math.min(durSec, Number.isFinite(posSec) ? posSec : 0));
     const ratio = durSec > 0 ? clampedPos / durSec : 0;
     if (ratio < 0.02) return;
@@ -83,46 +88,23 @@ export function usePublicMetaDbScrobble({
     const posMs = Math.round(clampedPos * 1000);
     const durMs = Math.round(durSec * 1000);
 
-    if (ratio >= COMPLETION_RATIO) {
-      const completion = completionRef.current;
-      if (completion.done || completion.inFlight) return;
-      if (mode === "live" && Date.now() < completion.retryAt) return;
-      if (mode === "unload") {
-        recordPendingResume(target, posMs, durMs);
-        return;
-      }
-      completion.inFlight = true;
-      completion.retryAt = Date.now() + MIN_SAVE_INTERVAL_MS;
-      lastSaveTimeRef.current = Date.now();
-      lastSavedPosRef.current = clampedPos;
-      // A completed flush replays as a 100% resume save, which the server
-      // answers as completed and converts to watched + resume cleanup.
-      void syncPendingResume(target, posMs, durMs, async () => {
-        const ok = await markPmdbWatched(target);
-        if (!ok) return false;
-        await pmdbDeleteResumeForTarget(target);
-        return true;
-      })
-        .then((ok) => {
-          completion.done = ok;
-        })
-        .finally(() => {
-          completion.inFlight = false;
-        });
-      return;
-    }
-
+    const now = Date.now();
+    const watchedAt =
+      playback.watchedAt ?? (ratio >= COMPLETION_RATIO ? new Date(now).toISOString() : undefined);
+    const snapshot = { playbackId: playback.id, watchedAt };
     if (mode === "unload") {
-      recordPendingResume(target, posMs, durMs);
+      playback.watchedAt = watchedAt;
+      recordPendingResume(target, posMs, durMs, now, snapshot);
       return;
     }
 
-    lastSaveTimeRef.current = Date.now();
+    if (watchedAt) {
+      if (now < completionRetryAt.current) return;
+      completionRetryAt.current = now + MIN_SAVE_INTERVAL_MS;
+    }
+    lastSaveTimeRef.current = now;
     lastSavedPosRef.current = clampedPos;
-
-    void syncPendingResume(target, posMs, durMs, () =>
-      pmdbSaveResume(target, posMs, durMs).then((res) => res != null),
-    );
+    void syncPendingResume(target, posMs, durMs, syncPmdbPlayback, snapshot);
   };
 
   // Track latest usable duration for the current key. Updated from the live
@@ -132,12 +114,11 @@ export function usePublicMetaDbScrobble({
     if (snap.durationSec >= STUB_MAX_SEC) durationRef.current = snap.durationSec;
   }, [key, snap.durationSec]);
 
-  // Replacing a resolved target discards its refs even when the displayed
-  // episode key stays the same. Flush the outgoing eligible owner *before*
-  // clearing it: the next Stage 1 lookup can temporarily disable new writes.
+  // Resolve target whenever media identity changes. Cleanup flushes the
+  // previous item from refs (still holding prev values at cleanup time).
   useEffect(() => {
     const prevKey = lastKeyRef.current;
-    if (prevKey) {
+    if (prevKey && prevKey !== key) {
       clearPendingSeek();
       if (previousEligibilityRef.current.key === prevKey &&
           previousEligibilityRef.current.enabled) {
@@ -147,24 +128,30 @@ export function usePublicMetaDbScrobble({
         if (t && d >= STUB_MAX_SEC && p > 0) saveOrWatched(t, p, d);
       }
     }
-    lastKeyRef.current = key;
-    previousEligibilityRef.current = { key, enabled };
+    // A changed verified owner owns a new playback ID. Ordinary metadata
+    // enrichment of the *same* proof must keep the completion guard intact.
+    if (prevKey !== key || !playbackRef.current) {
+      if (playbackRef.current) endPmdbPlayback(playbackRef.current);
+      playbackRef.current = startPmdbPlayback();
+      lastKeyRef.current = key;
+      previousEligibilityRef.current = { key, enabled };
+      durationRef.current = snap.durationSec >= STUB_MAX_SEC ? snap.durationSec : 0;
+      maxPosRef.current = 0;
+      lastPosRef.current = 0;
+      endedHandledRef.current = false;
+      completionRetryAt.current = 0;
+      lastSaveTimeRef.current = 0;
+      lastSavedPosRef.current = -1;
+    }
 
     let cancelled = false;
     targetRef.current = null;
-    durationRef.current = snap.durationSec >= STUB_MAX_SEC ? snap.durationSec : 0;
-    maxPosRef.current = 0;
-    lastPosRef.current = 0;
-    endedHandledRef.current = false;
-    completionRef.current = { inFlight: false, done: false, retryAt: 0 };
-    lastSaveTimeRef.current = 0;
-    lastSavedPosRef.current = -1;
 
     void (async () => {
       let resolved: PmdbTarget | null = null;
       if (src.episode && liveScrobble.proof && !verifiedTarget) {
-        // Episode identity is verified, but no exact TMDB window exists.
-        // No catalog fallback may write a different cour as watched.
+        // A verified native episode without a verified PMDB window must not
+        // write a different season or title through catalog fallbacks.
         resolved = null;
       } else if (src.episode) {
         resolved = verifiedTarget ?? await resolvePmdbEpisodeTarget(
@@ -215,10 +202,8 @@ export function usePublicMetaDbScrobble({
     liveScrobble.proof,
   ]);
 
-  // A can finish Stage 1 with proof: null and become fallback-ready without
-  // changing the target effect's dependencies. Record this enabled transition
-  // independently. This effect is declared after the target effect so on A->B
-  // the target effect first flushes A using its previous committed eligibility.
+  // The target effect runs first on each change, so it can flush the outgoing
+  // session with the previous eligibility before recording the incoming one.
   useEffect(() => {
     if (lastKeyRef.current === key)
       previousEligibilityRef.current = { key, enabled };
@@ -335,14 +320,19 @@ export function usePublicMetaDbScrobble({
   // Capture the live clock before the bridge's passive cleanup resets it.
   useLayoutEffect(() => {
     return () => {
-      if (!enabledRef.current) return;
-      clearPendingSeek();
-      const t = targetRef.current;
-      const dur = durationRef.current;
-      if (!t || dur < STUB_MAX_SEC) return;
-      const live = getPlaybackPosition();
-      const best = statusRef.current === "ended" ? Math.max(live, maxPosRef.current) : live;
-      saveOrWatched(t, best, dur, pageHiddenRef.current ? "unload" : "live");
+      if (enabledRef.current) {
+        clearPendingSeek();
+        const live = getPlaybackPosition();
+        const best = statusRef.current === "ended" ? Math.max(live, maxPosRef.current) : live;
+        saveOrWatched(
+          targetRef.current,
+          best,
+          durationRef.current,
+          pageHiddenRef.current ? "unload" : "live",
+        );
+      }
+      if (playbackRef.current) endPmdbPlayback(playbackRef.current);
+      playbackRef.current = null;
     };
   }, []);
 }

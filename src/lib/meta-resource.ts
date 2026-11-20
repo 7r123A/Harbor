@@ -1,7 +1,7 @@
 import { addonBaseUrl, addonResourceUrl } from "@/lib/addon-url";
 import { cinemetaEnabled, meta as cinemetaMeta, type Meta } from "./cinemeta";
 import { safeFetch as fetch } from "./safe-fetch";
-import { addonAccepts, gatherCatalogAddons, userAddons, type Addon } from "./addons";
+import { addonAccepts, gatherCatalogAddons, cachedUserAddons, type Addon } from "./addons";
 import { filterEnabled, loadInstalled } from "./addon-store";
 import { readActiveStremioAuthKey } from "./auth";
 import { lruSet } from "./cache";
@@ -179,7 +179,7 @@ export function hasCustomMetaAddon(): boolean {
 }
 
 export async function hasCustomMetaAddonAsync(authKey: string | null): Promise<boolean> {
-  const user = authKey ? await userAddons(authKey).catch(() => [] as Addon[]) : [];
+  const user = authKey ? await cachedUserAddons(authKey).catch(() => [] as Addon[]) : [];
   return [...user, ...localAddons()].some(isMetaAddon);
 }
 

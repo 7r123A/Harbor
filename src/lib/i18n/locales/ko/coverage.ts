@@ -627,6 +627,7 @@ const coverage: Record<string, string> = {
   "70s": "70년대",
   "70s Auteurs": "70년대 작가주의 영화",
   "8 seconds": "8초",
+  "10 seconds": "10초",
   "8-0-4-1. Half the passes, kinder to weaker cards.":
     "8-0-4-1. 패스 수가 절반이라 저사양 그래픽 카드에 더 적합합니다.",
   "8-character key": "8자 키",
@@ -694,6 +695,18 @@ const coverage: Record<string, string> = {
   "Increase the subtitle text size.": "자막 글자 크기를 키웁니다.",
   "Audio: {name}": "오디오: {name}",
   "Subtitle size: {size}": "자막 크기: {size}",
+  "Save to library": "Save to library",
+  "In library": "In library",
+  "In your library": "In your library",
+  'Right-click any title in Harbor or hit "Save to library" on its detail page to add it here.':
+    'Right-click any title in Harbor or hit "Save to library" on its detail page to add it here.',
+  "Add to all trackers": "Add to all trackers",
+  "Remove from all trackers": "Remove from all trackers",
+  "Remove from all trackers?": "Remove from all trackers?",
+  "This removes the title from every connected tracker. Simkl completed or watching titles stay unchanged; AniList and MyAnimeList list progress may be removed.":
+    "This removes the title from every connected tracker. Simkl completed or watching titles stay unchanged; AniList and MyAnimeList list progress may be removed.",
+  "Updated: {providers}.": "Updated: {providers}.",
+  "No changes were made.": "No changes were made.",
 };
 
 export default coverage;

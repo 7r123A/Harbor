@@ -358,6 +358,10 @@ async function mount() {
   const secretsUnavailable = secrets.timedOut || secrets.failed;
   if (secretsUnavailable) startupMarkOnce("boot.secrets.unavailable");
   startupMarkOnce("boot.critical-done");
+  // Retry queued Refract watches only from the regular app window.
+  if (!isHdrOverlay && !isModal && !isCaptions && !isPip && !isVideoPip && !isDjDeck && !isRemote) {
+    void import("@/lib/refract/sync").then(({ startRefractSync }) => startRefractSync());
+  }
   if (!isHdrOverlay && !isModal && !isCaptions && !isDjDeck) void initSubtitleCache();
   if (!isHdrOverlay && !isModal && !isCaptions && !isPip && !isVideoPip && !isDjDeck)
     startTaskbarProgress();

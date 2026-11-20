@@ -7,6 +7,16 @@ type Meta = { genres?: string[]; country?: string; originalLanguage?: string };
 
 function fixture(initial: Record<string, string> = {}) {
   const stored = new Map<string, string>(Object.entries(initial));
+  const timers = new Map<number, () => void>();
+  let nextTimer = 0;
+  const flushTimers = () => {
+    // Positive detection writes are intentionally batched on beta. Explicitly
+    // settle the scheduled writes instead of assuming synchronous storage.
+    for (const [id, tick] of [...timers]) {
+      timers.delete(id);
+      tick();
+    }
+  };
   const metas = new Map<string, Meta>();
   const directKitsu = new Map<number, number>();
   const cachedImdb = new Map<string, string | null>();
@@ -55,9 +65,13 @@ function fixture(initial: Record<string, string> = {}) {
       getItem: (key: string) => stored.get(key) ?? null,
       removeItem: (key: string) => stored.delete(key),
     },
-    () => 1,
+    (tick: () => void) => {
+      const id = ++nextTimer;
+      timers.set(id, tick);
+      return id;
+    },
   );
-  return { api, metas, directKitsu, cachedImdb, tmdbExternal, pmdbExternal, calls, stored };
+  return { api, metas, directKitsu, cachedImdb, tmdbExternal, pmdbExternal, calls, stored, flushTimers };
 }
 
 test("the Wild Last Boss TMDB record inherits a proven IMDb anime classification", async () => {
@@ -81,6 +95,7 @@ test("the CW alias warmup discovers an exact TMDB external ID and persists the p
   await h.api.warmCwAnimeRoomAliases([{ _id: "tmdb:tv:280042", type: "series" }], "tmdb-test-key");
   assert.equal(h.api.isDetectedAnime("tmdb:tv:280042"), true);
   assert.deepEqual(h.calls.tmdbImdb, ["tmdb:tv:280042"]);
+  h.flushTimers();
   assert.ok(JSON.parse(h.stored.get("harbor.anime.detected.v2") ?? "[]").includes("tmdb:tv:280042"));
 });
 
@@ -137,8 +152,9 @@ test("a stale TMDB negative cannot override a verified IMDb anime and is replace
   // The cached link alone is not yet a persisted TMDB positive.
   assert.equal(JSON.parse(h.stored.get("harbor.anime.detected.v2") ?? "[]").includes(id), false);
   await h.api.warmCwAnimeRoomAliases([{ _id: id, type: "series" }], "tmdb-test-key");
-  // Reconciliation persists its own positive mark, even if the cached external
-  // ID link is evicted on a future launch.
+  // Reconciliation persists its own positive mark after beta's batched write,
+  // even if the cached external ID link is evicted on a future launch.
+  h.flushTimers();
   assert.ok(JSON.parse(h.stored.get("harbor.anime.detected.v2") ?? "[]").includes(id));
   assert.ok(JSON.parse(h.stored.get("harbor.anime.detected.v2") ?? "[]").includes(imdb));
 });

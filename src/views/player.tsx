@@ -1284,10 +1284,10 @@ function NativePlayerView({ src }: { src: PlayerSrc }) {
   useSeekr({
     apiKey: settings.seekrApiKey,
     metaId: src.meta.id,
-    imdbId: resolvedImdbId ?? src.imdbId ?? null,
+    imdbId: src.imdbId ?? resolvedImdbId,
+    imdbIdVerified: src.imdbId ? src.imdbIdVerified : resolvedImdbVerified,
     type: src.meta.type,
-    season: src.episode?.season ?? null,
-    episode: src.episode?.episode ?? null,
+    episode: src.episode,
     durationSec: snap.durationSec,
     enabled: settings.seekPreviewEnabled,
     isLive: isLiveLike,

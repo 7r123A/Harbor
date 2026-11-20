@@ -878,6 +878,18 @@ const coverage: Record<string, string> = {
   "Increase the subtitle text size.": "增大字幕文字大小。",
   "Audio: {name}": "音频：{name}",
   "Subtitle size: {size}": "字幕大小：{size}",
+  "Save to library": "Save to library",
+  "In library": "In library",
+  "In your library": "In your library",
+  'Right-click any title in Harbor or hit "Save to library" on its detail page to add it here.':
+    'Right-click any title in Harbor or hit "Save to library" on its detail page to add it here.',
+  "Add to all trackers": "Add to all trackers",
+  "Remove from all trackers": "Remove from all trackers",
+  "Remove from all trackers?": "Remove from all trackers?",
+  "This removes the title from every connected tracker. Simkl completed or watching titles stay unchanged; AniList and MyAnimeList list progress may be removed.":
+    "This removes the title from every connected tracker. Simkl completed or watching titles stay unchanged; AniList and MyAnimeList list progress may be removed.",
+  "Updated: {providers}.": "Updated: {providers}.",
+  "No changes were made.": "No changes were made.",
 };
 
 export default coverage;

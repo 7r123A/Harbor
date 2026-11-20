@@ -146,7 +146,11 @@ test("PublicMetaDB persists the outgoing verified target when same episode enter
     "@/lib/settings": { useSettings: () => ({ settings: { publicmetadbScrobbleEnabled: true } }) },
     "./provider": { usePublicMetaDb: () => ({ isConnected: true }) },
     "./ids": { resolvePmdbEpisodeTarget: async () => null, resolvePmdbTarget: async () => null },
-    "./scrobble": { pmdbSaveResume: async () => ({}), pmdbDeleteResumeForTarget: async () => true },
+    "./scrobble": {
+      startPmdbPlayback: () => ({ id: "reproof-session", watched: false, marking: false }),
+      endPmdbPlayback: () => {},
+      syncPmdbPlayback: async () => true,
+    },
     "./pending-sync": {
       recordPendingResume: (target: any, pos: number) => saved.push([target.tmdb_id, pos]),
       syncPendingResume: async (target: any, pos: number) => { saved.push([target.tmdb_id, pos]); return true; },

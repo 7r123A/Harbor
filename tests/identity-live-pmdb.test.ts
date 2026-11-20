@@ -24,6 +24,9 @@ test("PublicMetaDB Stage 2 pauses to the verified TMDB episode, not the parent M
         resolvePmdbTarget: async () => null,
       },
       "./scrobble": {
+        startPmdbPlayback: () => ({ id: "identity-test-session", watched: false, marking: false }),
+        endPmdbPlayback: () => {},
+        syncPmdbPlayback: async () => true,
         pmdbSaveResume: async (target: any, pos: number) => {
           saves.push({ target, pos });
           return { action: "saved" };
@@ -32,7 +35,7 @@ test("PublicMetaDB Stage 2 pauses to the verified TMDB episode, not the parent M
       },
       "./pending-sync": {
         recordPendingResume: () => {},
-        syncPendingResume: async (_t: any, _p: number, _d: number, writer: () => Promise<boolean>) => writer(),
+        syncPendingResume: async (target: any, pos: number) => { saves.push({ target, pos }); return true; },
       },
       "./history": { markPmdbWatched: async () => true },
     },
@@ -84,7 +87,10 @@ test("PMDB does not write while shared anime identity is still resolving", async
       "@/lib/settings": { useSettings: () => ({ settings: { publicmetadbScrobbleEnabled: true } }) },
       "./provider": { usePublicMetaDb: () => ({ isConnected: true }) },
       "./ids": { resolvePmdbEpisodeTarget: async () => null, resolvePmdbTarget: async () => null },
-      "./scrobble": { pmdbSaveResume: async () => { throw Error("must not write"); }, pmdbDeleteResumeForTarget: async () => false },
+      "./scrobble": {
+        startPmdbPlayback: () => ({ id: "identity-test-session", watched: false, marking: false }),
+        endPmdbPlayback: () => {},
+        syncPmdbPlayback: async () => true, pmdbSaveResume: async () => { throw Error("must not write"); }, pmdbDeleteResumeForTarget: async () => false },
       "./pending-sync": { syncPendingResume: async () => { throw Error("must not sync"); }, recordPendingResume: () => {} },
       "./history": { markPmdbWatched: async () => false },
     },
@@ -128,6 +134,9 @@ test("PublicMetaDB flushes A's last progress when B starts resolving", async () 
       resolvePmdbTarget: async () => null,
     },
     "./scrobble": {
+      startPmdbPlayback: () => ({ id: "identity-test-session", watched: false, marking: false }),
+      endPmdbPlayback: () => {},
+      syncPmdbPlayback: async () => true,
       pmdbSaveResume: async (target: any, pos: number) => {
         saves.push({ id: target.tmdb_id, pos });
         return { action: "saved" };
@@ -136,7 +145,7 @@ test("PublicMetaDB flushes A's last progress when B starts resolving", async () 
     },
     "./pending-sync": {
       recordPendingResume: () => {},
-      syncPendingResume: async (_t: any, _p: number, _d: number, writer: () => Promise<boolean>) => writer(),
+      syncPendingResume: async (target: any, pos: number) => { saves.push({ id: target.tmdb_id, pos }); return true; },
     },
     "./history": { markPmdbWatched: async () => true },
   }, {
@@ -205,6 +214,9 @@ test("PublicMetaDB flushes A after resolving to fallback with proof null, even w
       resolvePmdbTarget: async () => null,
     },
     "./scrobble": {
+      startPmdbPlayback: () => ({ id: "identity-test-session", watched: false, marking: false }),
+      endPmdbPlayback: () => {},
+      syncPmdbPlayback: async () => true,
       pmdbSaveResume: async (target: any, pos: number) => {
         saves.push({ id: target.tmdb_id, pos });
         return { action: "saved" };
@@ -213,7 +225,7 @@ test("PublicMetaDB flushes A after resolving to fallback with proof null, even w
     },
     "./pending-sync": {
       recordPendingResume: () => {},
-      syncPendingResume: async (_t: any, _p: number, _d: number, writer: () => Promise<boolean>) => writer(),
+      syncPendingResume: async (target: any, pos: number) => { saves.push({ id: target.tmdb_id, pos }); return true; },
     },
     "./history": { markPmdbWatched: async () => true },
   }, {

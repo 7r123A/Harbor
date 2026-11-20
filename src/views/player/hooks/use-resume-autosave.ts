@@ -3,7 +3,13 @@ import { markAnimeWatching, syncAnimeProgress } from "@/lib/anilist/sync";
 import { markMalWatching, syncMalProgress } from "@/lib/mal/sync";
 import { getSession as getAnilistSession } from "@/lib/anilist/session";
 import { getSession as getMalSession } from "@/lib/mal/session";
-import { activeProfileId } from "@/lib/active-profile-id";
+import {
+  activeProfileId,
+  activeProfileIsPrimary,
+  activeScopedProfileId,
+} from "@/lib/active-profile-id";
+import { refractEnabled, refractPlaybackReached } from "@/lib/refract/client";
+import { parseRefractHistoryId, refractMappedEpisodes } from "@/lib/refract/identity";
 import { animeIdentityEligible, resolveAnimeIdentity } from "@/lib/streams/anime-identity";
 import { resolveTrackerAnimeEntry } from "@/lib/anime-tracker-entry";
 import type { LiveScrobbleResolution } from "@/lib/identity/use-live-scrobble";
@@ -18,7 +24,7 @@ import { profileFromMeta } from "@/lib/discover/profile";
 import { trackEvent } from "@/lib/discover/store";
 import { isExternalPlaylistId } from "@/lib/iptv/vod";
 import { clearLocalCw, localCwEntry, saveLocalCw } from "@/lib/local-cw";
-import { recordWatchEvent } from "@/lib/watch-events";
+import { recordWatchEvent, recordRefractWatch } from "@/lib/watch-events";
 import { isLocalUrl } from "@/lib/player/local-url";
 import { isManuallyWatched, recordManualWatchedMeta, setManualWatched } from "@/lib/manual-watched";
 import { savePlayback } from "@/lib/playback-history";
@@ -76,6 +82,7 @@ type ResumeSession = {
   ready: boolean;
   position: number;
   lastSaved: number;
+  refractViewing: { completed: boolean };
 };
 
 function getNuvioOwnerId(): string | undefined {
@@ -123,9 +130,14 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
   // Cleanup must retain the outgoing source, duration and position together.
   // A new episode can render before the bridge publishes its loading reset.
   const sourceIdentity = playerLoadIdentity(src, src.url, season, episode);
+  // Share completion across source retries; retain the outgoing viewing during cleanup.
+  const refractViewing = useMemo(
+    () => ({ completed: false }),
+    [ownerId, src.meta.id, season, episode],
+  );
   const session = useMemo<ResumeSession>(
-    () => ({ latest: null, ready: false, position: 0, lastSaved: 0, ownerId }),
-    [sourceIdentity, ownerId],
+    () => ({ latest: null, ready: false, position: 0, lastSaved: 0, ownerId, refractViewing }),
+    [sourceIdentity, ownerId, refractViewing],
   );
   const activeSessionRef = useRef(session);
   activeSessionRef.current = session;
@@ -277,6 +289,51 @@ export function useResumeAutosave(params: ResumeAutosaveParams) {
         episode: ep,
         at: Date.now(),
       });
+    }
+    // Refract's optional early threshold must not alter Harbor's activity or watched state.
+    const refractKind = s.meta.type === "movie" ? "movie" : "episode";
+    const externalId = rv && rid && parseRefractHistoryId(rid, refractKind) ? rid : undefined;
+    const nativeNumbering = ANIME_CLOUD_ID.test(id) || !!s.episode?.kitsuStreamId;
+    const mapped = refractMappedEpisodes(s.episode ? [s.episode] : []);
+    if (
+      !current.refractViewing.completed &&
+      !!parseRefractHistoryId(externalId ?? id, refractKind) &&
+      (refractKind === "movie" || !nativeNumbering || (!!externalId && !!mapped)) &&
+      activeScopedProfileId() === (current.ownerId ?? "default") &&
+      activeProfileIsPrimary() &&
+      refractEnabled() &&
+      (finished || refractPlaybackReached(pos, sn.durationSec))
+    ) {
+      current.refractViewing.completed = true;
+      recordRefractWatch(
+        {
+          id,
+          type: s.meta.type === "movie" ? "movie" : "series",
+          name: s.meta.name,
+          poster: s.meta.poster,
+          season: cs,
+          episode: ep,
+          at: Date.now(),
+        },
+        {
+          externalId,
+          episodes:
+            s.meta.type === "movie"
+              ? undefined
+              : (covered.length ? covered : [ep])
+                  .filter(
+                    (value): value is number =>
+                      typeof value === "number" && Number.isInteger(value),
+                  )
+                  .map((value) => ({
+                    season: rv && s.episode?.imdbSeason != null ? s.episode.imdbSeason : (cs ?? -1),
+                    episode:
+                      rv && s.episode?.imdbEpisode != null && typeof ep === "number"
+                        ? s.episode.imdbEpisode + value - ep
+                        : value,
+                  })),
+        },
+      );
     }
     const animeLocal = ANIME_CLOUD_ID.test(id);
     const ttAnimeUnmapped =

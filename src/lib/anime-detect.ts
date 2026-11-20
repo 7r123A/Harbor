@@ -61,25 +61,65 @@ const queue: DetectItem[] = [];
 let version = 0;
 const listeners = new Set<() => void>();
 
-function persist(): void {
+// A home feed settles dozens of detections in a burst, and each positive used to
+// rewrite the whole set synchronously. Positives are now batched like negatives;
+// both are flushed when the page goes away so nothing detected is lost.
+// A set stays dirty until a write succeeds, so a failed batch is retried by the
+// next batch or by the pagehide flush instead of being dropped.
+let positiveTimer: ReturnType<typeof setTimeout> | null = null;
+let positivesDirty = false;
+
+function writePositives(): void {
   try {
-    setItemWithRecovery(STORAGE_KEY, JSON.stringify([...detected]));
+    if (setItemWithRecovery(STORAGE_KEY, JSON.stringify([...detected]))) positivesDirty = false;
   } catch {}
 }
 
+function persist(): void {
+  positivesDirty = true;
+  if (positiveTimer != null) return;
+  positiveTimer = setTimeout(() => {
+    positiveTimer = null;
+    writePositives();
+  }, NEGATIVE_FLUSH_MS);
+}
+
 let negativeTimer: ReturnType<typeof setTimeout> | null = null;
+let negativesDirty = false;
+
+function writeNegatives(): void {
+  try {
+    const all = [...negatives];
+    const ids = all.length > NEGATIVE_MAX ? all.slice(-NEGATIVE_MAX) : all;
+    if (setItemWithRecovery(NEGATIVE_KEY, JSON.stringify({ t: negativesSince, ids }))) {
+      negativesDirty = false;
+    }
+  } catch {}
+}
 
 function persistNegatives(): void {
+  negativesDirty = true;
   if (negativeTimer != null) return;
   negativeTimer = setTimeout(() => {
     negativeTimer = null;
-    try {
-      const all = [...negatives];
-      const ids = all.length > NEGATIVE_MAX ? all.slice(-NEGATIVE_MAX) : all;
-      setItemWithRecovery(NEGATIVE_KEY, JSON.stringify({ t: negativesSince, ids }));
-    } catch {}
+    writeNegatives();
   }, NEGATIVE_FLUSH_MS);
 }
+
+function flushPending(): void {
+  if (positiveTimer != null) {
+    clearTimeout(positiveTimer);
+    positiveTimer = null;
+  }
+  if (positivesDirty) writePositives();
+  if (negativeTimer != null) {
+    clearTimeout(negativeTimer);
+    negativeTimer = null;
+  }
+  if (negativesDirty) writeNegatives();
+}
+
+if (typeof window !== "undefined") window.addEventListener("pagehide", flushPending);
 
 // Detection settles one title at a time, and each settle used to notify synchronously: a home feed
 // with hundreds of anime re-rendered home, discover and every other version consumer once per
