@@ -1,5 +1,12 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
-import { RefreshCw, Search, SlidersHorizontal } from "lucide-react";
+import {
+  RefreshCw,
+  Search,
+  SlidersHorizontal,
+  ArrowDownUp,
+  ArrowDownWideNarrow,
+  ArrowUpWideNarrow,
+} from "lucide-react";
 import { Dropdown } from "@/components/dropdown";
 import { useT } from "@/lib/i18n";
 import type { DiscoveryOrder } from "@/lib/social/user-discovery";
@@ -10,6 +17,7 @@ export type DiscoveryOptions = {
   minShared: number;
   minRatings: number;
   orders: DiscoveryOrder[];
+  reviewDirection: "asc" | "desc";
 };
 export const DEFAULT_DISCOVERY_OPTIONS: DiscoveryOptions = {
   query: "",
@@ -17,6 +25,7 @@ export const DEFAULT_DISCOVERY_OPTIONS: DiscoveryOptions = {
   minShared: 10,
   minRatings: 0,
   orders: [],
+  reviewDirection: "desc",
 };
 export function DiscoveryControls({
   options,
@@ -33,8 +42,10 @@ export function DiscoveryControls({
 }) {
   const t = useT();
   const [custom, setCustom] = useState(false);
+  const reviewsOnly = options.orders.length === 1 && options.orders[0] === "reviews";
+  const ascending = options.reviewDirection === "asc";
   const sorts = [
-    { value: "username", label: t("Alphabetical") },
+    { value: "username", label: t("A–Z") },
     { value: "activity", label: t("Recent activity") },
     { value: "reviews", label: t("Written reviews") },
   ];
@@ -61,7 +72,34 @@ export function DiscoveryControls({
           />
         </label>
         <div className="flex items-center gap-2 rounded-xl bg-canvas px-3 text-ink-muted ring-1 ring-edge-soft">
-          <SlidersHorizontal size={15} />
+          <button
+            type="button"
+            disabled={!reviewsOnly}
+            aria-label={
+              reviewsOnly
+                ? ascending
+                  ? t("Show most written reviews first")
+                  : t("Show least written reviews first")
+                : t("Select only Written reviews to change order")
+            }
+            title={
+              reviewsOnly
+                ? ascending
+                  ? t("Least written reviews first")
+                  : t("Most written reviews first")
+                : t("Select only Written reviews to change order")
+            }
+            onClick={() => update({ reviewDirection: ascending ? "desc" : "asc" })}
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-muted hover:bg-elevated enabled:hover:text-ink disabled:opacity-40"
+          >
+            {!reviewsOnly ? (
+              <ArrowDownUp size={16} />
+            ) : ascending ? (
+              <ArrowUpWideNarrow size={16} />
+            ) : (
+              <ArrowDownWideNarrow size={16} />
+            )}
+          </button>
           <Dropdown
             ariaLabel={t("Sort people")}
             value={options.orders[0] ?? ""}
@@ -125,12 +163,13 @@ export function DiscoveryControls({
         ))}
         <button
           type="button"
+          aria-label={t("Customize filters")}
+          title={t("Customize filters")}
           aria-expanded={custom}
           onClick={() => setCustom(!custom)}
-          className={`inline-flex min-h-9 items-center gap-1.5 rounded-full px-3.5 text-xs ring-1 ${custom ? "bg-accent/15 text-accent ring-accent/40" : "bg-canvas text-ink-muted ring-edge-soft hover:bg-elevated"}`}
+          className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-xs ring-1 ${custom ? "bg-accent/15 text-accent ring-accent/40" : "bg-canvas text-ink-muted ring-edge-soft hover:bg-elevated"}`}
         >
           <SlidersHorizontal size={13} />
-          {t("Customize")}
         </button>
         {(options.query ||
           options.minMatch != null ||

@@ -325,6 +325,7 @@ export function ProfileSettings({
     shareActivity: summary.shareActivity ?? false,
     friendsVisibility: summary.friendsVisibility ?? "everyone",
     private: summary.private ?? false,
+    showJoinDate: summary.showJoinDate !== false,
   });
   const initialForm = useRef(form);
   const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm.current);
@@ -482,8 +483,15 @@ export function ProfileSettings({
       }
       onSaved(next);
       (after ?? onClose)();
-    } catch {
-      setError(t("Could not save. Try again."));
+    } catch (error) {
+      setError(
+        t(
+          error instanceof Error &&
+            error.message === "Join-date privacy requires the latest backend deployment."
+            ? error.message
+            : "Could not save. Try again.",
+        ),
+      );
     } finally {
       setSaving(false);
     }
@@ -930,6 +938,33 @@ export function ProfileSettings({
                         />
                       </button>
                     </div>
+
+                    <ActionRow
+                      title={t("Show join date")}
+                      desc={t(
+                        "Show when you joined Harbor on your profile, cards, and other public views.",
+                      )}
+                    >
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={form.showJoinDate !== false}
+                        aria-label={t("Show join date")}
+                        onClick={() => set("showJoinDate", form.showJoinDate === false)}
+                        style={{ minHeight: 0 }}
+                        className={
+                          "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition-colors " +
+                          (form.showJoinDate !== false ? "bg-accent" : "bg-edge")
+                        }
+                      >
+                        <span
+                          className={
+                            "block h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200 " +
+                            (form.showJoinDate !== false ? "translate-x-5" : "translate-x-0")
+                          }
+                        />
+                      </button>
+                    </ActionRow>
 
                     <div className="rounded-xl bg-elevated px-4 py-3.5 ring-1 ring-edge-soft">
                       <div className="min-w-0">

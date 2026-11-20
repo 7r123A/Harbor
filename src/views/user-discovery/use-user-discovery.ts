@@ -14,7 +14,18 @@ export function useUserDiscovery(filters: UserDiscoveryFilters, viewer: string |
   const [error, setError] = useState<string | null>(null);
   const [retry, setRetry] = useState(0);
   const request = useRef<AbortController | null>(null);
-  const { query, sort, rated, canvas, minRatings, match, minMatch, minShared, seed } = filters;
+  const {
+    query,
+    sort,
+    rated,
+    canvas,
+    minRatings,
+    match,
+    minMatch,
+    minShared,
+    seed,
+    reviewDirection,
+  } = filters;
   const orderKey = filters.orders?.join(",") ?? "";
   const shortQuery = [...query.trim().replace(/^@+/, "")].length === 1;
 
@@ -40,6 +51,7 @@ export function useUserDiscovery(filters: UserDiscoveryFilters, viewer: string |
           minMatch,
           minShared,
           seed,
+          reviewDirection,
           orders: orderKey ? (orderKey.split(",") as UserDiscoveryFilters["orders"]) : undefined,
         },
         controller.signal,
@@ -66,6 +78,7 @@ export function useUserDiscovery(filters: UserDiscoveryFilters, viewer: string |
     query,
     sort,
     seed,
+    reviewDirection,
     orderKey,
     rated,
     canvas,

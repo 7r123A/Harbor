@@ -77,7 +77,8 @@ export type ProfileSummary = {
   presence?: PresenceStatus;
   status?: PresenceStatus;
   watching?: ProfileWatching;
-  memberSince: string;
+  memberSince?: string;
+  showJoinDate?: boolean;
   counts: ProfileCounts;
   showcase?: ShowcaseItem;
   ratings?: RatingsSummary;
@@ -217,6 +218,7 @@ export type ProfileSettingsInput = {
   shareActivity: boolean;
   friendsVisibility: FriendsVisibility;
   private: boolean;
+  showJoinDate?: boolean;
 };
 
 export type CustomizationInput = {

@@ -43,6 +43,7 @@ function harness() {
       registerProfileDestination: () => () => {},
       subscribeOpenProfile: () => () => {},
     },
+    "@/lib/social/user-discovery-open": { requestOpenUserDiscovery: () => calls.push("discovery") },
     "@/lib/social/open-group": { subscribeOpenGroup: () => () => {} },
     "./discover": { trackEvent: () => {}, profileFromMeta: () => ({}) },
     "./settings": { useSettings: () => ({ settings: {} }) },
@@ -158,6 +159,10 @@ test("Settings and ordinary routes use the existing view stack without a player 
     await React.act(() => view.openProfile("another-person"));
     assert.equal(view.topKind, "profile");
     assert.equal(leave.getLeaveConfirm().open, false);
+    const stack = [...view.stackKinds];
+    await React.act(() => view.openUserDiscovery());
+    assert.deepEqual(view.stackKinds, stack, "discovery opens over the current page");
+    assert.ok(h.calls.includes("discovery"));
   } finally {
     await h.dispose();
   }

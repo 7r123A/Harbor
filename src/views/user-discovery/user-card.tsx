@@ -84,6 +84,7 @@ export function DiscoveryUserCard({
             avatarUrl: user.avatarUrl,
             verified: user.verified,
             memberSince: user.memberSince,
+            showJoinDate: user.showJoinDate,
           }
         }
         onOpen={onOpen}

@@ -49,7 +49,11 @@ test("match presets, customization and Refresh replace the previous discovery ch
       assert.equal(selected.minShared, 10);
       assert.equal(button(score + "% Match & above").getAttribute("aria-pressed"), "true");
     }
-    await React.act(() => button("Customize").click());
+    await React.act(() =>
+      (
+        document.querySelector('button[aria-label="Customize filters"]') as HTMLButtonElement
+      ).click(),
+    );
     assert.ok(document.querySelector('input[aria-label="Minimum shared titles"]'));
     await React.act(() => button("Refresh").click());
     assert.equal(refreshes, 1);
@@ -99,4 +103,95 @@ test("profile theme settings no longer include a profile display or preview labe
   assert.ok(!markup.includes('aria-label="Profile appearance"'));
   assert.ok(!markup.includes("Live preview"));
   assert.ok(!markup.includes("Hours watched"));
+});
+
+test("written-review direction is interactive only for a sole written-review sort", async () => {
+  const dom = new JSDOM("<div id='root'></div>");
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    HTMLElement: dom.window.HTMLElement,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
+  const { createRoot } = await import("react-dom/client");
+  const root = createRoot(document.getElementById("root")!);
+  let selected!: DiscoveryOptions;
+  let change!: React.Dispatch<React.SetStateAction<DiscoveryOptions>>;
+  function Harness() {
+    const [options, set] = React.useState<DiscoveryOptions>({
+      ...DEFAULT_DISCOVERY_OPTIONS,
+      orders: ["reviews"],
+    });
+    selected = options;
+    change = set;
+    return (
+      <DiscoveryControls
+        options={options}
+        onChange={set}
+        onRefresh={() => {}}
+        signedIn
+        loading={false}
+      />
+    );
+  }
+  try {
+    await React.act(() => root.render(<Harness />));
+    const customize = document.querySelector('button[aria-label="Customize filters"]')!;
+    assert.equal(customize.textContent, "");
+    await React.act(() =>
+      (
+        document.querySelector(
+          'button[aria-label="Show least written reviews first"]',
+        ) as HTMLButtonElement
+      ).click(),
+    );
+    assert.equal(selected.reviewDirection, "asc");
+    await React.act(() =>
+      (
+        document.querySelector(
+          'button[aria-label="Show most written reviews first"]',
+        ) as HTMLButtonElement
+      ).click(),
+    );
+    assert.equal(selected.reviewDirection, "desc");
+    await React.act(() => change((previous) => ({ ...previous, orders: ["reviews", "activity"] })));
+    assert.equal(
+      (
+        document.querySelector(
+          'button[aria-label="Select only Written reviews to change order"]',
+        ) as HTMLButtonElement
+      ).disabled,
+      true,
+    );
+  } finally {
+    await React.act(() => root.unmount());
+    dom.window.close();
+  }
+});
+
+test("ascending review order reaches the backend only for the sole review sort", async (t) => {
+  let query: URLSearchParams;
+  t.mock.method(globalThis, "fetch", async (input) => {
+    query = new URL(String(input)).searchParams;
+    return Response.json({ filterVersion: 4, users: [], total: 0 });
+  });
+  const filters = {
+    query: "",
+    sort: "reviews",
+    orders: ["reviews"],
+    reviewDirection: "asc",
+    rated: false,
+    canvas: false,
+  } as const;
+  await fetchDiscoveredUsers({ ...filters, orders: [...filters.orders] });
+  assert.equal(query!.get("reviewDirection"), "asc");
+  await fetchDiscoveredUsers({ ...filters, orders: ["reviews", "activity"] });
+  assert.equal(query!.has("reviewDirection"), false);
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json({ filterVersion: 3, users: [], total: 0 }),
+  );
+  await assert.rejects(
+    fetchDiscoveredUsers({ ...filters, orders: [...filters.orders] }),
+    /latest backend deployment/,
+  );
 });

@@ -118,6 +118,7 @@ export function ProfileCardPanel({
             )}
             <ProfileJoinedAt
               value={profile.memberSince}
+              show={profile.showJoinDate !== false}
               className="mt-3 block text-[10.5px] leading-relaxed text-ink-subtle"
             />
             {failed && (

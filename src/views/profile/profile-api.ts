@@ -1,3 +1,4 @@
+import { publishProfileCardSummary } from "@/lib/social/profile-card-summary";
 import { safeFetch } from "@/lib/safe-fetch";
 import { authToken, currentAuthor, refreshToken } from "@/lib/theme-auth";
 import { HARBOR_API_BASE } from "@/lib/config/endpoints";
@@ -162,7 +163,11 @@ export async function setCommentLike(
 
 export async function saveSettings(input: ProfileSettingsInput): Promise<ProfileSummary> {
   const res = await mutate("/me/profile", "PATCH", input);
-  return (await res.json()) as ProfileSummary;
+  const summary = (await res.json()) as ProfileSummary;
+  if (input.showJoinDate !== undefined && summary.showJoinDate !== input.showJoinDate)
+    throw new Error("Join-date privacy requires the latest backend deployment.");
+  publishProfileCardSummary(summary);
+  return summary;
 }
 
 export async function saveSlogan(slogan: string): Promise<ProfileSummary> {

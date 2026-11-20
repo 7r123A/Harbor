@@ -231,6 +231,7 @@ export function ProfileHero({
               )}
               <ProfileJoinedAt
                 value={p.memberSince}
+                show={p.showJoinDate !== false}
                 className="basis-full text-[11.5px] text-ink-subtle"
               />
             </div>

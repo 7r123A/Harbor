@@ -59,6 +59,7 @@ type QuickProfile = {
   status?: string;
   online?: boolean;
   memberSince?: string;
+  showJoinDate?: boolean;
   dmPolicy?: "everyone" | "friends";
   counts?: { watched?: number; friends?: number; badges?: number };
   profileCard?: ProfileCardLook;
@@ -512,6 +513,7 @@ export function ReviewerQuickMenu({
                 </div>
                 <ProfileJoinedAt
                   value={profile?.memberSince}
+                  show={profile?.showJoinDate !== false}
                   className="mt-1 block text-[11px] leading-relaxed text-ink-subtle"
                 />
               </div>

@@ -10,7 +10,8 @@ export type DiscoveredUser = {
   displayName: string;
   avatarUrl?: string;
   verified: boolean;
-  memberSince: string;
+  memberSince?: string;
+  showJoinDate?: boolean;
   ratingCount: number;
   hasCanvas: boolean;
   match?: MutualMatch;
@@ -28,6 +29,7 @@ export type UserDiscoveryFilters = {
   sort: DiscoverySort;
   orders?: DiscoveryOrder[];
   seed?: string;
+  reviewDirection?: "asc" | "desc";
   rated: boolean;
   canvas: boolean;
   minRatings?: number;
@@ -47,6 +49,8 @@ export function fetchDiscoveredUsers(
     limit: "24",
   });
   if (filters.orders?.length) params.set("order", filters.orders.join(","));
+  if (filters.orders?.length === 1 && filters.orders[0] === "reviews" && filters.reviewDirection)
+    params.set("reviewDirection", filters.reviewDirection);
   if (filters.seed) params.set("seed", filters.seed);
   if (query) params.set("q", query);
   if (filters.rated) params.set("rated", "1");
@@ -58,7 +62,14 @@ export function fetchDiscoveredUsers(
   if (filters.canvas) params.set("canvas", "1");
   if (cursor) params.set("cursor", cursor);
   return socialGet<UserDiscoveryPage>(`/social/users?${params.toString()}`, signal).then((page) => {
-    if ((filters.sort === "random" || filters.orders?.length) && page.filterVersion !== 3)
+    if (
+      filters.reviewDirection === "asc" &&
+      filters.orders?.length === 1 &&
+      filters.orders[0] === "reviews" &&
+      (page.filterVersion ?? 0) < 4
+    )
+      throw new Error("These discovery filters require the latest backend deployment.");
+    if ((filters.sort === "random" || filters.orders?.length) && (page.filterVersion ?? 0) < 3)
       throw new Error("These discovery filters require the latest backend deployment.");
     if (
       (filters.match || (filters.rated && (filters.minRatings ?? 1) > 1)) &&

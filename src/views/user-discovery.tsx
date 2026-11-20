@@ -33,6 +33,7 @@ export function UserDiscoveryView({ onClose }: { onClose: () => void }) {
       match: !!viewer && options.minMatch != null,
       minMatch: options.minMatch ?? 50,
       minShared: options.minShared,
+      reviewDirection: options.reviewDirection,
     },
     viewer?.id,
   );
