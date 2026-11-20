@@ -316,6 +316,24 @@ const METADATA: Credit[] = [
     url: "https://ani.zip",
   },
   {
+    name: "anime-offline-database (cedya77)",
+    blurb:
+      "Maintained by cedya77, continuing the original manami-project dataset. Downloaded on demand for offline anime identity and cross-provider ID matching (ODbL 1.0 / DbCL 1.0).",
+    url: "https://github.com/cedya77/anime-offline-database",
+  },
+  {
+    name: "manami-project (original creator)",
+    blurb:
+      "Created the original anime-offline-database. The current dataset builds on this work, licensed under ODbL 1.0 / DbCL 1.0.",
+    url: "https://github.com/manami-project/anime-offline-database",
+  },
+  {
+    name: "Anime-Lists contributors",
+    blurb:
+      "Community-maintained AniDB to TVDB and TMDB season and episode mappings, used alongside the offline anime identity database.",
+    url: "https://github.com/Anime-Lists/anime-lists",
+  },
+  {
     name: "OMDb",
     blurb: "Supplementary ratings, including Rotten Tomatoes scores.",
     url: "https://www.omdbapi.com",
@@ -700,6 +718,12 @@ const DEPS: Dep[] = [
 
 const LICENSES: LicenseDoc[] = [
   {
+    id: "anime-identity-data",
+    title: "Offline anime identity database attribution",
+    used: "Upstream authors, source repositories, and the ODbL / DbCL data licences for the optional anime identity database.",
+    file: "anime-identity-data",
+  },
+  {
     id: "miku-visualizer",
     title: "Hatsune Miku · MikuMikuDance",
     used: "music.miku.adaptation",
@@ -871,9 +895,9 @@ export function LicensesPanel() {
       </Section>
 
       <Section
-        title={t("Licence texts")}
+        title={t("Licence texts and attribution notices")}
         subtitle={t(
-          "The full text of every licence covering software distributed with Harbor. Select any entry to save a copy.",
+          "Licence texts for bundled software and attribution notices for external data sources. Select any entry to save a copy.",
         )}
       >
         {LICENSES.map((doc) => (
