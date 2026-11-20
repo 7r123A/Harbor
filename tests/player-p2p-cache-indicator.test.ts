@@ -36,14 +36,13 @@ test("clicking the cache dot toggles the P2P status chip without cycling the tim
   assert.match(timeDisplay, /role="button"/);
 });
 
-test("the new cache-dot copy has a fallback translation entry", () => {
-  assert.match(
-    uiFallback,
-    /"Cached · click to toggle P2P stats": "Cached · click to toggle P2P stats"/,
-  );
-  assert.match(
-    uiFallback,
-    /"Caching · click to toggle P2P stats": "Caching · click to toggle P2P stats"/,
-  );
+test("the cache dot shows Caching on hover until it becomes Cached", () => {
+  assert.match(timeDisplay, /const cacheLabel = cached \? t\("Cached"\) : t\("Caching"\)/);
+  assert.match(timeDisplay, /role="tooltip"/);
+  assert.match(timeDisplay, /aria-describedby=\{tooltipId\}/);
+  assert.match(timeDisplay, /group-hover\/cache:opacity-100/);
+  assert.match(timeDisplay, /group-focus-visible\/cache:opacity-100/);
+  assert.match(uiFallback, /"Cached": "Cached"/);
+  assert.match(uiFallback, /"Caching": "Caching"/);
   assert.match(uiFallback, /"Toggle P2P stats": "Toggle P2P stats"/);
 });

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import {
   usePlaybackDownloadedFromP2pGated,
   usePlaybackDownloadedGated,
@@ -20,6 +20,7 @@ const TIME_FONT = { fontFamily: '"Plus Jakarta Sans", "Inter", system-ui, sans-s
 function CachedDot({ active }: { active: boolean }): ReactNode {
   const t = useT();
   const { settings, update } = useSettings();
+  const tooltipId = useId();
   const downloaded = usePlaybackDownloadedGated(active);
   const fromP2p = usePlaybackDownloadedFromP2pGated(active);
   const cached = downloaded >= 0.999;
@@ -35,15 +36,15 @@ function CachedDot({ active }: { active: boolean }): ReactNode {
       </span>
     );
   }
+  const cacheLabel = cached ? t("Cached") : t("Caching");
   const toggleChip = () => update({ playerP2pChip: !settings.playerP2pChip });
   return (
     <span
       role="button"
       tabIndex={0}
-      title={
-        cached ? t("Cached · click to toggle P2P stats") : t("Caching · click to toggle P2P stats")
-      }
+      title=""
       aria-label={t("Toggle P2P stats")}
+      aria-describedby={tooltipId}
       aria-pressed={settings.playerP2pChip}
       onClick={(event) => {
         event.stopPropagation();
@@ -55,9 +56,16 @@ function CachedDot({ active }: { active: boolean }): ReactNode {
         event.stopPropagation();
         toggleChip();
       }}
-      className="ms-2 inline-flex h-3 w-3 shrink-0 cursor-pointer items-center justify-center rounded-full align-middle transition-transform duration-150 ease-out hover:scale-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60 motion-reduce:transition-none motion-reduce:hover:scale-100"
+      className="group/cache relative ms-2 inline-flex h-3 w-3 shrink-0 cursor-pointer items-center justify-center rounded-full align-middle transition-transform duration-150 ease-out hover:scale-125 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60 motion-reduce:transition-none motion-reduce:hover:scale-100"
     >
       <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${dotClass}`} />
+      <span
+        id={tooltipId}
+        role="tooltip"
+        className="pointer-events-none absolute bottom-[calc(100%+6px)] left-1/2 z-30 w-max -translate-x-1/2 rounded-md border border-white/10 bg-black/85 px-2 py-1 text-[11.5px] font-medium leading-snug text-white/90 opacity-0 shadow-[0_8px_24px_-10px_rgba(0,0,0,0.8)] backdrop-blur-md transition-opacity delay-0 duration-100 group-hover/cache:opacity-100 group-hover/cache:delay-500 group-focus-visible/cache:opacity-100"
+      >
+        {cacheLabel}
+      </span>
     </span>
   );
 }
