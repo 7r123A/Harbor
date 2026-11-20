@@ -398,13 +398,14 @@ export function filterTracksByPreferredLanguage<T extends { id: string; lang?: s
 export function pickBestTrack<T extends { lang?: string; default?: boolean; forced?: boolean }>(
   tracks: T[],
   preferred: string[],
+  languageOf: (track: T) => string = (track) => track.lang ?? "",
 ): T | null {
   if (tracks.length === 0) return null;
   let best: T | null = null;
   let bestScore = -Infinity;
   for (const t of tracks) {
     if (t.forced) continue;
-    const ls = langScore(t.lang ?? "", preferred);
+    const ls = langScore(languageOf(t), preferred);
     if (ls < 0) continue;
     const score = ls * 10 + (t.default ? 1 : 0);
     if (score > bestScore) {

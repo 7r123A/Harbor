@@ -4,8 +4,25 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 import { expandOriginalAudioLang, ORIGINAL_AUDIO_LANG } from "../src/lib/player/audio-language";
-import { trackPreferences } from "../src/lib/player/track-preferences";
+import { pickPreferredAudio, trackPreferences } from "../src/lib/player/track-preferences";
 import * as language from "../src/lib/subtitles/language";
+
+test("Original ranks clearly titled untagged dubs ahead of the stream default", () => {
+  const french = {
+    id: "1",
+    kind: "audio" as const,
+    label: "Audio 1",
+    title: "French (International) : Dolby Digital 5.1",
+    selected: true,
+    default: true,
+  };
+  const english = { ...french, id: "2", default: false, lang: "und", title: "English : DTS-HD" };
+  const original = expandOriginalAudioLang(["Original"], "eng", false);
+  assert.equal(pickPreferredAudio([french, english], original), english);
+  assert.equal(pickPreferredAudio([english, french], ["French"]), french);
+  assert.equal(pickPreferredAudio([{ ...english, lang: "deu" }], original), null);
+  assert.equal(pickPreferredAudio([{ ...english, title: "Dual Audio" }], original), null);
+});
 
 test("Original resolves to the title's original language", () => {
   assert.deepEqual(expandOriginalAudioLang([ORIGINAL_AUDIO_LANG, "English"], "ja", false), [

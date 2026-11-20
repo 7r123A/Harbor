@@ -2,7 +2,7 @@ import type { PlayerSrc } from "@/lib/view";
 import type { Settings } from "@/lib/settings";
 import type { PlayerSource, TrackInfo } from "./bridge";
 import { readPlayerPrefs, type PerShowPrefs } from "@/lib/player-prefs";
-import { langScore, normalizeLang, pickBestTrack } from "@/lib/subtitles/language";
+import { isKnownLanguage, langScore, normalizeLang, pickBestTrack } from "@/lib/subtitles/language";
 import {
   isAutoSelectableSubtitleTrack,
   pickDesiredSubtitleTrack,
@@ -127,6 +127,19 @@ export function pickAutomaticSubtitle(
     : pickDesiredSubtitleTrack(allow(tracks), langs, settings.preferEmbeddedSubs);
 }
 
+export function pickPreferredAudio(tracks: TrackInfo[], languages: string[]) {
+  return pickBestTrack(tracks, languages, (track) => {
+    const tag = normalizeLang(track.lang);
+    if (tag && tag !== "und") return tag;
+    const prefix = track.title?.split(/[:|]|\s+-\s+/, 1)[0].trim();
+    if (!prefix) return "";
+    for (const candidate of [prefix, prefix.replace(/\s*\([^()]*\)$/, "").trim()]) {
+      if (isKnownLanguage(candidate)) return normalizeLang(candidate);
+    }
+    return "";
+  });
+}
+
 export function initialTrackSelector(
   src: PlayerSrc,
   settings: Settings,
@@ -140,7 +153,7 @@ export function initialTrackSelector(
         ? src.continuation.audioTrack
         : readActualPlaybackFor(src)?.audioTrack;
     const selectedAudio =
-      selectPlaybackAudio(audio, rememberedAudio) ?? pickBestTrack(allow(audio), audioLangs);
+      selectPlaybackAudio(audio, rememberedAudio) ?? pickPreferredAudio(allow(audio), audioLangs);
     const choice: ReturnType<NonNullable<PlayerSource["selectInitialTracks"]>> = {
       audioId: selectedAudio?.id,
     };

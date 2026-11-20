@@ -1,5 +1,6 @@
 import {
   trackPreferences,
+  pickPreferredAudio,
   pickAutomaticSubtitle,
   pickRememberedEmbedded,
   subsOffFor,
@@ -9,7 +10,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { PlayerBridge, PlayerSnapshot } from "@/lib/player/bridge";
-import { normalizeLang, pickBestTrack } from "@/lib/subtitles/language";
+import { normalizeLang } from "@/lib/subtitles/language";
 import { fetchSubtitlesIntoPlayer, streamHintsOf } from "@/lib/subtitles/fetch-into-player";
 import { subtitleStreamDescriptor } from "@/lib/subtitles/provider-label";
 import { publishSubtitleSearch } from "@/components/player/subtitle-menu/subtitle-search-store";
@@ -951,7 +952,7 @@ export function useTrackAutoload(params: {
           // A known choice is explicit user intent, even if its title matches
           // an automatic-selection exclusion such as "commentary".
           selectPlaybackAudio(snap.audioTracks, rememberedAudio) ??
-          pickBestTrack(allow(snap.audioTracks), audioLangs);
+          pickPreferredAudio(allow(snap.audioTracks), audioLangs);
         effAudio = want ?? cur;
         if (want) {
           if (!cur || cur.id !== want.id) bridgeRef.current?.setAudioTrack(want.id);
