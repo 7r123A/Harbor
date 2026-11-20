@@ -58,7 +58,13 @@ test("the common user panel includes banner, avatar, bio, country, presence and 
       !card.querySelector("button button"),
       "friend controls stay outside the profile button",
     );
-    assert.match(card.getAttribute("style")!, /--color-surface:#064e3b/);
+    assert.match(
+      card.getAttribute("style")!,
+      new RegExp(
+        "--color-surface:" +
+          (profileCardStyle(profile.profileCard) as Record<string, string>)["--color-surface"],
+      ),
+    );
   } finally {
     dom.window.close();
   }

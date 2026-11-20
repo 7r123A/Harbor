@@ -182,6 +182,9 @@ export function ProfileCardColors({
           ))}
         </div>
       </div>
+      <p className="text-[11px] text-ink-subtle">
+        {t("Name, handle and other text colors adjust automatically when needed to stay readable.")}
+      </p>
       {error && (
         <p role="alert" className="text-xs text-danger">
           {error}

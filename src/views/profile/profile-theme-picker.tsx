@@ -1,5 +1,5 @@
 import { Check, Layers, Loader2, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { socialPost } from "@/lib/social/client";
 import { useT } from "@/lib/i18n";
 import {
@@ -19,6 +19,8 @@ import {
 } from "@/lib/profile-theme";
 import { CANVAS_DEFAULT } from "./customization/customization-types";
 import type { ProfileSummary } from "./profile-types";
+
+import { ProfileThemePreview } from "./profile-theme-preview";
 
 type Busy = "palette" | "glass" | "gradient" | null;
 
@@ -89,18 +91,30 @@ function CustomThemeEditor({
   colors,
   busy,
   onApply,
+  onPreview,
 }: {
   colors: CustomProfileColors;
   busy: boolean;
   onApply: (colors: CustomProfileColors) => void;
+  onPreview: (colors: CustomProfileColors) => void;
 }) {
   const t = useT();
   const [draft, setDraft] = useState<CustomProfileColors>(colors);
   const [error, setError] = useState<string | null>(null);
   const dirty = CUSTOM_SLOTS.some(({ key }) => draft[key] !== colors[key]);
 
-  const set = (key: keyof CustomProfileColors, value: string) =>
-    setDraft((cur) => ({ ...cur, [key]: value }));
+  const set = (key: keyof CustomProfileColors, value: string) => {
+    const next = { ...draft, [key]: value };
+    setDraft(next);
+    onPreview(
+      Object.fromEntries(
+        CUSTOM_SLOTS.map((slot) => [
+          slot.key,
+          normalizeHexColor(next[slot.key]) ?? colors[slot.key],
+        ]),
+      ) as CustomProfileColors,
+    );
+  };
 
   const apply = () => {
     const next = {} as CustomProfileColors;
@@ -176,6 +190,12 @@ export function ProfileThemePicker({
 }) {
   const t = useT();
   const [theme, setTheme] = useState<ProfileTheme>(() => parseProfileTheme(summary.customCss));
+  const [previewTheme, setPreviewTheme] = useState(theme);
+  useEffect(() => {
+    const current = parseProfileTheme(summary.customCss);
+    setTheme(current);
+    setPreviewTheme(current);
+  }, [summary.customCss]);
   const [busy, setBusy] = useState<Busy>(null);
   const [busyPalette, setBusyPalette] = useState<ProfilePaletteId | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -193,6 +213,7 @@ export function ProfileThemePicker({
         : (next.savedCustomColors ??
           (theme.palette === "custom" ? theme.colors : (theme.savedCustomColors ?? theme.colors)));
     const saved = retainedColors ? { ...next, savedCustomColors: retainedColors } : next;
+    setPreviewTheme(saved);
     setBusy(kind);
     setBusyPalette(kind === "palette" ? next.palette : null);
     setError(null);
@@ -298,6 +319,7 @@ export function ProfileThemePicker({
           key={JSON.stringify(theme.colors)}
           colors={theme.colors ?? DEFAULT_CUSTOM_COLORS}
           busy={!!busy}
+          onPreview={(colors) => setPreviewTheme({ ...theme, colors })}
           onApply={(colors) =>
             void apply({ ...theme, colors, savedCustomColors: colors }, "palette")
           }
@@ -334,6 +356,8 @@ export function ProfileThemePicker({
           {t("Gradient wash")}
         </button>
       </div>
+
+      <ProfileThemePreview summary={summary} theme={previewTheme} />
 
       {hiddenCustomization && (
         <p className="mt-3 text-[12px] leading-relaxed text-ink-subtle">

@@ -3386,6 +3386,16 @@ const uiFallback: Record<string, string> = {
     "These discovery filters require the latest backend deployment.",
   "Card appearance requires the latest backend deployment. Your changes have not been saved.":
     "Card appearance requires the latest backend deployment. Your changes have not been saved.",
+  "Profile theme live preview": "Profile theme live preview",
+  "Live preview": "Live preview",
+  About: "About",
+  Ratings: "Ratings",
+  "Your profile text appears here.": "Your profile text appears here.",
+  Watched: "Watched",
+  "Text colors adjust automatically when needed to stay readable.":
+    "Text colors adjust automatically when needed to stay readable.",
+  "Name, handle and other text colors adjust automatically when needed to stay readable.":
+    "Name, handle and other text colors adjust automatically when needed to stay readable.",
 };
 
 export default uiFallback;

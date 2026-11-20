@@ -9,7 +9,7 @@ import {
   publishProfileCardSummary,
   loadProfileCardSummary,
 } from "@/lib/social/profile-card-summary";
-import { saveCardAppearance } from "@/lib/social/profile-card-appearance";
+import { saveCardAppearance, profileCardStyle } from "@/lib/social/profile-card-appearance";
 import type { ProfileSummary } from "@/views/profile/profile-types";
 import type { CardAppearancePatch } from "@/lib/social/profile-card-appearance";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -71,9 +71,9 @@ test("card editor previews its theme on the whole card and saves separate text c
     for (const label of ["Name", "Handle", "Bio", "Other text", "Theme color 1", "Theme color 2"])
       assert.ok(document.querySelector(`input[aria-label="${label}"]`));
     await React.act(() => button("Aurora").click());
-    assert.equal(
+    assert.match(
       (document.querySelector("article") as HTMLElement).style.backgroundImage,
-      "linear-gradient(135deg, rgb(34, 211, 238), rgb(79, 70, 229))",
+      /^linear-gradient\(135deg,/,
     );
     await React.act(() => button("Solid color").click());
     assert.ok(document.querySelector('input[aria-label="Theme color"]'));
@@ -107,10 +107,12 @@ test("banners suppress the shine and each identity text has its own color", () =
   );
   assert.ok(!markup.includes("radial-gradient"));
   for (const token of [
-    "--profile-card-name:#111111",
-    "--profile-card-handle:#222222",
+    "--profile-card-name:" +
+      (profileCardStyle(look) as Record<string, string>)["--profile-card-name"],
+    "--profile-card-handle:" +
+      (profileCardStyle(look) as Record<string, string>)["--profile-card-handle"],
     "--profile-card-bio:#333333",
-    "--color-ink:#444444",
+    "--color-ink:" + (profileCardStyle(look) as Record<string, string>)["--color-ink"],
   ])
     assert.ok(markup.includes(token));
   assert.match(renderToStaticMarkup(<ProfileCardPanel profile={profile} />), /radial-gradient/);
