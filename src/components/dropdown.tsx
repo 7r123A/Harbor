@@ -36,6 +36,7 @@ export function Dropdown({
   className = "",
   menuClassName = "",
   size = "md",
+  disabled = false,
 }: {
   value: string;
   selectedValues?: string[];
@@ -47,6 +48,7 @@ export function Dropdown({
   className?: string;
   menuClassName?: string;
   size?: "xs" | "sm" | "md";
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [box, setBox] = useState<MenuBox | null>(null);
@@ -193,6 +195,7 @@ export function Dropdown({
       <button
         ref={btnRef}
         type="button"
+        disabled={disabled}
         onClick={() => {
           spinChevron(!open);
           if (open) close(holdsFocus());
@@ -205,7 +208,7 @@ export function Dropdown({
         }
         aria-haspopup="listbox"
         aria-expanded={open}
-        className={`flex w-full items-center justify-between gap-3 outline-none transition-colors ${
+        className={`flex w-full items-center justify-between gap-3 outline-none transition-colors disabled:cursor-default disabled:opacity-45 ${
           size === "xs"
             ? "h-7 rounded-full px-3 text-[12.5px] font-semibold ring-1 ring-edge"
             : size === "sm"

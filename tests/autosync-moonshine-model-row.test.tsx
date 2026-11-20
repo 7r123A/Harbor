@@ -6,6 +6,7 @@ import * as React from "react";
 import { createRoot } from "react-dom/client";
 import * as jsxRuntime from "react/jsx-runtime";
 import ts from "typescript";
+import { Dropdown } from "../src/components/dropdown.tsx";
 import {
   MOONSHINE_LANGUAGES,
   isMoonshineLanguage,
@@ -26,6 +27,7 @@ function loadRow(invoke: (command: string, args?: { language?: string }) => Prom
   }).outputText;
   const dependencies: Record<string, unknown> = {
     react: React,
+    "@/components/dropdown": { Dropdown },
     "react/jsx-runtime": jsxRuntime,
     "@tauri-apps/api/core": { invoke },
     "@/lib/settings": {
@@ -36,8 +38,8 @@ function loadRow(invoke: (command: string, args?: { language?: string }) => Prom
     },
     "@/lib/i18n": { useT: () => (key: string) => key },
     "./kit": {
-      SettingRow: ({ label, children }: { label: string; children: React.ReactNode }) =>
-        React.createElement("section", null, React.createElement("h2", null, label), children),
+      SettingRow: ({ label, desc, children }: { label: string; desc: React.ReactNode; children: React.ReactNode }) =>
+        React.createElement("section", null, React.createElement("h2", null, label), desc, children),
       ROW_ACTION_PRIMARY: "primary",
       ROW_ACTION_DANGER: "danger",
     },
@@ -117,18 +119,18 @@ for (const mode of ["download", "remove"] as const) {
       await React.act(async () => { h.button(buttonLabel).click(); });
       const operation = h.take(command, "en");
 
-      const preference = document.querySelector<HTMLSelectElement>(
-        'select[aria-label="Moonshine language selection"]',
+      const preference = document.querySelector<HTMLButtonElement>(
+        'button[aria-label^="Moonshine language selection:"]',
       )!;
-      const managed = document.querySelector<HTMLSelectElement>(
-        'select[aria-label="Language model to manage"]',
+      const managed = document.querySelector<HTMLButtonElement>(
+        'button[aria-label^="Language model to manage:"]',
       )!;
       assert.equal(preference.disabled, true, "override must not change during an operation");
       assert.equal(managed.disabled, true);
 
       // A settings change from elsewhere can still change the managed language.
       await h.changePreference("ja");
-      assert.equal(managed.value, "ja");
+      assert.match(managed.textContent ?? "", /Japanese/);
       await h.finishStatus("ja", true);
       assert.match(document.body.textContent ?? "", /Language model installed/);
 
@@ -137,7 +139,7 @@ for (const mode of ["download", "remove"] as const) {
         r.command === "moonshine_model_status" && r.language === "en"), false,
         "the old operation must not issue a status request for its old language");
       await h.finishStatus("ja", true);
-      assert.equal(managed.value, "ja");
+      assert.match(managed.textContent ?? "", /Japanese/);
       assert.ok(h.button("Remove model"), "the completed old operation cannot overwrite Japanese state");
     } finally {
       await h.close();
