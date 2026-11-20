@@ -69,7 +69,8 @@ test("Windows embedded mpv is retained across compatible VOD bitrate profiles", 
 test("playback timing is local-only and contains no media URLs or account identifiers", () => {
   assert.match(trace, /performance\?\.mark/);
   assert.match(trace, /\[perf\]\[playback\]/);
-  assert.doesNotMatch(trace, /url|token|authorization|metaId|imdb/i);
+  // Comments may discuss data that must not be logged; only executable code is relevant.
+  assert.doesNotMatch(trace.replace(/^\s*\/\/.*$/gm, ""), /url|token|authorization|metaId|imdb/i);
 });
 
 test("early debrid preparation is explicit, bounded, verified, and memory-only", () => {

@@ -155,6 +155,9 @@ test("book-view reader pages remain a trusted reader target without image action
       nativePan: nothing,
     },
     "./reader-utils": { measureAspect: async () => 1.4 },
+    "./chapter-image-cache": {
+      chapterImageBlob: async () => new Blob(["fixture"], { type: "image/png" }),
+    },
   });
   const root = createRoot(document.querySelector("#root")!);
   try {

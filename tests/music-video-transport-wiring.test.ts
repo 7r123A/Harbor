@@ -5,6 +5,7 @@ import test from "node:test";
 // @ts-expect-error Node test types are outside the browser tsconfig.
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { selectSourceCandidate } from "../src/lib/music/source-selection.ts";
 import { dedupeMusicTracks, sameMusicTrack } from "../src/lib/music/track-identity.ts";
 
 function read(path: string): string {
@@ -46,6 +47,7 @@ function loadPlayer() {
       };
     if (name === "@tauri-apps/api/event") return { listen: async () => () => {} };
     if (name === "react") return { useSyncExternalStore: () => undefined };
+    if (name === "./source-selection") return { selectSourceCandidate };
     if (name === "./source-version")
       return { compatibleVocalVersion: () => true, shouldResolvePreferredSource: () => false };
     if (name === "./queue-automation")

@@ -15,7 +15,10 @@ test("Spotify onboarding makes device pairing primary and own-app browsing optio
   assert.match(browsing, /<SpotifyBrowsingGuide\b/);
   assert.match(translations, /"music\.spotifySetup\.pairTitle": "Pair your Spotify account"/);
   assert.match(translations, /"music\.spotifySetup\.browseOptional": "Optional"/);
-  assert.match(translations, /"music\.spotifySetup\.browseBody":\s*"Optional:/);
+  assert.match(
+    translations,
+    /"music\.spotifySetup\.browseBody":\s*"Authorize your own Spotify Developer app/,
+  );
   assert.doesNotMatch(row, /<SpotifySetupFields\b/);
 });
 

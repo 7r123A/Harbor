@@ -98,7 +98,9 @@ test("the lyrics panel reads the live engine rather than its own copy", () => {
     /import \{ loadTrackLyrics, lyricIndexAt, type LyricLine \} from "@\/lib\/music\/lyrics"/,
   );
   assert.match(TSX, /loadTrackLyrics\(current\)/);
-  assert.match(TSX, /lyricIndexAt\(\s*timedLyrics,\s*[\s\S]*?player\.currentTime/);
+  // The lyric-only subcomponent reads the live clock without rerendering the entire dock.
+  assert.match(TSX, /const clock = useMusicClock\(\)/);
+  assert.match(TSX, /lyricIndexAt\(lines, shiftedLyricTime\(clock, lyricOffset\)\)/);
 });
 
 test("the panel covers loading, empty and ready without stranding the user", () => {
@@ -130,12 +132,15 @@ test("the lyrics language is selectable and remembered", () => {
 test("live sync aligns a tapped line to the moment it was heard", () => {
   assert.match(TSX, /useLyricSync\(current\)/);
   assert.match(TSX, /addLyricSyncPoint\(syncPoints/);
-  assert.match(TSX, /at: player\.currentTime - lyricOffset/);
+  // Alignment reads the current clock on demand, rather than using a stale render snapshot.
+  assert.match(TSX, /const at = getMusicState\(\)\.currentTime/);
+  assert.match(TSX, /at: at - lyricOffset/);
   assert.match(TSX, /t\("Align to now"\)/);
   assert.match(TSX, /t\("Jump here"\)/);
   assert.match(TSX, /t\("Live sync"\)/);
   assert.match(TSX, /applyLyricSync\(lyrics, syncPoints\)/);
-  assert.match(TSX, /lyricIndexAt\(\s*timedLyrics,/);
+  assert.match(TSX, /<NowPlayingLyricList\s+lines=\{timedLyrics\}/);
+  assert.match(TSX, /lyricIndexAt\(lines, shiftedLyricTime\(clock, lyricOffset\)\)/);
 });
 
 test("a translation sits under its original line and hides when it is identical", () => {
@@ -153,7 +158,7 @@ test("clicking a line seeks the player", () => {
 });
 
 test("the active line follows playback by scrolling its own list, not the pull-out", () => {
-  assert.match(TSX, /lyricsRef\.current/);
+  assert.match(TSX, /listRef\.current/);
   assert.match(follower(), /list\.scrollTo\(/);
   assert.ok(!TSX.includes("scrollIntoView"), "scrollIntoView would drag the whole pull-out");
   assert.match(rule(".music-now-lyrics"), /overflow-y\s*:\s*auto/);
