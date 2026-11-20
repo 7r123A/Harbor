@@ -17,6 +17,7 @@ import {
   readLocalEntries,
   removeFromWatchlist,
   removeFromWatchlistEntry,
+  prepareRefractLibraryRemoval,
   subscribeWatchlist,
   type LocalEntry,
 } from "@/lib/watchlist";
@@ -208,6 +209,11 @@ export function WatchlistTab({
           nuvioItems.find((x) => targetIds.has(x.content_id)) ||
           readCachedNuvioLibrary(slot).find((x) => targetIds.has(x.content_id));
         const contentType = item?.content_type || localMatch?.type || "movie";
+        const syncRefractRemoval = prepareRefractLibraryRemoval({
+          id: cleanId,
+          type: contentType,
+          imdbId: localMatch?.imdbId ?? null,
+        });
 
         for (const tid of targetIds) {
           removeNuvioLibraryItem(slot, tid, contentType);
@@ -215,6 +221,7 @@ export function WatchlistTab({
         if (localMatch) {
           removeFromWatchlist(localMatch.id);
         }
+        syncRefractRemoval();
 
         // 3. Background flush & third-party tracking sync (non-blocking)
         const tr = stremioIdToTraktTarget(cleanId);
@@ -239,6 +246,15 @@ export function WatchlistTab({
       const closure = filmClosure([stremioId], allLocals, trakt);
       evictWatchlistAggregate(closure);
       const twins = allLocals.filter((l) => closure.has(l.id));
+      const localMatch = twins.find(
+        (entry) => entry.id === stremioId || entry.imdbId === stremioId,
+      );
+      const stremioMatch = stremio.find((entry) => entry._id === stremioId);
+      const syncRefractRemoval = prepareRefractLibraryRemoval({
+        id: stremioId,
+        type: localMatch?.type ?? stremioMatch?.type,
+        imdbId: localMatch?.imdbId ?? null,
+      });
       setStremio((prev) => prev.filter((i) => !closure.has(i._id)));
       setLocalEntries((prev) => prev.filter((e) => !closure.has(e.id)));
       setTrakt((prev) =>
@@ -269,6 +285,7 @@ export function WatchlistTab({
         if (results.some((result) => result.status === "rejected"))
           throw new Error("Watchlist removal failed");
         for (const l of twins) removeFromWatchlist(l.id);
+        syncRefractRemoval();
       } catch {
         setLocalEntries(readLocalEntries());
       } finally {
@@ -296,6 +313,7 @@ export function WatchlistTab({
       const all = readLocalEntries();
       const e = all.find((x) => x.id === localId);
       if (!e) return;
+      const syncRefractRemoval = prepareRefractLibraryRemoval(e);
       guardSeq.current += 1;
 
       if (isNuvio) {
@@ -320,6 +338,7 @@ export function WatchlistTab({
           poster: e.poster,
           imdbId: e.imdbId ?? null,
         });
+        syncRefractRemoval();
         return;
       }
 
@@ -340,6 +359,7 @@ export function WatchlistTab({
         poster: e.poster,
         imdbId: e.imdbId ?? null,
       });
+      syncRefractRemoval();
     },
     [trakt, isNuvio],
   );
