@@ -93,7 +93,10 @@ quick-xml = { version = "=0.38.4", features = ["serialize"] }
 yaml-rust2 = { version = "0.13", default-features = false }
 uuid = { version = "1", features = ["v4"] }
 futures-util = "0.3"
-tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = [
+  "connect",
+  "handshake",
+] }
 gilrs = { version = "0.11", default-features = false, features = ["xinput"] }
 libc = "0.2"
 socket2 = "0.5"
