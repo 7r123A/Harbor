@@ -74,8 +74,7 @@ test("the playback hook repeats the full verified capture rather than reusing a 
   assert.match(hook, /for \(let attempt = 1; attempt <= MAX_CACHE_CAPTURE_ATTEMPTS; attempt\+\+\)/);
   assert.match(hook, /cacheCaptureScenePath\(/);
   assert.match(hook, /cacheCaptureAttemptPath\(sceneCapturePath, attempt\)/);
-  assert.match(hook, /retryablePlaybackSpeechFailure\(moonshineFailureCode\)/);
-  assert.match(hook, /selectPlaybackRetryScene\(bufferedScenes, focusSec, requestedStartSec\)/);
+  assert.match(hook, /selectPlaybackRetryScene\(bufferedScenes, focusSec, startAt\)/);
   assert.match(hook, /captureAnchorPath/);
   assert.match(hook, /subsync_prepare_cache_audio/);
   assert.match(hook, /if \(!retry\) throw error/);

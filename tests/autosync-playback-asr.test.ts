@@ -3,7 +3,6 @@ import test from "node:test";
 import {
   matchPlaybackSpeech,
   playbackSpeechFailureCode,
-  retryablePlaybackSpeechFailure,
 } from "../src/lib/subtitles/autosync/playback-asr.ts";
 
 const windows = [
@@ -341,24 +340,6 @@ test("Moonshine failure logs never include arbitrary native error contents", () 
     playbackSpeechFailureCode(new Error("moonshine-model-not-installed:en")),
     "model-missing",
   );
-});
-
-test("only scene-dependent Moonshine failures can trigger another buffered excerpt", () => {
-  for (const code of ["audio-silent", "no-speech", "timestamps-missing", "alignment-rejected"])
-    assert.equal(retryablePlaybackSpeechFailure(code), true, code);
-  for (const code of [
-    "disabled",
-    "cross-language-off",
-    "model-missing",
-    "python-missing",
-    "runtime-missing",
-    "language-unsupported",
-    "timeout",
-    "cancelled",
-    "native-error",
-    "none",
-  ])
-    assert.equal(retryablePlaybackSpeechFailure(code), false, code);
 });
 
 test("already aligned foreign-language subtitle timing is a successful zero-offset result", async () => {

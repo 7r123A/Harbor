@@ -360,7 +360,6 @@ export const DEFAULT: Settings = {
   autoSyncApplyStructural: false,
   autoSyncDrift: false,
   subtitleAutoSyncAsr: true,
-  subtitleAutoSyncEngine: "automatic",
   subtitleMoonshineLanguage: "auto",
   subtitleAutoSyncPivot: false,
   subtitleAutoSyncCrowd: true,

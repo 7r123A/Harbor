@@ -443,7 +443,6 @@ export type Settings = {
   autoSyncApplyStructural: boolean;
   autoSyncDrift: boolean;
   subtitleAutoSyncAsr: boolean;
-  subtitleAutoSyncEngine: "automatic" | "moonshine";
   subtitleMoonshineLanguage: string;
   subtitleAutoSyncPivot: boolean;
   subtitleAutoSyncCrowd: boolean;

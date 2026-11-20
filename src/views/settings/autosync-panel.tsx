@@ -102,26 +102,6 @@ export function AutoSyncPanel() {
                 value={settings.subtitleAutoSyncAsr}
                 onChange={(v) => update({ subtitleAutoSyncAsr: v })}
               />
-              <SettingRow
-                label={t("Speech engine (testing)")}
-                desc={t(
-                  "Automatic uses Silero first, then Moonshine when needed. Moonshine direct skips Silero timing matching for Sync from playback tests.",
-                )}
-              >
-                <select
-                  aria-label={t("Speech engine")}
-                  value={settings.subtitleAutoSyncEngine ?? "automatic"}
-                  onChange={(e) =>
-                    update({
-                      subtitleAutoSyncEngine: e.target.value as "automatic" | "moonshine",
-                    })
-                  }
-                  className="min-h-10 rounded-lg border border-edge-soft bg-elevated px-3 text-sm text-ink"
-                >
-                  <option value="automatic">{t("Automatic (Silero → Moonshine)")}</option>
-                  <option value="moonshine">{t("Moonshine direct (testing)")}</option>
-                </select>
-              </SettingRow>
               <ToggleRow
                 label={t("Match subtitles across languages (experimental)")}
                 sub={t(

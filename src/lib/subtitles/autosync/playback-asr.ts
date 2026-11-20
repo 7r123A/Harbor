@@ -65,16 +65,6 @@ export function playbackSpeechFailureCode(error: unknown): string {
   return "native-error";
 }
 
-/** Try a different buffered scene only when fresh dialogue could improve the evidence. */
-export function retryablePlaybackSpeechFailure(code: string): boolean {
-  return (
-    code === "audio-silent" ||
-    code === "no-speech" ||
-    code === "timestamps-missing" ||
-    code === "alignment-rejected"
-  );
-}
-
 /** The short prepared playback audio is transcribed in an isolated Moonshine worker. */
 export async function matchPlaybackSpeech(
   input: {

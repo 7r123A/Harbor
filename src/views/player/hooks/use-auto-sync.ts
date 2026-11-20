@@ -78,7 +78,6 @@ import {
 import {
   matchPlaybackSpeech,
   playbackSpeechFailureCode,
-  retryablePlaybackSpeechFailure,
 } from "@/lib/subtitles/autosync/playback-asr";
 import {
   moonshineMissingModelLanguage,
@@ -1952,7 +1951,6 @@ export function useAutoSync(params: {
           let moonshineFailureCode = "none";
           let usedMoonshine = false;
           let usedSilero = false;
-          const directMoonshine = settingsRef.current.subtitleAutoSyncEngine === "moonshine";
           let needsFreshAudio = false;
           let retryAfterStartSec: number | null = null;
           let lastPosition = getPlaybackPosition();
@@ -2134,69 +2132,68 @@ export function useAutoSync(params: {
               const comparisonSessionId = newAnalysisSessionId();
               activeSceneSessionId = comparisonSessionId;
               try {
-                if (!directMoonshine)
-                  result = await boundedNativeProbe(
-                    async () => {
-                      setReason("Detecting buffered dialogue with Silero");
-                      const detected = await matchPlaybackVad(
-                        {
-                          path: prepared.path.replace(/\\/g, "/"),
-                          cues: sourceCues
-                            .filter((cue) => isLikelyDialogueCue(cue.text))
-                            .map((cue) => [cue.start - startAt, cue.end - startAt]),
-                          sessionId: comparisonSessionId,
-                        },
-                        invoke,
-                        () => !aborted && isCurrentAutoSyncScope(scope),
-                        (diagnostic) => {
-                          void invoke("mpv_command", {
-                            cmd: [
-                              "print-text",
-                              `[harbor/subsync] silero-fit ${JSON.stringify({
-                                ...diagnostic,
-                                requestedStartSec: startAt,
-                                playbackSec: position,
-                                cueCount: sourceCues.length,
-                                currentDelaySec: snap.subDelaySec,
-                              })}`,
-                            ],
-                          }).catch(() => {});
-                        },
-                      );
-                      void invoke("mpv_command", {
-                        cmd: [
-                          "print-text",
-                          `[harbor/subsync] playback-silero=${detected === undefined ? "unsupported" : detected === null ? "no-match" : "matched"}`,
-                        ],
-                      }).catch(() => {});
-                      if (detected !== undefined) {
-                        usedSilero = detected !== null;
-                        return detected;
-                      }
-                      setReason("Comparing buffered speech with subtitle timing");
-                      return invoke<{ offsetSec: number; confidence: number } | null>(
-                        "sync_subtitle",
-                        {
-                          url: prepared.path.replace(/\\/g, "/"),
-                          headers: null,
-                          cues: sourceCues
-                            .filter((cue) => isLikelyDialogueCue(cue.text))
-                            .map((cue) => [cue.start - startAt, cue.end - startAt]),
-                          durationSec: clipSec,
-                          infoHash: null,
-                          confMin: null,
-                          mapSpec: "0:a:0",
-                          sessionId: comparisonSessionId,
-                          playbackClip: true,
-                          // The prepared WAV starts at zero; use Harbor's speech VAD.
-                          fromStart: false,
-                          reportFailures: true,
-                        },
-                      );
-                    },
-                    () => cancelNativeAnalysis(comparisonSessionId),
-                    30_000,
-                  );
+                result = await boundedNativeProbe(
+                  async () => {
+                    setReason("Detecting buffered dialogue with Silero");
+                    const detected = await matchPlaybackVad(
+                      {
+                        path: prepared.path.replace(/\\/g, "/"),
+                        cues: sourceCues
+                          .filter((cue) => isLikelyDialogueCue(cue.text))
+                          .map((cue) => [cue.start - startAt, cue.end - startAt]),
+                        sessionId: comparisonSessionId,
+                      },
+                      invoke,
+                      () => !aborted && isCurrentAutoSyncScope(scope),
+                      (diagnostic) => {
+                        void invoke("mpv_command", {
+                          cmd: [
+                            "print-text",
+                            `[harbor/subsync] silero-fit ${JSON.stringify({
+                              ...diagnostic,
+                              requestedStartSec: startAt,
+                              playbackSec: position,
+                              cueCount: sourceCues.length,
+                              currentDelaySec: snap.subDelaySec,
+                            })}`,
+                          ],
+                        }).catch(() => {});
+                      },
+                    );
+                    void invoke("mpv_command", {
+                      cmd: [
+                        "print-text",
+                        `[harbor/subsync] playback-silero=${detected === undefined ? "unsupported" : detected === null ? "no-match" : "matched"}`,
+                      ],
+                    }).catch(() => {});
+                    if (detected !== undefined) {
+                      usedSilero = detected !== null;
+                      return detected;
+                    }
+                    setReason("Comparing buffered speech with subtitle timing");
+                    return invoke<{ offsetSec: number; confidence: number } | null>(
+                      "sync_subtitle",
+                      {
+                        url: prepared.path.replace(/\\/g, "/"),
+                        headers: null,
+                        cues: sourceCues
+                          .filter((cue) => isLikelyDialogueCue(cue.text))
+                          .map((cue) => [cue.start - startAt, cue.end - startAt]),
+                        durationSec: clipSec,
+                        infoHash: null,
+                        confMin: null,
+                        mapSpec: "0:a:0",
+                        sessionId: comparisonSessionId,
+                        playbackClip: true,
+                        // The prepared WAV starts at zero; use Harbor's speech VAD.
+                        fromStart: false,
+                        reportFailures: true,
+                      },
+                    );
+                  },
+                  () => cancelNativeAnalysis(comparisonSessionId),
+                  30_000,
+                );
               } catch (error) {
                 cacheError = error;
               } finally {
@@ -2206,7 +2203,6 @@ export function useAutoSync(params: {
               if (aborted || !isCurrentAutoSyncScope(scope)) return;
               if (
                 !result &&
-                !directMoonshine &&
                 retryAfterStartSec === null &&
                 selectPlaybackRetryScene(bufferedScenes, focusSec, startAt)
               ) {
@@ -2323,25 +2319,6 @@ export function useAutoSync(params: {
                 }
               }
               if (aborted || !isCurrentAutoSyncScope(scope)) return;
-              // A timing mismatch or missing speech in one excerpt is not proof
-              // that a different, already-buffered dialogue scene cannot match.
-              // Retry once with fresh cache files; never loosen the fit gates.
-              if (
-                !result &&
-                directMoonshine &&
-                retryAfterStartSec === null &&
-                retryablePlaybackSpeechFailure(moonshineFailureCode) &&
-                selectPlaybackRetryScene(bufferedScenes, focusSec, requestedStartSec)
-              ) {
-                retryAfterStartSec = requestedStartSec;
-                moonshineFailure = null;
-                moonshineFailureCode = "none";
-                setReason("Checking another buffered dialogue excerpt with Moonshine");
-                void invoke("mpv_command", {
-                  cmd: ["print-text", "[harbor/subsync] playback-moonshine=retry-nearby-excerpt"],
-                }).catch(() => {});
-                continue;
-              }
               if (result) localReferenceFocusRef.current = { scope, positionSec: position };
               break;
             } catch (error) {
