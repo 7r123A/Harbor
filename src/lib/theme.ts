@@ -430,10 +430,10 @@ aside[data-harbor-sidebar][data-collapsed="true"]:not([aria-hidden="true"]) {
   transition-delay: 0s !important;
 }
 /* The drawer stays fixed during morphing; only the pinned rail occupies page space. */
-html:has(aside[data-harbor-sidebar]:not([aria-hidden="true"])) {
+html:not(:has([data-games-library])):has(aside[data-harbor-sidebar]:not([aria-hidden="true"])) {
   --ef-header-inset: 4.25rem;
 }
-html:has(aside[data-harbor-sidebar][data-collapsed="true"]:not([aria-hidden="true"])) {
+html:not(:has([data-games-library])):has(aside[data-harbor-sidebar][data-collapsed="true"]:not([aria-hidden="true"])) {
   --ef-rail-space: var(--ef-rail-width);
   --ef-header-inset: calc(var(--ef-rail-width) + 1rem);
 }
@@ -1145,6 +1145,11 @@ function buildElegantFinJs(): string {
   var previousCollapsed = null;
   var originalInert = false;
   var observer = new MutationObserver(syncSidebar);
+  function gamesWorkspaceActive() {
+    if (!sidebar) return false;
+    var shell = sidebar.closest("[data-harbor-shell]");
+    return !!shell && shell.hasAttribute("data-games-library");
+  }
   function gamesNavigationOpen() {
     if (!sidebar) return false;
     var shell = sidebar.closest("[data-harbor-shell]");
@@ -1184,7 +1189,10 @@ function buildElegantFinJs(): string {
       return;
     }
     var collapsed = sidebar.getAttribute("data-collapsed") === "true";
-    if (previousCollapsed !== null && previousCollapsed !== collapsed) setOpen(!collapsed);
+    if (previousCollapsed !== null && previousCollapsed !== collapsed) {
+      // The Games list shares this preference but must not toggle ElegantFin's drawer.
+      setOpen(!collapsed && !gamesWorkspaceActive());
+    }
     previousCollapsed = collapsed;
     syncAccess();
   }
