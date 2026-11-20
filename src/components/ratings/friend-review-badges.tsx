@@ -86,7 +86,7 @@ export function FriendReviewBadges({
         label=""
         details={
           <div className="text-center">
-            <HarborMark className="mx-auto mb-2 h-6 w-6 text-[#eba018]" />
+            <HarborMark className="mx-auto mb-2 h-5 w-5 text-[#eba018]" />
             <span className="block font-normal text-ink-muted">
               {t("No available ratings yet.")}
             </span>
@@ -116,14 +116,16 @@ export function FriendReviewBadges({
   return (
     <HoverTooltip
       label=""
-      mark={<HarborMark className="h-5 w-5 text-ink" />}
       details={
-        <span className="mt-1 block font-normal text-ink-muted">
-          {t("Harbor users average score")}
-          {averageScore !== null ? ` · ${averageScore.toFixed(1)}/10` : ""}
-          <br />
-          {label}
-        </span>
+        <div className="text-center">
+          <HarborMark className="mx-auto mb-2 h-5 w-5 text-[#eba018]" />
+          <span className="block font-normal text-ink-muted">
+            {t("Harbor users average score")}
+            {averageScore !== null ? ` · ${averageScore.toFixed(1)}/10` : ""}
+            <br />
+            {label}
+          </span>
+        </div>
       }
       side="top"
       align="end"
