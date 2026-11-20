@@ -5,7 +5,7 @@ import { isNaturalEnd } from "@/lib/player/playback-end";
 import type { Meta } from "@/lib/cinemeta";
 import type { PickerOptions, PlayEpisode, PlayerSrc } from "@/lib/view";
 import { queueSessionIndex } from "@/lib/queue-session";
-import { getSleepAtEnd, queueRemove, setSleepAtEnd, type QueueItem } from "@/lib/queue";
+import { getSleepAtEnd, queueArchive, setSleepAtEnd, type QueueItem } from "@/lib/queue";
 import { completedEpisodeSource } from "@/lib/download/completed-episode-source";
 
 const STUB_MAX_SEC = 150;
@@ -41,6 +41,8 @@ export function useQueueAdvance(params: {
   const firedForRef = useRef<string | null>(null);
   const latestSrcRef = useRef(src);
   latestSrcRef.current = src;
+  const latestQueueRef = useRef(queue);
+  latestQueueRef.current = queue;
   const advanceRevisionRef = useRef(0);
   useEffect(
     () => () => {
@@ -72,13 +74,18 @@ export function useQueueAdvance(params: {
     // Capture the successor before removing the completed item.
     const nextItem = queueActive ? queue[currentIndex + 1] : undefined;
 
-    if (queueActive) queueRemove(currentItem.id);
+    if (queueActive && !queueArchive(currentItem.id, "completed")) {
+      firedForRef.current = null;
+      return;
+    }
 
     if (queueActive) {
       if (nextItem) {
         const request = ++advanceRevisionRef.current;
         const stillCurrent = () =>
-          advanceRevisionRef.current === request && latestSrcRef.current === src;
+          advanceRevisionRef.current === request &&
+          latestSrcRef.current === src &&
+          latestQueueRef.current.some((item) => item.id === nextItem.id);
         const openNextSource = () => {
           if (!stillCurrent()) return;
           openPicker(nextItem.meta, nextItem.episode, {

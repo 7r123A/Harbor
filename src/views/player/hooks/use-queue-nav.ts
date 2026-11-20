@@ -1,6 +1,6 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { Meta } from "@/lib/cinemeta";
-import { useQueue } from "@/lib/queue";
+import { queueArchive, useQueue } from "@/lib/queue";
 import { queueSessionIndex } from "@/lib/queue-session";
 import type { PickerOptions, PlayEpisode, PlayerSrc } from "@/lib/view";
 
@@ -25,18 +25,48 @@ export function useQueueNav(params: {
     openPicker,
   } = params;
   const queue = useQueue();
+  const queueTransitionItemIdRef = useRef<string | null>(null);
+  const isQueueTransitionActive = () =>
+    queueTransitionItemIdRef.current !== null &&
+    queueTransitionItemIdRef.current === src.queueItemId;
+
+  useEffect(() => {
+    if (queueTransitionItemIdRef.current !== src.queueItemId) {
+      queueTransitionItemIdRef.current = null;
+    }
+  }, [src.queueItemId]);
+
   const currentQueueIdx = queueSessionIndex(src, queue);
   const queueNav = queueDrivesNav && !isLiveLike && currentQueueIdx >= 0;
+  const detachedQueueSource =
+    queueDrivesNav && !isLiveLike && src.queueItemId != null && currentQueueIdx < 0;
+  const currentQueueItem = queueNav ? (queue[currentQueueIdx] ?? null) : null;
   const queueNextItem = queueNav ? (queue[currentQueueIdx + 1] ?? null) : null;
   const queuePrevItem =
     queueNav && currentQueueIdx > 0 ? (queue[currentQueueIdx - 1] ?? null) : null;
 
-  const hasNextEpisodeNow = queueNav ? !!queueNextItem : canChangeEpisode && !!adjacent.next;
-  const hasPrevEpisodeNow = queueNav ? !!queuePrevItem : canChangeEpisode && !!adjacent.prev;
+  const queueTransitionActive = isQueueTransitionActive() || detachedQueueSource;
+  const hasNextEpisodeNow = queueTransitionActive
+    ? false
+    : queueNav
+      ? !!queueNextItem
+      : canChangeEpisode && !!adjacent.next;
+  const hasPrevEpisodeNow = queueTransitionActive
+    ? false
+    : queueNav
+      ? !!queuePrevItem
+      : canChangeEpisode && !!adjacent.prev;
 
   const playNext = () => {
+    if (isQueueTransitionActive() || detachedQueueSource) return;
+
     if (queueNav) {
-      if (queueNextItem) {
+      if (currentQueueItem && queueNextItem) {
+        queueTransitionItemIdRef.current = currentQueueItem.id;
+        if (!queueArchive(currentQueueItem.id, "skipped")) {
+          queueTransitionItemIdRef.current = null;
+          return;
+        }
         openPicker(queueNextItem.meta, queueNextItem.episode, {
           queueItemId: queueNextItem.id,
           autoPlay: instantPlay,
@@ -52,6 +82,8 @@ export function useQueueNav(params: {
   };
 
   const playPrev = () => {
+    if (isQueueTransitionActive() || detachedQueueSource) return;
+
     if (queueNav) {
       if (queuePrevItem) {
         openPicker(queuePrevItem.meta, queuePrevItem.episode, {

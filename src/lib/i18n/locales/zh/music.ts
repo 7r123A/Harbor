@@ -230,7 +230,7 @@ const music: Record<string, string> = {
   ...musicNowPlaying,
   ...musicVideos,
   ...musicSpotifyLibrary,
-  "music.card.addToQueue": "添加到待播列表",
+  "music.card.addToQueue": "添加到收听队列",
   "music.card.addToPlaylist": "添加到歌单",
   "music.artwork.save": "保存封面",
   "music.watch.back": "返回音乐",

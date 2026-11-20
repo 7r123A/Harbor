@@ -240,7 +240,7 @@ export function CastModal({
                 type="button"
                 onClick={openQueueView}
                 className="relative flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white/80 transition-colors hover:bg-white/20 hover:text-white"
-                aria-label={t("Queue")}
+                aria-label={t("Watching queue")}
               >
                 <ListVideo size={19} strokeWidth={2.2} />
                 {queue.length > 0 && (

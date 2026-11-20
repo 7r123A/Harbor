@@ -240,7 +240,7 @@ const music: Record<string, string> = {
   ...musicNowPlaying,
   ...musicVideos,
   ...musicSpotifyLibrary,
-  "music.card.addToQueue": "Aggiungi alla coda",
+  "music.card.addToQueue": "Aggiungi alla coda di ascolto",
   "music.card.addToPlaylist": "Aggiungi a una playlist",
   "music.artwork.save": "Salva copertina",
   "music.watch.back": "Torna alla musica",

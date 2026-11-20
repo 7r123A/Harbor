@@ -231,7 +231,7 @@ const music: Record<string, string> = {
   ...musicNowPlaying,
   ...musicVideos,
   ...musicSpotifyLibrary,
-  "music.card.addToQueue": "Thêm vào hàng chờ",
+  "music.card.addToQueue": "Thêm vào hàng đợi nghe",
   "music.card.addToPlaylist": "Thêm vào danh sách phát",
   "music.artwork.save": "Lưu ảnh bìa",
   "music.watch.back": "Quay lại âm nhạc",

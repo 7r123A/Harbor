@@ -237,7 +237,7 @@ const music: Record<string, string> = {
   ...musicNowPlaying,
   ...musicVideos,
   ...musicSpotifyLibrary,
-  "music.card.addToQueue": "Sıraya ekle",
+  "music.card.addToQueue": "Dinleme kuyruğuna ekle",
   "music.card.addToPlaylist": "Çalma listesine ekle",
   "music.artwork.save": "Kapak görselini kaydet",
   "music.watch.back": "Müziğe dön",

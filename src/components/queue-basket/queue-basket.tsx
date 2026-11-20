@@ -1,13 +1,25 @@
-import { ListVideo, Play, Trash2, X } from "lucide-react";
+import { ArrowLeft, History, ListVideo, Play, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useStartQueue } from "@/hooks/use-start-queue";
 import { useT } from "@/lib/i18n";
-import { queueClear, queueRemove, queueReorder, useQueue, useQueueResumeItem } from "@/lib/queue";
+import {
+  queueClear,
+  queueHistoryClear,
+  queueRemove,
+  queueReorder,
+  type QueueHistoryItem,
+  useQueue,
+  useQueueHistory,
+  useQueueResumeItem,
+} from "@/lib/queue";
 import "./queue-basket.css";
 import { useQueueSurface } from "@/hooks/use-queue-surface";
 import { QueueClearConfirm } from "./queue-clear-confirm";
 import { useQueueGesture, type QueueDragPoint } from "./use-queue-gesture";
+import { useSettings } from "@/lib/settings";
+import { usePlayerNavigation } from "@/lib/view";
+import { QueueHistoryPanel } from "./queue-history-panel";
 
 export function QueueBasket() {
   const visible = useQueueSurface();
@@ -18,23 +30,43 @@ export function QueueBasket() {
 function QueueBasketContent() {
   const t = useT();
   const queue = useQueue();
+  const history = useQueueHistory();
+  const { settings } = useSettings();
+  const { openPicker } = usePlayerNavigation();
   const resumeItem = useQueueResumeItem();
   const hasStartedQueue = resumeItem !== null;
   const previewPoster = resumeItem?.meta.poster;
   const [failedPoster, setFailedPoster] = useState<string | null>(null);
   const startQueue = useStartQueue();
   const [open, setOpen] = useState(false);
-  const [confirmClear, setConfirmClear] = useState(false);
+  const [panel, setPanel] = useState<"queue" | "history">("queue");
+  const [confirmClear, setConfirmClear] = useState<"queue" | "history" | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const focusCloseAfterConfirmRef = useRef(false);
+  const wasOpenRef = useRef(false);
   const titleId = useId();
   const dialogId = useId();
   const reorderHintId = useId();
   const [announcement, setAnnouncement] = useState("");
   const hasItems = queue.length > 0;
+  const hasHistory = history.length > 0;
   const listRef = useRef<HTMLOListElement>(null);
   const rowRefs = useRef(new Map<string, HTMLLIElement>());
   const queueRef = useRef(queue);
   queueRef.current = queue;
+
+  const playHistoryItem = useCallback(
+    (item: QueueHistoryItem) => {
+      setOpen(false);
+      openPicker(item.meta, item.episode, {
+        autoPlay: settings.instantPlay,
+        resume: true,
+      });
+    },
+    [openPicker, settings.instantPlay],
+  );
 
   const [dragId, setDragId] = useState<string | null>(null);
   const dragRef = useRef<{
@@ -274,7 +306,7 @@ function QueueBasketContent() {
   };
 
   const gesture = useQueueGesture({
-    enabled: open && hasItems,
+    enabled: open && panel === "queue" && hasItems,
     version: queue,
     listRef,
     start: startDrag,
@@ -284,8 +316,23 @@ function QueueBasketContent() {
   });
 
   useEffect(() => {
-    if (!open || !hasItems) cancelDrag();
-  }, [open, hasItems, cancelDrag]);
+    if (!open || panel !== "queue" || !hasItems) cancelDrag();
+  }, [open, panel, hasItems, cancelDrag]);
+
+  useEffect(() => {
+    if (!open) {
+      focusCloseAfterConfirmRef.current = false;
+      setPanel("queue");
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || panel !== "queue" || confirmClear !== null || !focusCloseAfterConfirmRef.current)
+      return;
+
+    focusCloseAfterConfirmRef.current = false;
+    closeButtonRef.current?.focus({ preventScroll: true });
+  }, [open, panel, confirmClear]);
 
   useEffect(() => {
     return () => {
@@ -299,7 +346,8 @@ function QueueBasketContent() {
   useEffect(() => {
     if (!hasItems) {
       setOpen(false);
-      setConfirmClear(false);
+      setPanel("queue");
+      setConfirmClear(null);
       return;
     }
 
@@ -310,7 +358,21 @@ function QueueBasketContent() {
     if (!open && dialog.open) dialog.close();
   }, [open, hasItems]);
 
+  useEffect(() => {
+    const wasOpen = wasOpenRef.current;
+    wasOpenRef.current = open;
+
+    if (wasOpen && !open && hasItems) {
+      triggerRef.current?.focus({ preventScroll: true });
+    }
+  }, [open, hasItems]);
+
   if (!hasItems) return null;
+
+  const queueCountLabel = t(
+    queue.length === 1 ? "{count} item in queue" : "{count} items in queue",
+    { count: queue.length },
+  );
 
   const iconButton =
     "flex size-9 shrink-0 items-center justify-center rounded-lg " +
@@ -321,12 +383,12 @@ function QueueBasketContent() {
   return createPortal(
     <>
       <button
+        ref={triggerRef}
         type="button"
+        hidden={open}
         onClick={() => setOpen(true)}
-        title={t("Your queue")}
-        aria-label={`${t("Your queue")} · ${t("{count} in queue", {
-          count: queue.length,
-        })}`}
+        title={t("Watching queue")}
+        aria-label={`${t("Watching queue")} · ${queueCountLabel}`}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={dialogId}
@@ -368,167 +430,219 @@ function QueueBasketContent() {
           setOpen(false);
         }}
         onClose={() => setOpen(false)}
+        onClick={(event) => {
+          if (event.target !== event.currentTarget) return;
+
+          gesture.cancel();
+          setOpen(false);
+        }}
         className="queue-basket-dialog rounded-2xl border border-edge bg-canvas p-0 text-ink shadow-2xl"
       >
-        <div className="flex max-h-[min(80dvh,680px)] flex-col">
+        <div className="queue-basket-panel">
           <header className="flex items-center justify-between gap-4 border-b border-edge px-5 py-4">
             <div>
               <h2 id={titleId} className="text-lg font-semibold">
-                {t("Your queue")}
+                {panel === "history" ? t("Watching history") : t("Watching queue")}
               </h2>
+
               <p className="mt-1 text-sm text-ink-subtle">
-                {t("{count} in queue", { count: queue.length })}
+                {panel === "history"
+                  ? t("{count} in history", { count: history.length })
+                  : queueCountLabel}
               </p>
             </div>
-            <button
-              type="button"
-              autoFocus
-              className={iconButton}
-              aria-label={t("Close")}
-              onClick={() => setOpen(false)}
-            >
-              <X size={20} aria-hidden="true" />
-            </button>
+
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className={iconButton}
+                disabled={panel === "queue" && !hasHistory}
+                title={panel === "history" ? t("Back to watching queue") : t("Watching history")}
+                aria-label={
+                  panel === "history" ? t("Back to watching queue") : t("Watching history")
+                }
+                onClick={() => {
+                  gesture.cancel();
+                  setPanel(panel === "history" ? "queue" : "history");
+                }}
+              >
+                {panel === "history" ? (
+                  <ArrowLeft size={19} className="rtl:rotate-180" aria-hidden="true" />
+                ) : (
+                  <History size={19} aria-hidden="true" />
+                )}
+              </button>
+
+              <button
+                ref={closeButtonRef}
+                type="button"
+                autoFocus
+                className={iconButton}
+                aria-label={t("Close")}
+                onClick={() => setOpen(false)}
+              >
+                <X size={20} aria-hidden="true" />
+              </button>
+            </div>
           </header>
 
-          <p id={reorderHintId} className="sr-only">
-            {t("Move up")}: Alt + ↑. {t("Move down")}: Alt + ↓.
-          </p>
-          <p aria-live="polite" aria-atomic="true" className="sr-only">
-            {announcement}
-          </p>
-          <ol ref={listRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
-            {queue.map((item, index) => (
-              <li
-                key={item.id}
-                tabIndex={0}
-                aria-describedby={reorderHintId}
-                aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-                data-queue-item-id={item.id}
-                onPointerDown={(event) => gesture.onPointerDown(event, item.id)}
-                onPointerMove={gesture.onPointerMove}
-                onPointerUp={gesture.onPointerUp}
-                onPointerCancel={gesture.onPointerCancel}
-                onLostPointerCapture={gesture.onPointerCancel}
-                onContextMenu={(event) => event.preventDefault()}
-                onKeyDown={(event) => {
-                  if (event.target !== event.currentTarget) return;
-                  if (event.key === "Escape" && dragRef.current) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    gesture.cancel();
-                    return;
-                  }
-                  if (
-                    !event.altKey ||
-                    event.ctrlKey ||
-                    event.metaKey ||
-                    event.shiftKey ||
-                    (event.key !== "ArrowUp" && event.key !== "ArrowDown")
-                  )
-                    return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  gesture.cancel();
-                  const target = index + (event.key === "ArrowUp" ? -1 : 1);
-                  if (target < 0 || target >= queue.length) return;
-                  const ids = queue.map((entry) => entry.id);
-                  [ids[index], ids[target]] = [ids[target], ids[index]];
-                  queueReorder(ids);
-                  setAnnouncement(`${item.meta.name}: ${target + 1} / ${queue.length}`);
-                  event.currentTarget.scrollIntoView({ block: "nearest" });
-                }}
-                ref={(node) => {
-                  if (node) rowRefs.current.set(item.id, node);
-                  else rowRefs.current.delete(item.id);
-                }}
-                data-dragging={dragId === item.id || undefined}
-                className="queue-basket-row relative flex items-center gap-3 rounded-xl bg-raised p-3 cursor-grab select-none touch-pan-y active:cursor-grabbing focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-              >
-                <span className="w-5 shrink-0 text-center text-xs text-ink-subtle">
-                  {index + 1}
-                </span>
+          {panel === "history" ? (
+            <QueueHistoryPanel
+              history={history}
+              onPlay={playHistoryItem}
+              onClear={() => setConfirmClear("history")}
+            />
+          ) : (
+            <>
+              <p id={reorderHintId} className="sr-only">
+                {t("Move up")}: Alt + ↑. {t("Move down")}: Alt + ↓.
+              </p>
+              <p aria-live="polite" aria-atomic="true" className="sr-only">
+                {announcement}
+              </p>
+              <ol ref={listRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+                {queue.map((item, index) => (
+                  <li
+                    key={item.id}
+                    tabIndex={0}
+                    aria-describedby={reorderHintId}
+                    aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+                    data-queue-item-id={item.id}
+                    onPointerDown={(event) => gesture.onPointerDown(event, item.id)}
+                    onPointerMove={gesture.onPointerMove}
+                    onPointerUp={gesture.onPointerUp}
+                    onPointerCancel={gesture.onPointerCancel}
+                    onLostPointerCapture={gesture.onPointerCancel}
+                    onContextMenu={(event) => event.preventDefault()}
+                    onKeyDown={(event) => {
+                      if (event.target !== event.currentTarget) return;
+                      if (event.key === "Escape" && dragRef.current) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        gesture.cancel();
+                        return;
+                      }
+                      if (
+                        !event.altKey ||
+                        event.ctrlKey ||
+                        event.metaKey ||
+                        event.shiftKey ||
+                        (event.key !== "ArrowUp" && event.key !== "ArrowDown")
+                      )
+                        return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      gesture.cancel();
+                      const target = index + (event.key === "ArrowUp" ? -1 : 1);
+                      if (target < 0 || target >= queue.length) return;
+                      const ids = queue.map((entry) => entry.id);
+                      [ids[index], ids[target]] = [ids[target], ids[index]];
+                      queueReorder(ids);
+                      setAnnouncement(`${item.meta.name}: ${target + 1} / ${queue.length}`);
+                      event.currentTarget.scrollIntoView({ block: "nearest" });
+                    }}
+                    ref={(node) => {
+                      if (node) rowRefs.current.set(item.id, node);
+                      else rowRefs.current.delete(item.id);
+                    }}
+                    data-dragging={dragId === item.id || undefined}
+                    className="queue-basket-row relative flex items-center gap-3 rounded-xl bg-raised p-3 cursor-grab select-none touch-pan-y active:cursor-grabbing focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  >
+                    <span className="w-5 shrink-0 text-center text-xs text-ink-subtle">
+                      {index + 1}
+                    </span>
 
-                <div className="h-16 w-11 shrink-0 overflow-hidden rounded-md bg-white/5">
-                  {item.meta.poster ? (
-                    <img
-                      src={item.meta.poster}
-                      alt=""
-                      loading="lazy"
-                      className="h-full w-full object-cover"
-                      draggable={false}
-                    />
-                  ) : (
-                    <ListVideo
-                      className="m-auto h-full text-ink-subtle"
-                      size={20}
-                      aria-hidden="true"
-                    />
-                  )}
-                </div>
+                    <div className="h-16 w-11 shrink-0 overflow-hidden rounded-md bg-white/5">
+                      {item.meta.poster ? (
+                        <img
+                          src={item.meta.poster}
+                          alt=""
+                          loading="lazy"
+                          className="h-full w-full object-cover"
+                          draggable={false}
+                        />
+                      ) : (
+                        <ListVideo
+                          className="m-auto h-full text-ink-subtle"
+                          size={20}
+                          aria-hidden="true"
+                        />
+                      )}
+                    </div>
 
-                <div className="min-w-0 flex-1">
-                  <p className="line-clamp-2 text-sm font-semibold">{item.meta.name}</p>
-                  {item.episode && (
-                    <p className="mt-1 line-clamp-2 text-xs text-ink-subtle">
-                      {`S${item.episode.imdbSeason ?? item.episode.season} · E${item.episode.imdbEpisode ?? item.episode.episode}`}
-                      {item.episode.name ? ` · ${item.episode.name}` : ""}
-                    </p>
-                  )}
-                </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="line-clamp-2 text-sm font-semibold">{item.meta.name}</p>
+                      {item.episode && (
+                        <p className="mt-1 line-clamp-2 text-xs text-ink-subtle">
+                          {`S${item.episode.imdbSeason ?? item.episode.season} · E${item.episode.imdbEpisode ?? item.episode.episode}`}
+                          {item.episode.name ? ` · ${item.episode.name}` : ""}
+                        </p>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      className={iconButton}
+                      aria-label={`${t("Remove from watching queue")}: ${item.meta.name}`}
+                      onClick={() => {
+                        queueRemove(item.id);
+                        if (queue.length > 1) {
+                          dialogRef.current?.focus();
+                        }
+                      }}
+                    >
+                      <Trash2 size={17} aria-hidden="true" />
+                    </button>
+                  </li>
+                ))}
+              </ol>
+
+              <footer className="flex flex-col gap-2 border-t border-edge p-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (startQueue({ resume: hasStartedQueue })) {
+                      setOpen(false);
+                    }
+                  }}
+                  className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-ink px-4 py-3 font-semibold text-canvas transition-opacity hover:opacity-85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                >
+                  <Play size={18} fill="currentColor" aria-hidden="true" />
+                  {hasStartedQueue ? t("Continue your queue") : t("Start your queue")}
+                </button>
 
                 <button
                   type="button"
-                  className={iconButton}
-                  aria-label={`${t("Remove from queue")}: ${item.meta.name}`}
                   onClick={() => {
-                    queueRemove(item.id);
-                    if (queue.length > 1) {
-                      dialogRef.current?.focus();
-                    }
+                    gesture.cancel();
+                    setConfirmClear("queue");
                   }}
+                  className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
                 >
-                  <Trash2 size={17} aria-hidden="true" />
+                  <Trash2 size={16} aria-hidden="true" />
+                  {t("Clear your queue")}
                 </button>
-              </li>
-            ))}
-          </ol>
-
-          <footer className="flex flex-col gap-2 border-t border-edge p-4">
-            <button
-              type="button"
-              onClick={() => {
-                if (startQueue({ resume: hasStartedQueue })) {
-                  setOpen(false);
-                }
-              }}
-              className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-ink px-4 py-3 font-semibold text-canvas transition-opacity hover:opacity-85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-            >
-              <Play size={18} fill="currentColor" aria-hidden="true" />
-              {hasStartedQueue ? t("Continue your queue") : t("Start your queue")}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                gesture.cancel();
-                setConfirmClear(true);
-              }}
-              className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-            >
-              <Trash2 size={16} aria-hidden="true" />
-              {t("Clear your queue")}
-            </button>
-          </footer>
+              </footer>
+            </>
+          )}
         </div>
       </dialog>
       {confirmClear && (
         <QueueClearConfirm
-          onCancel={() => setConfirmClear(false)}
+          target={confirmClear}
+          onCancel={() => setConfirmClear(null)}
           onConfirm={() => {
-            setConfirmClear(false);
-            setOpen(false);
+            if (confirmClear === "history") {
+              focusCloseAfterConfirmRef.current = true;
+              queueHistoryClear();
+              setConfirmClear(null);
+              setPanel("queue");
+              return;
+            }
+
             queueClear();
+            setConfirmClear(null);
+            setOpen(false);
           }}
         />
       )}

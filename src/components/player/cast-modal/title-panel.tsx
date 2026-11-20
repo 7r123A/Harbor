@@ -249,7 +249,7 @@ export function TitlePanel({
                     ) : (
                       <Plus size={17} strokeWidth={2.4} />
                     )}
-                    {queued ? t("Queued") : t("Queue")}
+                    {queued ? t("In your watching queue") : t("Watching queue")}
                   </button>
                 )}
               </div>
