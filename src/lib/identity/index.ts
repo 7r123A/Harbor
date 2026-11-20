@@ -102,18 +102,31 @@ export async function identityStatus(): Promise<IdentityStatus | null> {
   return invokeIdentity<IdentityStatus>("identity_status");
 }
 
+/** Fingerprint the installed pack, rather than its response's ready boolean.
+ * A routine startup freshness check returns ready without replacing anything.
+ */
+function sameInstalledPack(a: IdentityStatus, b: IdentityStatus): boolean {
+  return a.ready === b.ready && a.schema === b.schema &&
+    a.packVersion === b.packVersion && a.upstreamSha256 === b.upstreamSha256 &&
+    a.builtAt === b.builtAt && a.windows === b.windows;
+}
+
 /** Download and import the latest pack, or return the current status. */
 export async function clearIdentityData(): Promise<IdentityStatus | null> {
   if (!identityEnabled()) return null;
   const status = await invokeIdentity<IdentityStatus>("identity_clear_data");
-  clearIdentityCache();
+  if (status && !status.ready) clearIdentityCache();
   return status;
 }
 
 export async function ensureIdentityPack(force = false): Promise<IdentityStatus | null> {
   if (!identityEnabled()) return null;
+  const before = await invokeIdentity<IdentityStatus>("identity_status");
   const status = await invokeIdentity<IdentityStatus>("identity_ensure_pack", { force });
-  if (status?.ready) clearIdentityCache();
+  // Only a demonstrated install/swap may invalidate the persisted card keys.
+  // When the status read is unavailable, do not guess that a fresh response
+  // means the pack changed and split existing Continue Watching groups.
+  if (before && status && !sameInstalledPack(before, status)) clearIdentityCache();
   return status;
 }
 

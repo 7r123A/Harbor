@@ -91,6 +91,11 @@ function writeAll(all: Record<string, Entry>, key: string, acknowledged = false)
   } catch (error) {
     parsedResume.delete(key);
     if (acknowledged) throw error;
+  } finally {
+    // writeAll updates the cached source object in place. A previously
+    // assembled shared+private view would otherwise retain its old winner
+    // through later saves and even clears until an unrelated storage update.
+    mergedResumeCache.clear();
   }
 }
 
@@ -115,15 +120,26 @@ function mergedReadKeys(ownerId?: string): string[] {
 }
 
 /** Active local profile id without pulling the settings/roster scope helpers in. */
+let cachedProfileRosterRaw: string | null | undefined;
+let cachedProfileRosterId = "";
+
 function activeResumeProfileId(ownerId?: string): string {
   if (ownerId) return ownerId;
   try {
-    const roster = JSON.parse(localStorage.getItem("harbor.profiles.v1") ?? "null") as {
+    const raw = localStorage.getItem("harbor.profiles.v1");
+    if (raw === cachedProfileRosterRaw) return cachedProfileRosterId;
+    const roster = JSON.parse(raw ?? "null") as {
       activeId?: string;
       profiles?: Array<{ id?: string; isPrimary?: boolean }>;
     } | null;
-    return roster?.activeId ?? roster?.profiles?.find((profile) => profile?.isPrimary)?.id ?? "";
+    cachedProfileRosterRaw = raw;
+    cachedProfileRosterId = roster?.activeId ??
+      roster?.profiles?.find((profile) => profile?.isPrimary)?.id ?? "";
+    return cachedProfileRosterId;
   } catch {
+    // A transient storage failure must not pin a stale profile identity.
+    cachedProfileRosterRaw = undefined;
+    cachedProfileRosterId = "";
     return "";
   }
 }
@@ -296,7 +312,9 @@ export function clearAllNuvioResume(): void {
       localStorage.removeItem(k);
       parsedResume.delete(k);
     }
-  } catch {}
+  } catch {} finally {
+    mergedResumeCache.clear();
+  }
 }
 
 export function clearAllResumeForProfile(profileId?: string): void {
@@ -308,7 +326,9 @@ export function clearAllResumeForProfile(profileId?: string): void {
     }
     localStorage.removeItem(KEY);
     parsedResume.delete(KEY);
-  } catch {}
+  } catch {} finally {
+    mergedResumeCache.clear();
+  }
 }
 
 export function clearResume(

@@ -90,3 +90,20 @@ test("fetchAnilistAiringSchedule returns a numeric episode map", async () => {
   ).fetchAnilistAiringSchedule(204389);
   assert.deepEqual(schedule, { 8: E8, 9: E9 });
 });
+
+
+test("season-zero specials keep their own airdate when regular S1E1 is rescheduled", () => {
+  const api = load();
+  const episodes = [
+    { season: 0, episode: 1, airDate: "2000-01-01T00:00:00.000Z" },
+    { season: 1, episode: 1, airDate: "2001-01-01T00:00:00.000Z" },
+  ];
+  api.applyAiringSchedule(episodes, { 1: E8 });
+  assert.equal(episodes[0].airDate, "2000-01-01T00:00:00.000Z");
+  assert.equal(episodes[1].airDate, new Date(E8 * 1000).toISOString());
+});
+
+test("anime detail's Kitsu airdate rewrite also excludes specials", () => {
+  const detail = readFileSync("src/lib/providers/anime-detail.ts", "utf8");
+  assert.match(detail, /if \(!Number\.isInteger\(episode\.seasonNumber\) \|\| episode\.seasonNumber <= 0\) continue;/);
+});

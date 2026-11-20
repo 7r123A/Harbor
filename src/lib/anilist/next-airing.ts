@@ -117,6 +117,9 @@ export function applyAiringSchedule<
   );
   if (seasons.size > 1) return;
   for (const episode of episodes) {
+    // Season-zero specials can share episode numbers with the regular cour,
+    // but must never inherit that cour's release date.
+    if (!Number.isInteger(episode.season) || episode.season <= 0) continue;
     const airingAt = schedule[episode.episode];
     if (Number.isFinite(airingAt) && airingAt > 0) {
       episode.airDate = new Date(airingAt * 1000).toISOString();

@@ -596,6 +596,8 @@ async function applyAnilistAiringDates(episodes: KitsuEpisode[], kitsuId: number
   const schedule = await fetchAnilistAiringSchedule(anilistId).catch(() => null);
   if (!schedule) return;
   for (const episode of episodes) {
+    // S0 specials are outside the regular AniList episode sequence.
+    if (!Number.isInteger(episode.seasonNumber) || episode.seasonNumber <= 0) continue;
     const airingAt = schedule[episode.number];
     if (Number.isFinite(airingAt) && airingAt > 0) {
       episode.airdate = new Date(airingAt * 1000).toISOString();

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 
-import { clearIdentityCache, identifyBatch, identityBundle } from "../src/lib/identity/index.ts";
+import {
+  clearIdentityCache, clearIdentityData, ensureIdentityPack, identifyBatch, identityBundle,
+} from "../src/lib/identity/index.ts";
+import { identityCardKey, warmIdentityCards } from "../src/lib/identity/card-grouping.ts";
 import { setIdentityInvoker } from "../src/lib/identity/client.ts";
 import { resetIdentityFlags, setIdentityFlags } from "../src/lib/identity/flags.ts";
 import {
@@ -100,4 +104,73 @@ test("shadow observations are bounded and never mutate behavior", () => {
   const log = identityShadowLog();
   assert.equal(log.length, 100);
   assert.equal(log[0]?.at, 20);
+});
+
+
+test("routine fresh-pack check preserves card-group keys; a real pack replacement invalidates them", async () => {
+  reset();
+  setIdentityFlags({ pack: true, cards: true });
+  const base = {
+    ready: true, dbBytes: 123456, packVersion: "pack-a", upstreamSha256: "hash-a",
+    builtAt: 10_000, entries: 250, windows: 75, schema: 1,
+  };
+  let installed = base;
+  let incoming = base;
+  const seen: string[] = [];
+  setIdentityInvoker(async (command: string, args: any) => {
+    seen.push(command);
+    if (command === "identity_status") return installed;
+    if (command === "identity_ensure_pack") {
+      installed = incoming;
+      return installed;
+    }
+    if (command === "identity_card_hints") return args.ids.map((id: string) => ({
+      id, entry: 1, title: "JoJo", mediaType: "TV",
+      cardKey: "tvdb:262954", tvdb: 262954, tmdb: 45790,
+      season: 1, offset: 0, provisional: false,
+    }));
+    throw new Error(`unexpected identity command ${command}`);
+  });
+  await warmIdentityCards([{ _id: "kitsu:49847" }]);
+  assert.equal(identityCardKey("kitsu:49847"), "tvdb:262954");
+  assert.equal((await ensureIdentityPack(false))?.ready, true);
+  assert.equal(identityCardKey("kitsu:49847"), "tvdb:262954",
+    "ready means the pack is usable, not necessarily replaced");
+  assert.deepEqual(seen.slice(-2), ["identity_status", "identity_ensure_pack"]);
+
+  incoming = { ...base, packVersion: "pack-b", upstreamSha256: "hash-b", builtAt: 20_000 };
+  await ensureIdentityPack(true);
+  assert.equal(identityCardKey("kitsu:49847"), null,
+    "a confirmed install must clear stale provider-show grouping keys");
+  reset();
+});
+
+
+test("identity pack removal serializes behind the same import lock as refresh", () => {
+  const source = readFileSync(new URL("../src-tauri/src/identity/commands.rs", import.meta.url), "utf8");
+  assert.match(source, /pub async fn identity_clear_data\(/);
+  assert.match(source,
+    /pub async fn identity_clear_data\([\s\S]*?let _import = state\.import\.lock\(\)\.await;[\s\S]*?state\s*\.conn\s*\.lock/);
+  assert.match(source,
+    /pub async fn identity_ensure_pack\([\s\S]*?let _import = state\.import\.lock\(\)\.await;/);
+});
+
+
+test("failed pack removal never invalidates still-installed card identities", async () => {
+  reset();
+  setIdentityFlags({ pack: true, cards: true });
+  setIdentityInvoker(async (command: string, args: any) => {
+    if (command === "identity_card_hints") return args.ids.map((id: string) => ({
+      id, entry: 1, title: "JoJo", mediaType: "TV",
+      cardKey: "tvdb:262954", tvdb: 262954, tmdb: 45790,
+      season: 1, offset: 0, provisional: false,
+    }));
+    if (command === "identity_clear_data") return null;
+    throw new Error(`unexpected identity command ${command}`);
+  });
+  await warmIdentityCards([{ _id: "kitsu:49847" }]);
+  assert.equal(identityCardKey("kitsu:49847"), "tvdb:262954");
+  assert.equal(await clearIdentityData(), null);
+  assert.equal(identityCardKey("kitsu:49847"), "tvdb:262954");
+  reset();
 });

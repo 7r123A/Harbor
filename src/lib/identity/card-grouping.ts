@@ -1,3 +1,4 @@
+import { flattenCwSourceMembers } from "@/lib/cw-members";
 import { fetchCardHints } from "./hints";
 import { identityEnabled, identityFlags } from "./flags";
 import type { IdentityCardHint } from "./types";
@@ -204,7 +205,7 @@ export function groupCwCards<T extends CardRow>(items: T[]): T[] {
     entries.push({
       item: {
         ...representative.row,
-        cwMembers: members.map((member) => member.row),
+        cwMembers: flattenCwSourceMembers(members.map((member) => member.row)),
       } as T,
       order: representative.order,
     });

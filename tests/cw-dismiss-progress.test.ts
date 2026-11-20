@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
 import { dedupeCwItems } from "../src/lib/cw-dedupe";
+import { flattenCwSourceMembers } from "../src/lib/cw-members.ts";
 import { resolvedEpisodeCoords as realEpisodeCoords, type LibraryItem } from "../src/lib/stremio";
 
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -81,6 +82,7 @@ function harness(seed?: string, onChange = () => {}, options: { nuvio?: boolean 
   const key = (id: string, s?: number, e?: number) => `${id}|${s}|${e}`;
   const mocks: Record<string, unknown> = {
     "./cw-profile": { privateCwProfileId: () => privateProfile },
+    "./cw-members": { flattenCwSourceMembers },
     react: {
       useSyncExternalStore: (subscribe: (notify: () => void) => () => void) => {
         subscribe(onChange);

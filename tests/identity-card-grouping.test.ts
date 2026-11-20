@@ -8,6 +8,8 @@ import {
   warmIdentityCards,
 } from "../src/lib/identity/card-grouping.ts";
 import { resetIdentityFlags, setIdentityFlags } from "../src/lib/identity/flags.ts";
+import { flattenCwSourceMembers } from "../src/lib/cw-members.ts";
+import { hookHarness } from "./helpers/hook-harness.ts";
 
 const rows = [
   { _id: "mal:14719", state: { lastWatched: "2020-01-01T00:00:00Z" } },
@@ -189,4 +191,91 @@ test("representative uses the newest member checkpoint, not just the visible row
   const grouped = groupCwCards([olderButDedupedNewest, other]);
   assert.equal(grouped.length, 1);
   assert.equal(grouped[0]?._id, "kitsu:100", "newest deduped member keeps the card at its slot");
+});
+
+test("a franchise group flattens already-merged local and tracker checkpoints without duplicates", async () => {
+  reset();
+  setIdentityFlags({ pack: true, cards: true });
+  mockHints();
+  const local = {
+    _id: "mal:14719", local: true,
+    state: { season: 6, episode: 1, video_id: "kitsu:49847:1", lastWatched: "2026-11-18T20:00:00Z" },
+  };
+  const tracker = {
+    _id: "mal:14719", external: "trakt",
+    state: { season: 6, episode: 1, video_id: "kitsu:49847:1", lastWatched: "2026-11-18T21:00:00Z" },
+    providerPlaybackIds: { trakt: "playback-7" },
+  };
+  const native = {
+    _id: "kitsu:49847",
+    state: { season: 6, episode: 1, video_id: "kitsu:49847:1", lastWatched: "2026-11-19T20:00:00Z" },
+  };
+  const groupedLocal = {
+    ...local,
+    cwMembers: [local, tracker, { ...local, state: { ...local.state, lastWatched: "2026-11-17T20:00:00Z" } }],
+  };
+  await warmIdentityCards([groupedLocal, native]);
+  const result = groupCwCards([groupedLocal, native]);
+  assert.equal(result.length, 1);
+  const members = result[0]?.cwMembers as Array<typeof local & { external?: string; cwMembers?: unknown }>;
+  assert.equal(members.length, 3, "genuine local, tracker and native sources remain");
+  assert.deepEqual(members.map((m) => [m._id, m.external ?? (m.local ? "local" : "library")]), [
+    ["mal:14719", "local"], ["mal:14719", "trakt"], ["kitsu:49847", "library"],
+  ]);
+  assert.equal(members.every((m) => !m.cwMembers), true, "no nested synthetic group remains");
+  assert.equal(members[0].state?.lastWatched, "2026-11-18T20:00:00Z");
+});
+
+
+test("two distinct provider playback IDs are not collapsed by source flattening", () => {
+  const sameEpisode = {
+    _id: "tt1234567", external: "trakt", type: "series",
+    state: { season: 2, episode: 3, video_id: "tt1234567:2:3" },
+  };
+  const children = [
+    { ...sameEpisode, providerPlaybackIds: { trakt: "playback-A" } },
+    { ...sameEpisode, providerPlaybackIds: { trakt: "playback-B" } },
+    { ...sameEpisode, providerPlaybackIds: { trakt: "playback-A" } },
+  ];
+  const flattened = flattenCwSourceMembers([{ ...sameEpisode, cwMembers: children }]);
+  assert.deepEqual(flattened.map((row) => row.providerPlaybackIds.trakt), ["playback-A", "playback-B"]);
+});
+
+
+test("grouping hook rewarms unchanged rows when a real pack swap invalidates card keys", () => {
+  let cardsVersion = 0;
+  let notifyCards: (() => void) | null = null;
+  let calls = 0;
+  const h = hookHarness("src/lib/identity/use-card-grouping.ts", "useIdentityCardGrouping", {
+    "@/lib/anime-cw-ids": {
+      animeCwIdsVersion: () => 0,
+      getAnimeCwId: () => null,
+      subscribeAnimeCwIds: () => () => {},
+    },
+    "./flags": { identityFlags: () => ({ cards: true, pack: true }) },
+    "./card-grouping": {
+      groupCwCards: (items: unknown[]) => items,
+      identityCardsVersion: () => cardsVersion,
+      subscribeIdentityCards: (listener: () => void) => {
+        notifyCards = listener;
+        return () => { notifyCards = null; };
+      },
+      warmIdentityCards: async () => { calls++; return false; },
+    },
+    "./cw-repair": {
+      applyVerifiedCwRepairs: (items: unknown[]) => items,
+      subscribeVerifiedCwRepairs: () => () => {},
+      verifiedCwRepairVersion: () => 0,
+      warmVerifiedCwRepairs: async () => false,
+    },
+  });
+  const items = [{ _id: "mal:14719" }, { _id: "kitsu:49847" }];
+  h.render(items);
+  assert.equal(calls, 1);
+  cardsVersion++;
+  notifyCards?.();
+  h.render(items);
+  assert.equal(calls, 2,
+    "pack replacement should rewarm the same rows without a library or alias update");
+  h.unmount();
 });

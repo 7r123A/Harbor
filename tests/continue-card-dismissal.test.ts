@@ -500,3 +500,29 @@ test("when a real native sibling is merged, dismissal clears both genuine source
     new Set(["mal:14719", "kitsu:49847"]));
   assert.equal(h.writes.length, 2, "no third write for the synthetic display proxy");
 });
+
+
+test("nested franchise dismissal clears and marks the buried provider checkpoint", async () => {
+  const h = harness();
+  h.clearProviderProgress = true;
+  h.cwSources = { trakt: true, simkl: false, publicmetadb: false };
+  const local = { ...entry(), local: true };
+  const tracker = {
+    ...entry(), external: "trakt", providerPlaybackIds: { trakt: "provider-checkpoint-42" },
+  };
+  const native = { ...entry(), _id: "kitsu:49847", state: { ...entry().state } };
+  const outer = {
+    ...native,
+    cwMembers: [
+      { ...local, cwMembers: [local, tracker] },
+      native,
+    ],
+  };
+  const cw = h.load("cw-dismiss");
+  await cw.dismissCw(outer, "fixture-auth", { acknowledged: true });
+  assert.equal(cw.isCwDismissed(tracker), true, "buried provider gets an independent tombstone");
+  assert.equal(cw.isCwDismissed(local), true, "buried local source is dismissed");
+  assert.ok(h.providerCalls.some((call) => call.providers.includes("trakt") &&
+    call.item.providerPlaybackIds?.trakt === "provider-checkpoint-42"),
+    "the actual provider checkpoint is used for provider cleanup");
+});

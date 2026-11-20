@@ -52,7 +52,7 @@ export function useIdentityCardGrouping<T extends CardRow>(items: T[], repairEna
       return ids;
     };
     void warmIdentityCards(items, probes).catch(() => {});
-  }, [items, aliasVersion]);
+  }, [items, aliasVersion, cardsVersion]);
 
   useEffect(() => {
     if (!repairEnabled || !identityFlags().pack || !identityFlags().cards) return;

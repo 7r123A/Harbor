@@ -285,7 +285,9 @@ pub fn identity_entry_bundle(
         let mut related = Vec::with_capacity(related_ids.len());
         for related_entry in related_ids {
             let related_title = title_stmt
-                .query_row(params![related_entry], |row| row.get::<_, Option<String>>(1))
+                .query_row(params![related_entry], |row| {
+                    row.get::<_, Option<String>>(1)
+                })
                 .ok()
                 .flatten();
             related.push(RelatedRef {
@@ -498,6 +500,19 @@ pub struct WindowOwner {
     pub offset: Option<i64>,
 }
 
+/// Pair each catalog show id with its OWN provider season. TVDB S1 and TMDB
+/// S6 on the same entry are not evidence that the entry owns TVDB S6.
+const WINDOW_OWNER_SQL: &str = "SELECT w.entry, e.title, e.type, w.tvdb, w.tmdbtv,
+            CASE WHEN ?1 IS NOT NULL AND w.tvdb = ?1 AND w.tvdb_season = ?3
+                 THEN w.tvdb_season ELSE w.tmdb_season END,
+            CASE WHEN ?1 IS NOT NULL AND w.tvdb = ?1 AND w.tvdb_season = ?3
+                 THEN w.tvdb_offset ELSE w.tmdb_offset END
+     FROM windows w
+     LEFT JOIN entries e ON e.entry = w.entry
+     WHERE ((?1 IS NOT NULL AND w.tvdb = ?1 AND w.tvdb_season = ?3)
+         OR (?2 IS NOT NULL AND w.tmdbtv = ?2 AND w.tmdb_season = ?3))
+     ORDER BY w.entry";
+
 /// Which work entries own a provider show/season. Used to prove that a row's
 /// checkpoint belongs to another anime entry before retiring/re-keying it.
 #[tauri::command]
@@ -510,14 +525,7 @@ pub fn identity_window_owners(
 ) -> Result<Vec<WindowOwner>, String> {
     db::with_conn(&app, &*state, |conn| {
         let mut stmt = conn
-            .prepare(
-                "SELECT w.entry, e.title, e.type, w.tvdb, w.tmdbtv, w.tvdb_season, w.tvdb_offset
-                 FROM windows w
-                 LEFT JOIN entries e ON e.entry = w.entry
-                 WHERE ((?1 IS NOT NULL AND w.tvdb = ?1) OR (?2 IS NOT NULL AND w.tmdbtv = ?2))
-                   AND ((?3 IS NOT NULL AND w.tvdb_season = ?3) OR (w.tmdb_season = ?3))
-                 ORDER BY w.entry",
-            )
+            .prepare(WINDOW_OWNER_SQL)
             .map_err(|error| format!("identity owners: prepare: {error}"))?;
         let rows = stmt
             .query_map(params![tvdb, tmdb, season], |row| {
@@ -538,10 +546,13 @@ pub fn identity_window_owners(
     })
 }
 #[tauri::command]
-pub fn identity_clear_data(
+pub async fn identity_clear_data(
     app: AppHandle,
     state: State<'_, IdentityState>,
 ) -> Result<db::IdentityStatus, String> {
+    // Serialize removal with startup/forced pack refresh. Otherwise a download
+    // already in flight could reinstall the pack after Remove reports success.
+    let _import = state.import.lock().await;
     {
         let mut guard = state
             .conn
@@ -549,7 +560,11 @@ pub fn identity_clear_data(
             .map_err(|_| "identity: db lock poisoned".to_string())?;
         *guard = None;
     }
-    for path in [db::db_path(&app)?, db::tmp_path(&app)?, db::prev_path(&app)?] {
+    for path in [
+        db::db_path(&app)?,
+        db::tmp_path(&app)?,
+        db::prev_path(&app)?,
+    ] {
         if path.exists() {
             std::fs::remove_file(&path)
                 .map_err(|error| format!("identity: delete {}: {error}", path.display()))?;
@@ -559,11 +574,41 @@ pub fn identity_clear_data(
 }
 #[cfg(test)]
 mod refresh_integrity_tests {
-    use super::require_imported_windows;
+    use super::{require_imported_windows, WINDOW_OWNER_SQL};
+    use rusqlite::{params, Connection};
 
     #[test]
     fn rejects_partial_refresh_before_swapping_existing_database() {
         assert!(require_imported_windows(0).is_err());
         assert!(require_imported_windows(42).is_ok());
+    }
+
+    #[test]
+    fn season_owner_requires_season_for_the_matching_catalog_provider() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE entries (entry INTEGER PRIMARY KEY, title TEXT, type TEXT);
+             CREATE TABLE windows (
+                 entry INTEGER, tvdb INTEGER, tmdbtv INTEGER,
+                 tvdb_season INTEGER, tmdb_season INTEGER,
+                 tvdb_offset INTEGER, tmdb_offset INTEGER
+             );
+             INSERT INTO entries VALUES (1, 'TVDB first season', 'TV');
+             INSERT INTO entries VALUES (2, 'TVDB sixth season', 'ONA');
+             INSERT INTO windows VALUES (1, 262954, 45790, 1, 6, 0, 0);
+             INSERT INTO windows VALUES (2, 262954, 45790, 6, 1, 0, 0);",
+        )
+        .unwrap();
+        let mut query = conn.prepare(WINDOW_OWNER_SQL).unwrap();
+        let mut owners = |tvdb: Option<i64>, tmdb: Option<i64>| -> Vec<i64> {
+            query
+                .query_map(params![tvdb, tmdb, 6], |row| row.get::<_, i64>(0))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+        assert_eq!(owners(Some(262954), None), vec![2]);
+        assert_eq!(owners(None, Some(45790)), vec![1]);
+        assert_eq!(owners(Some(262954), Some(45790)), vec![1, 2]);
     }
 }

@@ -183,6 +183,9 @@ function harness() {
       animeCwIdsVersion: () => 0,
       subscribeAnimeCwIds: () => () => {},
     },
+    // The hook's optional airing lookup is independent of episode
+    // advancement; keep these suites offline and test airing separately.
+    "@/lib/anilist/cw-next-airing": { fetchCwNextAiring: async () => null },
     "@/lib/cw-anime-identity": {
       cwAnimeIdentityKey: () => null,
       cwWarmIdentityKey: (item: any) => JSON.stringify(item),
