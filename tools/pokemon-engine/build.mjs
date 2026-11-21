@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { access, cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { retryGit } from "./retry-git.mjs";
 const here = dirname(fileURLToPath(import.meta.url));
 const argument = (name) => {
   const index = process.argv.indexOf(name);
@@ -50,9 +51,13 @@ if (fetchSource) {
     await mkdir(source, { recursive: true });
     await run("git", ["init"], source);
     await run("git", ["remote", "add", "origin", lock.pkforge.url], source);
-    await run("git", ["fetch", "--depth=1", "origin", lock.pkforge.commit], source);
+    await retryGit("PKForge pinned source fetch", () =>
+      run("git", ["fetch", "--depth=1", "origin", lock.pkforge.commit], source),
+    );
     await run("git", ["checkout", "--detach", "FETCH_HEAD"], source);
-    await run("git", ["submodule", "update", "--init", "--depth=1"], source);
+    await retryGit("PKForge pinned submodule fetch", () =>
+      run("git", ["submodule", "update", "--init", "--depth=1"], source),
+    );
   }
 }
 for (const [key, folder] of [
@@ -111,6 +116,7 @@ for (const file of [
   "upstream.json",
   "LICENSE",
   "build.mjs",
+  "retry-git.mjs",
   "README.md",
 ])
   await cp(resolve(here, file), resolve(sources, file));
