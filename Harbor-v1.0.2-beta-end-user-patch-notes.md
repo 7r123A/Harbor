@@ -346,4 +346,4 @@ Harbor 1.0.2 focuses on making everyday use smoother and more reliable, with a b
 
 ---
 
-**Full Changelog:** https://github.com/Harborofficial/Harbor/compare/v1.0.1-beta...beta-branch
+**Full Changelog:** https://github.com/HarborCommunity/Harbor/compare/v1.0.1-beta...beta-branch

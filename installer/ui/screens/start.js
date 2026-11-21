@@ -38,14 +38,14 @@ const LINKS = [
   {
     icon: "branch",
     lead: "Source",
-    value: "github.com/Harborofficial/Harbor",
-    url: "https://github.com/Harborofficial/Harbor",
+    value: "github.com/HarborCommunity/Harbor",
+    url: "https://github.com/HarborCommunity/Harbor",
   },
   {
     icon: "branch",
     lead: "Bugs",
     value: "GitHub Issues",
-    url: "https://github.com/Harborofficial/Harbor/issues",
+    url: "https://github.com/HarborCommunity/Harbor/issues",
   },
   {
     icon: "chat",

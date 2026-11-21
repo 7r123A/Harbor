@@ -44,7 +44,7 @@ const requests = new CompanionRequests(async (url, signal) => {
       credentials: "omit",
       headers: {
         "X-Super-Client": "HarborGameCompanions",
-        "X-Super-Contact": "https://github.com/harborstremio/harbor/issues",
+        "X-Super-Contact": "https://github.com/HarborCommunity/Harbor/issues",
         "Accept-Language": "en-US",
       },
     },
