@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { currentAuthor } from "@/lib/theme-auth";
+import { captureSessionScope, currentAuthor } from "@/lib/theme-auth";
 import { socialGet, socialPatch } from "./client";
 
 export type DmPolicy = "everyone" | "friends";
@@ -209,6 +209,7 @@ async function patch(body: Record<string, unknown>): Promise<void> {
 }
 
 export async function saveDmPolicy(next: DmPolicy): Promise<void> {
+  const isCurrent = captureSessionScope();
   const prev = prefs.policy;
   if (next === prev) return;
   try {
@@ -216,12 +217,15 @@ export async function saveDmPolicy(next: DmPolicy): Promise<void> {
     update({ policy: next });
     await patch({ dmPolicy: next });
   } catch (err) {
-    try {
-      localStorage.setItem(POLICY_KEY, prev);
-    } catch {
-      /* The in-memory preference still rolls back if local storage is unavailable. */
+    // A failed save from a previous account must not revert the new account's policy.
+    if (isCurrent()) {
+      try {
+        localStorage.setItem(POLICY_KEY, prev);
+      } catch {
+        /* The in-memory preference still rolls back if local storage is unavailable. */
+      }
+      update({ policy: prev });
     }
-    update({ policy: prev });
     throw err;
   }
 }
