@@ -480,6 +480,7 @@ export type Settings = {
   posterBaseUrl: string;
   hidePosterTitles: boolean;
   hoverPreviewEnabled: boolean;
+  _hoverPreviewOnByDefault: boolean;
   hoverPreviewPlacement: "over" | "side";
   cardHoverStyle:
     | "none"

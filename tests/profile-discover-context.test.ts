@@ -25,6 +25,9 @@ function componentLoader(extra: Record<string, unknown> = {}) {
       Poster: ({ src }: { src?: string }) => React.createElement("img", { src, alt: "Poster" }),
     },
     "@/components/arrowed-scroll-row": { ArrowedScrollRow: wrap },
+    "@/components/ratings/mutual-match-badge": { MutualMatchBadge: () => null },
+    "@/components/icons/written-review-icon": { WrittenReviewIcon: () => null },
+    "./mutual-ratings": { MutualRatings: () => null },
     "@/components/row": { Row: wrap },
     "@/lib/ratings/poster": {
       useRatingPoster: (_id: string, _type: string, _title: string, poster?: string) => poster,

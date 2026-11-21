@@ -1431,6 +1431,60 @@ main[data-kids="on"]::-webkit-scrollbar-thumb:hover {
   animation: harbor-badge-pop 340ms ease-in-out backwards;
 }
 
+/* Direct-message launcher: a slow halo and staggered typing dots keep the
+   control visibly alive without becoming an attention magnet. */
+@keyframes harbor-dm-halo {
+  0%,
+  100% {
+    opacity: 0.14;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(1.08);
+  }
+}
+
+.harbor-dm-halo {
+  animation: harbor-dm-halo 3.4s ease-in-out infinite;
+}
+
+@keyframes harbor-dm-dot {
+  0%,
+  55%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  22% {
+    opacity: 1;
+    transform: translateY(-1.3px);
+  }
+}
+
+.harbor-dm-dot {
+  animation: harbor-dm-dot 2.2s ease-in-out infinite;
+}
+
+.harbor-dm-dot-2 {
+  animation-delay: 0.18s;
+}
+
+.harbor-dm-dot-3 {
+  animation-delay: 0.36s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .harbor-dm-halo,
+  .harbor-dm-dot {
+    animation: none;
+  }
+
+  .harbor-dm-dot {
+    opacity: 1;
+  }
+}
+
 @keyframes harbor-menu-in {
   from {
     opacity: 0;

@@ -20,6 +20,7 @@ import {
 } from "react";
 import { registerProfileDestination, subscribeOpenProfile } from "@/lib/social/open-profile";
 import { subscribeOpenGroup } from "@/lib/social/open-group";
+import { requestOpenUserDiscovery } from "@/lib/social/user-discovery-open";
 import { currentAuthor } from "@/lib/theme-auth";
 import { isNuvioProviderActive, loadNuvioState } from "@/lib/nuvio/nuvio-client";
 import { useBigPicture } from "@/lib/big-picture";
@@ -343,6 +344,7 @@ type ViewValue = {
   openFeed: () => void;
   groupsOpen: boolean;
   openGroups: () => void;
+  openUserDiscovery: () => void;
   groupId: string | null;
   openGroup: (id: string) => void;
   listHandle: string | null;
@@ -1213,6 +1215,8 @@ export function ViewProvider({ children }: { children: ReactNode }) {
     });
   }, [setNavStack]);
 
+  const openUserDiscovery = requestOpenUserDiscovery;
+
   const openGroup = useCallback(
     (id: string) => {
       const g = id.trim();
@@ -1593,6 +1597,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
       openFeed,
       groupsOpen,
       openGroups,
+      openUserDiscovery,
       groupId,
       openGroup,
       listHandle,
@@ -1678,6 +1683,7 @@ export function ViewProvider({ children }: { children: ReactNode }) {
       openFeed,
       groupsOpen,
       openGroups,
+      openUserDiscovery,
       groupId,
       openGroup,
       listHandle,

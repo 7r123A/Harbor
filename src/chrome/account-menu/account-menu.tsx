@@ -1,3 +1,4 @@
+import { DmUnreadBadge } from "@/components/dm/dm-unread-badge";
 import { HarborAccountDialog } from "@/views/account/harbor-account-dialog";
 import { ParentalPinModal } from "@/components/parental-pin-modal";
 import { useT } from "@/lib/i18n";
@@ -9,6 +10,7 @@ import { AccountMenuPanel } from "./account-menu-panel";
 import { ProfileAvatar, SubtitleText } from "./account-menu-parts";
 import { useAccountMenu } from "./use-account-menu";
 import { isPlaceholderName } from "@/lib/profiles";
+import { useDmUnreadBadgeCount } from "@/lib/social/dm-store";
 
 type TriggerKind = "row" | "pill" | "avatar";
 
@@ -59,6 +61,7 @@ export function AccountMenu({
     : settings.harborAvatar;
   const isPlaceholder =
     typeof isPlaceholderName === "function" ? isPlaceholderName(activeProfile?.name) : false;
+  const dmUnreadCount = useDmUnreadBadgeCount();
   const name = isNuvio
     ? activeProfile?.name || t("profile.fallback")
     : isPlaceholder
@@ -71,6 +74,7 @@ export function AccountMenu({
         user?.email?.split("@")[0] ??
         t("profile.fallback"));
   const showStatus = !!author && !kid;
+  const dmUnread = author ? dmUnreadCount : 0;
 
   const vpos = placement === "up" ? "bottom-full mb-1.5" : "top-full mt-2";
   const hpos =
@@ -103,6 +107,13 @@ export function AccountMenu({
             }}
           />
         </span>
+      )}
+      {dmUnread > 0 && (
+        <DmUnreadBadge
+          count={dmUnread}
+          compact
+          className="pointer-events-none absolute -top-1 start-[calc(100%_-_8px)] z-10 ring-1 ring-canvas"
+        />
       )}
     </span>
   );

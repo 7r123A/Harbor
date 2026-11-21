@@ -102,3 +102,153 @@ for (const multiple of [false, true]) {
     }
   });
 }
+
+test("outside clicks dismiss a dropdown inside a modal even when bubbling is stopped", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true });
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
+  dom.window.matchMedia = () => ({ matches: true });
+  let ancestorScrolls = 0;
+  dom.window.HTMLElement.prototype.scrollIntoView = () => ancestorScrolls++;
+  const root = createRoot(document.getElementById("root"));
+  function Fixture() {
+    return React.createElement(
+      "div",
+      {
+        role: "dialog",
+        onMouseDown: (event) => event.stopPropagation(),
+        onPointerDown: (event) => event.stopPropagation(),
+      },
+      React.createElement(Dropdown, {
+        value: "reviews",
+        selectedValues: ["reviews"],
+        options: [
+          { value: "reviews", label: "Written reviews" },
+          { value: "activity", label: "Recent activity" },
+        ],
+        onChange: () => {},
+      }),
+      React.createElement("button", { id: "filter" }, "Filter"),
+      React.createElement("div", { id: "space" }, "Empty area"),
+    );
+  }
+  try {
+    await React.act(() => root.render(React.createElement(Fixture)));
+    const trigger = document.querySelector('[aria-haspopup="listbox"]');
+    for (const [target, type] of [
+      ["filter", "mousedown"],
+      ["space", "pointerdown"],
+      ["space", "click"],
+    ]) {
+      await React.act(() => trigger.click());
+      assert.ok(document.querySelector('[role="listbox"]'));
+      assert.equal(ancestorScrolls, 0, "opening scrolls only the popup contents");
+      await React.act(() =>
+        document
+          .getElementById(target)
+          .dispatchEvent(new dom.window.MouseEvent(type, { bubbles: true })),
+      );
+      assert.equal(document.querySelector('[role="listbox"]'), null);
+      assert.notEqual(
+        document.activeElement,
+        trigger,
+        "outside clicks do not move focus back to the sort trigger",
+      );
+    }
+  } finally {
+    await React.act(() => root.unmount());
+    dom.window.close();
+  }
+});
+
+test("dropdown follows modal layout changes and stays outside its trigger in short viewports", async () => {
+  const dom = new JSDOM("<div id='root'></div>", { pretendToBeVisual: true });
+  let top = 450;
+  const observed = new Set();
+  let notify;
+  class Observer {
+    constructor(callback) {
+      notify = callback;
+    }
+    observe(element) {
+      observed.add(element);
+    }
+    disconnect() {}
+  }
+  Object.assign(globalThis, {
+    window: dom.window,
+    document: dom.window.document,
+    getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+    ResizeObserver: Observer,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  });
+  Object.defineProperty(dom.window, "innerHeight", { value: 550, configurable: true });
+  dom.window.matchMedia = () => ({ matches: true });
+  dom.window.HTMLElement.prototype.getBoundingClientRect = () => ({
+    top,
+    bottom: top + 36,
+    left: 100,
+    right: 300,
+    width: 200,
+    height: 36,
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollHeight", {
+    configurable: true,
+    get() {
+      return this.getAttribute("role") === "listbox" ? 128 : 0;
+    },
+  });
+  const root = createRoot(document.getElementById("root"));
+  try {
+    await React.act(() =>
+      root.render(
+        React.createElement(
+          "div",
+          { role: "dialog" },
+          React.createElement(Dropdown, {
+            value: "reviews",
+            options: [{ value: "reviews", label: "Written reviews" }],
+            onChange: () => {},
+          }),
+        ),
+      ),
+    );
+    await React.act(() => document.querySelector('[aria-haspopup="listbox"]').click());
+    const menu = document.querySelector('[role="listbox"]');
+    assert.ok(observed.has(document.querySelector('[role="dialog"]')));
+    assert.ok(
+      parseFloat(menu.style.top) + 128 <= top - 6,
+      "popup opens above rather than covering a low trigger",
+    );
+    top = 150;
+    await React.act(async () => {
+      notify([]);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    assert.equal(parseFloat(menu.style.top), top + 36 + 6, "popup follows the shifted modal");
+    top = 50;
+    Object.defineProperty(dom.window, "innerHeight", { value: 140, configurable: true });
+    await React.act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("resize"));
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    assert.ok(
+      parseFloat(menu.style.maxHeight) <= 40,
+      "available space is respected instead of forcing a 120px popup",
+    );
+    assert.ok(parseFloat(menu.style.top) >= top + 36 + 6);
+    assert.ok(parseFloat(menu.style.top) + parseFloat(menu.style.maxHeight) <= 132);
+  } finally {
+    await React.act(() => root.unmount());
+    dom.window.close();
+    delete globalThis.ResizeObserver;
+  }
+});

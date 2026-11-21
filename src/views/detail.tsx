@@ -10,6 +10,7 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { Send } from "lucide-react";
 import { Play } from "@/components/icons/play-filled";
 import { animePlayEpisode } from "./detail/anime-play-episode";
 import {
@@ -132,6 +133,7 @@ import { MOVIE_GENRES, TV_GENRES } from "@/lib/feed/tags";
 import { useScrollMemory, useView, type PlayEpisode } from "@/lib/view";
 import { prefetchSegments } from "@/lib/skip-intro";
 import { useT } from "@/lib/i18n";
+import { requestShareToDm } from "@/lib/social/share-dm";
 import { emitListToast } from "@/components/lists/list-toast";
 import { DropShowConfirmModal } from "@/components/drop-show-confirm-modal";
 import { useCanDropShow } from "@/lib/drop-show-eligibility";
@@ -223,6 +225,7 @@ import { TraktComments } from "./detail/trakt-comments";
 import { LetterboxdPanel } from "./detail/letterboxd-panel";
 import { ParentsGuidePanel } from "./detail/parents-guide-panel";
 import { RateButton } from "@/components/ratings/rate-button";
+import { TitleReviewsEntry } from "@/components/ratings/title-reviews-entry";
 import {
   chainedPrimaryRating,
   detailImdbRating,
@@ -2812,7 +2815,7 @@ function DetailContent({
               <MovieReleaseCountdowns detail={detail} />
               <div
                 ref={actionRowRef}
-                className={`mt-9 flex ${awardsInDescription ? "" : "w-fit max-w-full "}items-center gap-3 [&>*]:shrink-0`}
+                className={`mt-9 flex ${awardsInDescription ? "" : "w-full max-w-full "}items-center gap-3 [&>*]:shrink-0`}
               >
                 {upcoming ? (
                   <UpcomingCta detail={detail} onTry={() => smartPlay()} />
@@ -3051,6 +3054,24 @@ function DetailContent({
                     poster={poster}
                   />
                 )}
+                {!liveContext && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      requestShareToDm({
+                        type: "title",
+                        id: meta.id,
+                        title: title || meta.name,
+                        poster: poster || undefined,
+                      })
+                    }
+                    title={t("Send to a friend")}
+                    aria-label={t("Send to a friend")}
+                    className="flex h-12 items-center gap-2 rounded-full bg-canvas/80 px-5 text-[14px] font-medium text-ink-muted transition-colors hover:bg-canvas/95 hover:text-ink"
+                  >
+                    <Send size={16} /> {t("Send to a friend")}
+                  </button>
+                )}
                 {liveContext && (
                   <button
                     type="button"
@@ -3063,6 +3084,15 @@ function DetailContent({
                         ? t("Open in Anime")
                         : t("Open in Movies")}
                   </button>
+                )}
+                {!liveContext && (
+                  <TitleReviewsEntry
+                    className="ms-auto"
+                    target={ratingTarget(
+                      { id: meta.id, name: title || meta.name, poster: poster },
+                      isAnime ? "anime" : isSeries ? "series" : "movie",
+                    )}
+                  />
                 )}
               </div>
             </div>

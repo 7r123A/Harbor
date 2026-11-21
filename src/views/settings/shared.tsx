@@ -43,6 +43,7 @@ export type SectionId =
   | "theme"
   | "badges"
   | "awardIcons"
+  | "dmNotifications"
   | "webhooks"
   | "bug"
   | "support"

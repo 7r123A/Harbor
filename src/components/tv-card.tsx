@@ -156,41 +156,43 @@ export const TvCard = memo(function TvCard({
   };
 
   return (
-    <button
-      ref={cardRef}
-      type="button"
-      onClick={open}
-      onContextMenu={(e) => openContextMenu(e, { kind: "meta", meta, membership })}
-      onFocus={(e) => !kids && hoverPreviewFocus(meta, e.currentTarget)}
-      onBlur={(e) => !kids && hoverPreviewBlur(e.currentTarget)}
-      style={{ borderRadius: settings.posterRadius }}
-      className="group relative block aspect-[16/9] w-full overflow-hidden bg-elevated ring-1 ring-edge-soft transition-[box-shadow,--tw-ring-color] duration-200 ease-out hover:ring-edge hover:shadow-[0_10px_28px_-18px_rgba(0,0,0,0.8)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/70"
-    >
-      <span
-        data-preview-anchor
-        className="absolute inset-0"
-        onPointerEnter={(e) => !kids && hoverPreviewEnter(meta, e.currentTarget, e.buttons)}
-        onPointerLeave={(e) => !kids && hoverPreviewLeave(e.currentTarget)}
+    <div className="flex w-full min-w-0 flex-col gap-2.5">
+      <button
+        ref={cardRef}
+        type="button"
+        onClick={open}
+        onContextMenu={(e) => openContextMenu(e, { kind: "meta", meta, membership })}
+        onFocus={(e) => !kids && hoverPreviewFocus(meta, e.currentTarget)}
+        onBlur={(e) => !kids && hoverPreviewBlur(e.currentTarget)}
+        style={{ borderRadius: settings.posterRadius }}
+        className="group relative block aspect-[16/9] w-full overflow-hidden bg-elevated ring-1 ring-edge-soft transition-[box-shadow,--tw-ring-color] duration-200 ease-out hover:ring-edge hover:shadow-[0_10px_28px_-18px_rgba(0,0,0,0.8)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink/70"
       >
-        <TvCardArtwork
-          meta={meta}
-          awardLookupName={awardLookupName}
-          kids={kids}
-          logo={logo}
-          posterSrc={poster.src}
-          backdropSrc={poster.backdrop}
-          imdbId={imdbId}
-          onPosterError={poster.onError}
-          reason={reason}
-          curatedBadgeAtTopStart={curatedBadgeAtTopStart}
-          cardSettings={cardSettings}
-          scoreBadges={cardBadges}
-          sharedState={sharedCardState}
-          isAnime={isAnimeCardId}
-          cardRef={cardRef}
-        />
-      </span>
-    </button>
+        <span
+          data-preview-anchor
+          className="absolute inset-0"
+          onPointerEnter={(e) => !kids && hoverPreviewEnter(meta, e.currentTarget, e.buttons)}
+          onPointerLeave={(e) => !kids && hoverPreviewLeave(e.currentTarget)}
+        >
+          <TvCardArtwork
+            meta={meta}
+            awardLookupName={awardLookupName}
+            kids={kids}
+            logo={logo}
+            posterSrc={poster.src}
+            backdropSrc={poster.backdrop}
+            imdbId={imdbId}
+            onPosterError={poster.onError}
+            reason={reason}
+            curatedBadgeAtTopStart={curatedBadgeAtTopStart}
+            cardSettings={cardSettings}
+            scoreBadges={cardBadges}
+            sharedState={sharedCardState}
+            isAnime={isAnimeCardId}
+            cardRef={cardRef}
+          />
+        </span>
+      </button>
+    </div>
   );
 });
 

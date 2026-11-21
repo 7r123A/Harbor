@@ -1,4 +1,4 @@
-import { Check, Loader2, UserPlus, X } from "lucide-react";
+import { Check, Loader2, UserCheck, UserPlus, X } from "lucide-react";
 import { Search } from "@/components/icons/search-icon";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -212,7 +212,7 @@ function AddButton({ state, onAdd }: { state: RowState; onAdd: () => void }) {
   const t = useT();
   if (state === "self") return <Tag label={t("You")} />;
   if (state === "friends")
-    return <Tag label={t("Friends")} tone="success" icon={<Check size={14} />} />;
+    return <Tag label={t("Friends")} tone="success" icon={<UserCheck size={14} />} />;
   if (state === "requested") return <Tag label={t("Requested")} icon={<Check size={14} />} />;
   return (
     <button

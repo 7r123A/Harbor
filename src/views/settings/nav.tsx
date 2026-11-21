@@ -390,6 +390,15 @@ function IconWebhooks(p: IconProps) {
   );
 }
 
+function IconMessages(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l1.8-3A7.5 7.5 0 1 1 20 11.5Z" />
+      <path d="M8.5 11.5h7M8.5 14.5h4.5" />
+    </IconBase>
+  );
+}
+
 function IconTrakt(p: IconProps) {
   return (
     <IconBase {...p}>
@@ -989,6 +998,12 @@ const NAV_GROUPS: Array<{ heading: string | null; items: NavItem[] }> = [
   {
     heading: "Notifications",
     items: [
+      {
+        id: "dmNotifications",
+        label: "Direct messages",
+        Icon: IconMessages,
+        keywords: ["dm", "dms", "message", "messages", "toast", "sound", "alert", "preview"],
+      },
       {
         id: "webhooks",
         label: "Webhooks",
@@ -4196,14 +4211,14 @@ const SETTINGS_OPTIONS: SettingsOption[] = [
       "card hover",
       "poster hover",
       "peek",
+      "default",
+      "custom",
       "marquee",
       "trailer card",
       "elegantfin",
       "frosted glass",
       "cinema",
       "spotlight",
-      "minimal",
-      "glare",
       "overview",
       "preview style",
     ],
@@ -11502,6 +11517,7 @@ export function SettingsNav({
         : "•",
     badges: null,
     awardIcons: null,
+    dmNotifications: null,
     webhooks: webhookActive ? "live" : null,
     hotkeys: null,
     bug: null,

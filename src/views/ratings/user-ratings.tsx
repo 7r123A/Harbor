@@ -3,8 +3,10 @@ import { useRatingPoster } from "@/lib/ratings/poster";
 import { createPortal } from "react-dom";
 import { ChevronDown, ChevronUp, Eye, Loader2, MessageSquare, X } from "lucide-react";
 import { Search } from "@/components/icons/search-icon";
+import { WrittenReviewIcon } from "@/components/icons/written-review-icon";
 import { Poster } from "@/components/poster";
 import { RatingStars } from "@/components/ratings/rating-stars";
+import { MutualMatchBadge } from "@/components/ratings/mutual-match-badge";
 import { rate, REVIEW_MAX } from "@/lib/ratings/actions";
 import { useT } from "@/lib/i18n";
 import { fetchUserRatings } from "@/lib/social/ratings-api";
@@ -14,6 +16,7 @@ import { useProfileTitle } from "@/views/profile/use-profile-title";
 import { profileMediaMeta } from "@/lib/social/profile-media-meta";
 import { useTitleContext } from "@/components/context-menu/use-title-context";
 import { useProfileThemeSurfaceStyle } from "@/views/profile/profile-theme-context";
+import { MutualRatings } from "./mutual-ratings";
 
 const TABS: Array<{ id: string; label: string; countKey: keyof RatingCounts }> = [
   { id: "all", label: "All", countKey: "total" },
@@ -50,6 +53,7 @@ export function UserRatings({
   handle,
   alias,
   isOwner = false,
+  mutualHandle,
   onOpenMeta,
   onClose,
   onComment,
@@ -58,6 +62,7 @@ export function UserRatings({
   handle: string;
   alias: string;
   isOwner?: boolean;
+  mutualHandle?: string;
   onOpenMeta?: (metaId: string, kind?: string, hint?: { name?: string; poster?: string }) => void;
   onClose: () => void;
   onComment?: (rating: PublicRating) => void;
@@ -66,6 +71,8 @@ export function UserRatings({
   const t = useT();
   const surfaceStyle = useProfileThemeSurfaceStyle();
   const [type, setType] = useState("all");
+  const [showMutual, setShowMutual] = useState(false);
+  const mutualVisible = !!mutualHandle && showMutual;
   const [items, setItems] = useState<PublicRating[]>([]);
   const [counts, setCounts] = useState<RatingCounts>(EMPTY_COUNTS);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
@@ -323,23 +330,28 @@ export function UserRatings({
         className="animate-modal-in relative m-6 flex max-h-[calc(100vh-3rem)] w-full max-w-[900px] flex-col overflow-hidden rounded-3xl border border-edge-soft bg-surface shadow-[0_30px_120px_-30px_rgba(0,0,0,0.85)]"
       >
         <header className="flex items-center justify-between gap-4 border-b border-edge-soft px-7 py-5">
-          <h2 className="min-w-0 truncate font-display text-[24px] font-medium leading-tight tracking-tight text-ink">
-            {t("{name}'s ratings", { name: alias })}
-          </h2>
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+            <h2 className="min-w-0 truncate font-display text-[24px] font-medium leading-tight tracking-tight text-ink">
+              {t("{name}'s ratings", { name: alias })}
+            </h2>
+            <MutualMatchBadge handle={mutualHandle} />
+          </div>
           <div className="flex shrink-0 items-center gap-2">
-            <div className="relative">
-              <Search
-                size={15}
-                className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-ink-subtle"
-              />
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder={t("Search ratings")}
-                aria-label={t("Search ratings")}
-                className="h-10 w-44 rounded-full border border-edge bg-canvas ps-9 pe-3 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-subtle focus:border-ink-subtle focus:bg-elevated sm:w-56"
-              />
-            </div>
+            {!mutualVisible && (
+              <div className="relative">
+                <Search
+                  size={15}
+                  className="pointer-events-none absolute start-3 top-1/2 -translate-y-1/2 text-ink-subtle"
+                />
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  placeholder={t("Search ratings")}
+                  aria-label={t("Search ratings")}
+                  className="h-10 w-44 rounded-full border border-edge bg-canvas ps-9 pe-3 text-[13px] text-ink outline-none transition-colors placeholder:text-ink-subtle focus:border-ink-subtle focus:bg-elevated sm:w-56"
+                />
+              </div>
+            )}
             <button
               onClick={onClose}
               aria-label={t("Close")}
@@ -350,75 +362,101 @@ export function UserRatings({
           </div>
         </header>
 
-        <div className="flex flex-wrap gap-1.5 border-b border-edge-soft px-7 py-3">
-          {TABS.map((tab) => {
-            const n = counts[tab.countKey];
-            if (tab.id !== "all" && n === 0) return null;
-            const active = type === tab.id;
-            return (
+        {mutualHandle && (
+          <div
+            role="group"
+            aria-label={t("Ratings view")}
+            className="flex gap-1.5 border-b border-edge-soft px-7 py-3"
+          >
+            {[false, true].map((mutual) => (
               <button
-                key={tab.id}
+                key={String(mutual)}
                 type="button"
-                onClick={() => setType(tab.id)}
-                className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors ${
-                  active ? "bg-ink text-canvas" : "text-ink-muted hover:bg-elevated hover:text-ink"
+                aria-pressed={mutualVisible === mutual}
+                onClick={() => setShowMutual(mutual)}
+                className={`rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors ${mutualVisible === mutual ? "bg-ink text-canvas" : "text-ink-muted hover:bg-elevated hover:text-ink"}`}
+              >
+                {mutual ? t("Mutual ratings") : t("All ratings")}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {!mutualVisible && (
+          <div className="flex flex-wrap gap-1.5 border-b border-edge-soft px-7 py-3">
+            {TABS.map((tab) => {
+              const n = counts[tab.countKey];
+              if (tab.id !== "all" && n === 0) return null;
+              const active = type === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setType(tab.id)}
+                  className={`inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[13px] font-medium transition-colors ${
+                    active
+                      ? "bg-ink text-canvas"
+                      : "text-ink-muted hover:bg-elevated hover:text-ink"
+                  }`}
+                >
+                  {t(tab.label)}
+                  <span className={`tabular-nums ${active ? "text-canvas/70" : "text-ink-subtle"}`}>
+                    {n}
+                  </span>
+                </button>
+              );
+            })}
+            <div className="ms-auto flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setReviewsOnly((v) => !v)}
+                aria-pressed={reviewsOnly}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium ring-1 transition-colors ${
+                  reviewsOnly
+                    ? "bg-ink/10 text-ink ring-ink/25"
+                    : "text-ink-muted ring-edge-soft hover:bg-elevated hover:text-ink"
                 }`}
               >
-                {t(tab.label)}
-                <span className={`tabular-nums ${active ? "text-canvas/70" : "text-ink-subtle"}`}>
-                  {n}
-                </span>
+                <WrittenReviewIcon />
+                {t("With review")}
               </button>
-            );
-          })}
-          <div className="ms-auto flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setReviewsOnly((v) => !v)}
-              aria-pressed={reviewsOnly}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12.5px] font-medium ring-1 transition-colors ${
-                reviewsOnly
-                  ? "bg-ink/10 text-ink ring-ink/25"
-                  : "text-ink-muted ring-edge-soft hover:bg-elevated hover:text-ink"
-              }`}
-            >
-              <MessageSquare size={13} strokeWidth={2.2} />
-              {t("With review")}
-            </button>
-            <button
-              type="button"
-              onClick={() => setSort((s) => (s === "high" ? "default" : "high"))}
-              aria-pressed={sort === "high"}
-              aria-label={t("Highest rated first")}
-              className={`flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
-                sort === "high"
-                  ? "bg-ink text-canvas"
-                  : "text-ink-subtle hover:bg-elevated hover:text-ink"
-              }`}
-            >
-              <ChevronUp size={15} strokeWidth={2.4} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setSort((s) => (s === "low" ? "default" : "low"))}
-              aria-pressed={sort === "low"}
-              aria-label={t("Lowest rated first")}
-              className={`flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
-                sort === "low"
-                  ? "bg-ink text-canvas"
-                  : "text-ink-subtle hover:bg-elevated hover:text-ink"
-              }`}
-            >
-              <ChevronDown size={15} strokeWidth={2.4} />
-            </button>
-            <span className="ms-1 text-[12.5px] font-medium text-ink-muted">
-              {t(SORT_LABELS[sort])}
-            </span>
+              <button
+                type="button"
+                onClick={() => setSort((s) => (s === "high" ? "default" : "high"))}
+                aria-pressed={sort === "high"}
+                aria-label={t("Highest rated first")}
+                className={`flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
+                  sort === "high"
+                    ? "bg-ink text-canvas"
+                    : "text-ink-subtle hover:bg-elevated hover:text-ink"
+                }`}
+              >
+                <ChevronUp size={15} strokeWidth={2.4} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setSort((s) => (s === "low" ? "default" : "low"))}
+                aria-pressed={sort === "low"}
+                aria-label={t("Lowest rated first")}
+                className={`flex h-7 w-7 items-center justify-center rounded-full transition-colors ${
+                  sort === "low"
+                    ? "bg-ink text-canvas"
+                    : "text-ink-subtle hover:bg-elevated hover:text-ink"
+                }`}
+              >
+                <ChevronDown size={15} strokeWidth={2.4} />
+              </button>
+              <span className="ms-1 text-[12.5px] font-medium text-ink-muted">
+                {t(SORT_LABELS[sort])}
+              </span>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="flex-1 overflow-y-auto px-7 py-6">
-          {loading || holdForOrder ? (
+          {mutualVisible ? (
+            <MutualRatings key={mutualHandle} handle={mutualHandle} />
+          ) : loading || holdForOrder ? (
             <div className="flex h-40 flex-col items-center justify-center gap-2 text-[13.5px] text-ink-muted">
               <Loader2 size={22} className="animate-spin text-ink-subtle" />
               {holdForOrder && <span>{t("Loading all ratings")}</span>}

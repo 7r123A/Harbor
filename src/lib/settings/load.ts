@@ -443,6 +443,9 @@ export function parseStoredSettings(raw: string | null): {
         typeof parsed.malSyncIndicator === "boolean"
           ? parsed.malSyncIndicator
           : (legacySyncIndicator ?? DEFAULT.malSyncIndicator),
+      hoverPreviewEnabled:
+        parsed._hoverPreviewOnByDefault !== true || parsed.hoverPreviewEnabled !== false,
+      _hoverPreviewOnByDefault: true,
       searchTmdbTopMatch: parsed.searchTmdbTopMatch !== false,
       metadataAddonOrder: Array.isArray(parsed.metadataAddonOrder)
         ? [

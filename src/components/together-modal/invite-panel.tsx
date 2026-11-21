@@ -3,14 +3,17 @@ import { useMemo, useState } from "react";
 import { buildInviteUrl } from "@/lib/together/invite";
 import { useT } from "@/lib/i18n";
 import { LinkGlyph } from "./link-glyph";
+import { FriendInvitePicker } from "./friend-invite-picker";
 
 export function InvitePanel({
   relayUrl,
   room,
+  mediaTitle,
   onClose,
 }: {
   relayUrl: string;
   room: string | null;
+  mediaTitle?: string;
   onClose: () => void;
 }) {
   const t = useT();
@@ -82,6 +85,9 @@ export function InvitePanel({
           "Anyone who opens this link gets the relay URL and room code set automatically. Works in the browser too: no install required for the joiner.",
         )}
       </p>
+      {/* Friends first, link second: an invitation in Harbor notifies one person and
+          can be accepted from inside the app, which a pasted URL cannot. */}
+      {relayUrl && <FriendInvitePicker room={room} relayUrl={relayUrl} mediaTitle={mediaTitle} />}
     </div>
   );
 }

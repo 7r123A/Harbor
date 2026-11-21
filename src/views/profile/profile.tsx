@@ -228,6 +228,10 @@ export function ProfileView({
   if (state === "empty" || !summary) return <ProfileEmpty handle={handle} onBack={goBack} />;
 
   const locked = summary.private && !summary.isOwner;
+  const mutualHandle =
+    viewerSignedIn && !summary.isOwner && !locked && summary.friendStatus !== "blocked"
+      ? summary.handle
+      : undefined;
 
   const ownerAvatar =
     summary.isOwner || isNuvioPrimaryMatch
@@ -309,6 +313,7 @@ export function ProfileView({
       <RatingsCard
         ratings={summary.ratings}
         isOwner={summary.isOwner}
+        mutualHandle={mutualHandle}
         onViewAll={() => setShowRatings(true)}
         onImport={summary.isOwner ? () => setImportingRatings(true) : undefined}
         onOpenMeta={onOpenMeta}
@@ -456,6 +461,7 @@ export function ProfileView({
           badges={badges}
           userFont={c.font}
           hideBanner={c.hideTopBanner}
+          signedIn={viewerSignedIn && !isNuvio}
           onEdit={() => setEditing(true)}
           onPatch={patchSummary}
         />
@@ -591,6 +597,7 @@ export function ProfileView({
               handle={handle}
               alias={summary.alias}
               isOwner={summary.isOwner}
+              mutualHandle={mutualHandle}
               onOpenMeta={onOpenMeta}
               onClose={() => setShowRatings(false)}
               onComment={viewerSignedIn ? commentOnRating : undefined}

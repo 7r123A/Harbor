@@ -136,7 +136,7 @@ export function useProfile(handle: string): ProfileBundle {
                 xp: 0,
                 xpToNext: 100,
                 online: true,
-                memberSince: new Date().toISOString(),
+                memberSince: "",
                 counts: {
                   watched: 0,
                   episodesWatched: 0,

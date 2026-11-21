@@ -122,6 +122,9 @@ function ratingsHarness(options: { failRate?: boolean; deferRates?: boolean } = 
     "@/lib/i18n": { useT: () => (value: string) => value },
     "@/views/profile/profile-theme-context": { useProfileThemeSurfaceStyle: () => ({}) },
     "@/components/icons/search-icon": { Search: "search" },
+    "@/components/icons/written-review-icon": { WrittenReviewIcon: "written-review-icon" },
+    "@/components/ratings/mutual-match-badge": { MutualMatchBadge: () => null },
+    "./mutual-ratings": { MutualRatings: () => null },
     "@/lib/ratings/actions": {
       REVIEW_MAX: 4000,
       rate(target: any, score: number, extra: any) {

@@ -1,5 +1,5 @@
 import { Check, Layers, Loader2, Sparkles } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { socialPost } from "@/lib/social/client";
 import { useT } from "@/lib/i18n";
 import {
@@ -99,8 +99,10 @@ function CustomThemeEditor({
   const [error, setError] = useState<string | null>(null);
   const dirty = CUSTOM_SLOTS.some(({ key }) => draft[key] !== colors[key]);
 
-  const set = (key: keyof CustomProfileColors, value: string) =>
-    setDraft((cur) => ({ ...cur, [key]: value }));
+  const set = (key: keyof CustomProfileColors, value: string) => {
+    const next = { ...draft, [key]: value };
+    setDraft(next);
+  };
 
   const apply = () => {
     const next = {} as CustomProfileColors;
@@ -176,6 +178,10 @@ export function ProfileThemePicker({
 }) {
   const t = useT();
   const [theme, setTheme] = useState<ProfileTheme>(() => parseProfileTheme(summary.customCss));
+  useEffect(() => {
+    const current = parseProfileTheme(summary.customCss);
+    setTheme(current);
+  }, [summary.customCss]);
   const [busy, setBusy] = useState<Busy>(null);
   const [busyPalette, setBusyPalette] = useState<ProfilePaletteId | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -248,7 +254,7 @@ export function ProfileThemePicker({
         {t("Colours visitors see on your profile. The rest of the app keeps their own theme.")}
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
         {PROFILE_PALETTE_ORDER.map((id) => {
           const palette = paletteFor(id);
           return (

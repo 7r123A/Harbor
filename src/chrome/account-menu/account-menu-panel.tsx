@@ -1,6 +1,8 @@
+import { DmUnreadBadge } from "@/components/dm/dm-unread-badge";
 import { useEffect, useState } from "react";
 import {
   Bell,
+  MessageSquare,
   ChevronDown,
   Lock,
   LogIn,
@@ -26,6 +28,7 @@ import {
   isNuvioProviderActive,
 } from "@/lib/active-profile-id";
 import { isPlaceholderName } from "@/lib/profiles";
+import { requestOpenDm, useDmUnreadBadgeCount } from "@/lib/social/dm-store";
 
 const ITEM =
   "flex items-center gap-2.5 px-4 py-2.5 text-start text-[13.5px] text-ink-muted transition-colors duration-150 ease-[var(--ease-out)] hover:bg-raised hover:text-ink active:scale-[0.98]";
@@ -72,6 +75,8 @@ export function AccountMenuPanel({
   } = ctrl;
 
   const kid = activeKid != null;
+  const dmUnreadCount = useDmUnreadBadgeCount();
+  const dmUnread = author ? dmUnreadCount : 0;
 
   const [nuvioState, setNuvioState] = useState(() => loadNuvioState());
 
@@ -250,6 +255,13 @@ export function AccountMenuPanel({
               <button onClick={openNotifications} className={ITEM}>
                 <Bell size={14} strokeWidth={2.2} />
                 {t("Notifications")}
+              </button>
+            )}
+            {author && (
+              <button onClick={() => requestOpenDm()} className={ITEM}>
+                <MessageSquare size={14} strokeWidth={2.2} />
+                {t("Messages")}
+                {dmUnread > 0 && <DmUnreadBadge count={dmUnread} className="ms-auto" />}
               </button>
             )}
             <button

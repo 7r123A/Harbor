@@ -19,6 +19,11 @@ export type RatingTarget = {
 };
 
 export type PublicRating = {
+  /** Review-hub id and its counters. Absent on a backend without the review hub. */
+  id?: string;
+  reviewId?: string;
+  reactions?: { count: number; mine: boolean };
+  comments?: { count: number };
   itemKey: string;
   mediaType: RatingMediaType;
   score: number;

@@ -29,6 +29,8 @@ import { observe, observeSettled } from "@/lib/visibility";
 import { createRequestScheduler } from "@/lib/request-scheduler";
 import { LocalDot } from "@/components/local-badge";
 import { Poster, useLocalizedPoster } from "./poster";
+import { FriendReviewBadges } from "@/components/ratings/friend-review-badges";
+import { useHoverRatingPrefetch } from "@/lib/social/hover-rating-prefetch";
 import { useProfiledEffect } from "./profiled";
 import { ListingBadgeStrip } from "./listing-badge-strip";
 import {
@@ -125,7 +127,9 @@ const PosterCard = memo(function PosterCard({
   });
   const cardStyle: CardHoverStyle =
     kids || !settings.hoverPreviewEnabled ? "none" : settings.cardHoverStyle;
+  useHoverRatingPrefetch(ref, meta.id, meta.type, !kids && settings.hoverPreviewEnabled);
   const activeCustom = cardStyle === "custom" ? getCustomHover(settings.customHoverId) : null;
+  const [hasPeeked, setHasPeeked] = useState(false);
   const inCardHover: CardHoverStyle =
     cardStyle === "default" || cardStyle === "custom" || cardStyle === "marquee"
       ? "none"
@@ -515,6 +519,7 @@ const PosterCard = memo(function PosterCard({
       onContextMenu={(e) => openContextMenu(e, { kind: "meta", meta, membership })}
       onFocus={(e) => {
         expandingCard.onFocus();
+        if (activeCustom || inCardHover !== "none") setHasPeeked(true);
         if (!expandingCard.enabled) hoverPreviewFocus(meta, e.currentTarget);
       }}
       onBlur={(e) => {
@@ -533,6 +538,7 @@ const PosterCard = memo(function PosterCard({
         ref={tiltable ? tilt.ref : undefined}
         onPointerEnter={(e) => {
           hoverPreviewEnter(meta, e.currentTarget, e.buttons);
+          if (activeCustom || inCardHover !== "none") setHasPeeked(true);
           if (tiltable) tilt.onPointerEnter();
         }}
         onPointerMove={tiltable ? tilt.onPointerMove : undefined}
@@ -578,6 +584,7 @@ const PosterCard = memo(function PosterCard({
           <CustomHoverOverlay
             config={activeCustom}
             meta={meta}
+            showFriendReviews={hasPeeked}
             onPlay={() => {
               if (meta.isCollection) openMeta(meta);
               else if (meta.type === "manga") openMangaTarget(meta);
@@ -599,6 +606,11 @@ const PosterCard = memo(function PosterCard({
             }}
           />
         ) : null}
+        {hasPeeked && inCardHover !== "none" && (
+          <div className="pointer-events-none absolute end-2 top-2 z-30 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+            <FriendReviewBadges metaId={meta.id} kind={meta.type} className="" avatarSize={22} />
+          </div>
+        )}
         <div className={badgeFade}>
           {showTop10 && <TopTenRibbon side={settings.top10RibbonSide} />}
           {hasDub && (
@@ -696,7 +708,7 @@ const PosterCard = memo(function PosterCard({
         </div>
       </div>
       {!settings.hidePosterTitles && (
-        <div className="min-h-9">
+        <div className="flex min-h-9 flex-col justify-end">
           <p
             style={{ fontSize: `${(kids ? 15 : 13) * settings.cardTitleScale}px` }}
             className={

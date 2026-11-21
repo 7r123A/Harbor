@@ -32,6 +32,7 @@ export function CommentCompose({
   onQuoteChange,
   focusSignal = 0,
   sources = NO_SOURCES,
+  placeholder,
 }: {
   onSubmit: (raw: string, parentId?: string, quote?: RatingQuote | null) => Promise<ComposeIssue>;
   sending: boolean;
@@ -42,6 +43,7 @@ export function CommentCompose({
   focusSignal?: number;
   /** Whose ratings typing "#" offers: the profile owner, you, and your friends. */
   sources?: RatingSource[];
+  placeholder?: string;
 }) {
   const t = useT();
   const [text, setText] = useState("");
@@ -149,7 +151,7 @@ export function CommentCompose({
         maxLength={COMMENT_MAX + 40}
         aria-autocomplete="list"
         aria-expanded={suggest.open}
-        placeholder={t("Leave a comment. No links. Type # to quote a rating.")}
+        placeholder={placeholder ?? t("Leave a comment. No links. Type # to quote a rating.")}
         className="harbor-scroll min-h-[52px] w-full resize-none bg-transparent px-2 py-1.5 text-[14px] leading-relaxed text-ink outline-none placeholder:text-ink-subtle"
       />
       <div className="flex items-center justify-between gap-3 px-2 pb-1">

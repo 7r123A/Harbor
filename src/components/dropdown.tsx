@@ -74,10 +74,10 @@ export function Dropdown({
       close(true);
       return true;
     });
-    const onDown = (e: MouseEvent) => {
+    const onDown = (e: Event) => {
       const t = e.target as Node;
       if (ref.current?.contains(t) || listRef.current?.contains(t)) return;
-      close(holdsFocus());
+      close(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (!isBackKey(e)) return;
@@ -85,11 +85,17 @@ export function Dropdown({
       e.stopImmediatePropagation();
       close(true);
     };
-    document.addEventListener("mousedown", onDown);
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("click", onDown, true);
+    document.addEventListener("focusin", onDown, true);
     window.addEventListener("keydown", onKey, true);
     return () => {
       removeBack();
-      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("click", onDown, true);
+      document.removeEventListener("focusin", onDown, true);
       window.removeEventListener("keydown", onKey, true);
     };
   }, [open]);
@@ -108,19 +114,28 @@ export function Dropdown({
       const minWidth = Math.min(r.width, maxWidth);
       const width = Math.min(maxWidth, Math.max(minWidth, menu?.offsetWidth ?? minWidth));
       const natural =
-        menu?.offsetHeight ?? options.length * (size === "xs" ? 32 : size === "sm" ? 36 : 40) + 8;
-      const below = window.innerHeight - r.bottom - GAP - EDGE;
-      const above = r.top - GAP - EDGE;
+        menu?.scrollHeight ||
+        menu?.offsetHeight ||
+        options.length * (size === "xs" ? 32 : size === "sm" ? 36 : 40) + 8;
+      const below = Math.max(0, window.innerHeight - r.bottom - GAP - EDGE);
+      const above = Math.max(0, r.top - GAP - EDGE);
       const up = natural > below && above > below;
-      const maxHeight = Math.max(120, Math.min(360, window.innerHeight * 0.6, up ? above : below));
-      const top = up ? Math.max(EDGE, r.top - GAP - Math.min(natural, maxHeight)) : r.bottom + GAP;
+      const maxHeight = Math.max(0, Math.min(360, window.innerHeight * 0.6, up ? above : below));
+      const height = Math.min(natural, maxHeight);
+      const top = up ? r.top - GAP - height : r.bottom + GAP;
       const rtl = getComputedStyle(el).direction === "rtl";
       const anchored = rtl ? r.right - width : r.left;
       const left = Math.min(
         Math.max(EDGE, anchored),
         Math.max(EDGE, window.innerWidth - width - EDGE),
       );
-      setBox({ top, left, minWidth, maxWidth, maxHeight, up });
+      const next = { top, left, minWidth, maxWidth, maxHeight, up };
+      setBox((previous) =>
+        previous &&
+        Object.entries(next).every(([key, value]) => previous[key as keyof MenuBox] === value)
+          ? previous
+          : next,
+      );
     };
     place();
     let raf = 0;
@@ -131,10 +146,20 @@ export function Dropdown({
         place();
       });
     };
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(reflow) : null;
+    if (ref.current) observer?.observe(ref.current);
+    if (listRef.current) observer?.observe(listRef.current);
+    const dialog = ref.current?.closest('[role="dialog"]');
+    if (dialog) observer?.observe(dialog);
+    dialog?.addEventListener("animationend", reflow, true);
+    dialog?.addEventListener("transitionend", reflow, true);
     window.addEventListener("resize", reflow);
     window.addEventListener("scroll", reflow, true);
     return () => {
       if (raf) cancelAnimationFrame(raf);
+      observer?.disconnect();
+      dialog?.removeEventListener("animationend", reflow, true);
+      dialog?.removeEventListener("transitionend", reflow, true);
       window.removeEventListener("resize", reflow);
       window.removeEventListener("scroll", reflow, true);
     };
@@ -143,7 +168,12 @@ export function Dropdown({
   const placed = box != null;
   useLayoutEffect(() => {
     if (!open || !placed) return;
-    listRef.current?.querySelector('[data-selected="true"]')?.scrollIntoView({ block: "nearest" });
+    const menu = listRef.current;
+    const selected = menu?.querySelector<HTMLElement>('[data-selected="true"]');
+    if (!menu || !selected) return;
+    if (selected.offsetTop < menu.scrollTop) menu.scrollTop = selected.offsetTop;
+    else if (selected.offsetTop + selected.offsetHeight > menu.scrollTop + menu.clientHeight)
+      menu.scrollTop = selected.offsetTop + selected.offsetHeight - menu.clientHeight;
   }, [open, placed]);
 
   const entered = useRef(false);
