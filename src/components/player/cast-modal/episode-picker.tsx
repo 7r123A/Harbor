@@ -426,8 +426,8 @@ export function EpisodePicker({
                 <button
                   type="button"
                   onClick={() => queueToggle(meta, ep)}
-                  aria-label={queued ? t("Remove from queue") : t("Add to queue")}
-                  title={queued ? t("In your queue") : t("Add to queue")}
+                  aria-label={queued ? t("Remove from watching queue") : t("Add to watching queue")}
+                  title={queued ? t("In your watching queue") : t("Add to watching queue")}
                   className={`absolute right-1.5 top-1.5 flex h-8 w-8 items-center justify-center rounded-full ring-1 backdrop-blur-md transition-all duration-200 ${
                     queued
                       ? "bg-accent text-black ring-black/10"

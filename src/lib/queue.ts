@@ -16,15 +16,28 @@ export type QueueItem = {
   addedAt: number;
 };
 
+export type QueueHistoryItem = QueueItem & {
+  recordedAt: number;
+  reason: "completed" | "skipped";
+};
+
+const HISTORY_LIMIT = 20;
+
 const KEY = "harbor.queue.v1";
 const SLEEP_KEY = "harbor.queue.sleepAtEnd.v1";
 const RESUME_KEY = "harbor.queue.resumeItem.v1";
 
 const PREFIX = "harbor.queue.v2.";
 const MIGRATION_KEY = "harbor.queue.migration.v2";
-type QueueState = { items: QueueItem[]; resumeItemId: string | null; sleepAtEnd: boolean };
+type QueueState = {
+  items: QueueItem[];
+  history: QueueHistoryItem[];
+  resumeItemId: string | null;
+  sleepAtEnd: boolean;
+};
 let scope: string | null | undefined;
 let items: QueueItem[] = [];
+let history: QueueHistoryItem[] = [];
 let resumeItemId: string | null = null;
 let sleepAtEnd = false;
 let playingKey: string | null = null;
@@ -88,6 +101,20 @@ function syncScope(): string | null {
       if (parsed && Array.isArray(parsed.items)) {
         state = {
           items: parsed.items,
+          history: Array.isArray(parsed.history)
+            ? parsed.history
+                .filter(
+                  (entry: QueueHistoryItem | null) =>
+                    entry !== null &&
+                    typeof entry === "object" &&
+                    typeof entry.id === "string" &&
+                    typeof entry.meta?.id === "string" &&
+                    typeof entry.recordedAt === "number" &&
+                    Number.isFinite(entry.recordedAt) &&
+                    (entry.reason === "completed" || entry.reason === "skipped"),
+                )
+                .slice(0, HISTORY_LIMIT)
+            : [],
           resumeItemId: typeof parsed.resumeItemId === "string" ? parsed.resumeItemId : null,
           sleepAtEnd: parsed.sleepAtEnd === true,
         };
@@ -97,6 +124,7 @@ function syncScope(): string | null {
     }
   }
   items = state?.items ?? [];
+  history = state?.history ?? [];
   resumeItemId = state?.resumeItemId ?? null;
   sleepAtEnd = state?.sleepAtEnd ?? false;
   return next;
@@ -104,7 +132,7 @@ function syncScope(): string | null {
 
 function persist(): void {
   if (!scope) return;
-  const state = { items, resumeItemId, sleepAtEnd };
+  const state: QueueState = { items, history, resumeItemId, sleepAtEnd };
   cache.set(scope, state);
   persistCritical(scope, JSON.stringify(state));
   listeners.forEach((l) => l());
@@ -157,6 +185,32 @@ export function queueRemove(id: string): void {
   if (!syncScope()) return;
   if (!items.some((item) => item.id === id)) return;
   replaceQueueItems(items.filter((item) => item.id !== id));
+}
+
+export function queueArchive(id: string, reason: QueueHistoryItem["reason"]): boolean {
+  if (!syncScope()) return false;
+
+  const item = items.find((entry) => entry.id === id);
+  if (!item) return false;
+
+  history = [
+    {
+      ...item,
+      id: rid(),
+      recordedAt: Date.now(),
+      reason,
+    },
+    ...history,
+  ].slice(0, HISTORY_LIMIT);
+
+  replaceQueueItems(items.filter((entry) => entry.id !== id));
+  return true;
+}
+
+export function queueHistoryClear(): void {
+  if (!syncScope() || history.length === 0) return;
+  history = [];
+  persist();
 }
 
 export function queueToggle(meta: Meta, episode?: PlayEpisode): void {
@@ -217,6 +271,15 @@ export function useQueue(): QueueItem[] {
       return items;
     },
   );
+}
+
+export function getQueueHistory(): QueueHistoryItem[] {
+  syncScope();
+  return history;
+}
+
+export function useQueueHistory(): QueueHistoryItem[] {
+  return useSyncExternalStore(subscribe, getQueueHistory, getQueueHistory);
 }
 
 export function useIsQueued(meta: Meta, episode?: PlayEpisode): boolean {

@@ -8,7 +8,13 @@ import { createPortal } from "react-dom";
 import { JSDOM } from "jsdom";
 import { useQueueGesture } from "../src/components/queue-basket/use-queue-gesture.ts";
 
-async function setup(extraDependencies: Record<string, unknown> = {}) {
+async function setup({
+  queueIds = ["a", "b", "c"],
+  extraDependencies = {},
+}: {
+  queueIds?: string[];
+  extraDependencies?: Record<string, unknown>;
+} = {}) {
   const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "https://fixture.invalid" });
   Object.assign(globalThis, {
     window: dom.window,
@@ -41,26 +47,129 @@ async function setup(extraDependencies: Record<string, unknown> = {}) {
       this.open = false;
     },
   });
-  let queue = ["a", "b", "c"].map((id) => ({
+  let queue = queueIds.map((id) => ({
     id,
     meta: { id, name: id, type: "movie" },
     addedAt: 1,
   }));
+  let history = [
+    {
+      id: "history-a",
+      meta: {
+        id: "history-movie",
+        name: "History movie",
+        type: "movie",
+      },
+      addedAt: 1,
+      recordedAt: 2,
+      reason: "skipped" as const,
+    },
+  ];
   const listeners = new Set<() => void>();
   const removed: string[] = [];
+  const openPickerCalls: Array<{
+    meta: unknown;
+    episode: unknown;
+    options: Record<string, unknown>;
+  }> = [];
   const notify = () => listeners.forEach((fn) => fn());
+  const clearQueue = () => {
+    queue = [];
+    notify();
+  };
   const empty = () => null;
   const dependencies = {
+    "@/lib/settings": {
+      useSettings: () => ({
+        settings: { instantPlay: true },
+      }),
+    },
+
+    "@/lib/view": {
+      usePlayerNavigation: () => ({
+        openPicker: (meta: unknown, episode: unknown, options: Record<string, unknown>) => {
+          openPickerCalls.push({ meta, episode, options });
+        },
+      }),
+    },
+
+    "./queue-history-panel": {
+      QueueHistoryPanel: ({
+        history: items,
+        onPlay,
+        onClear,
+      }: {
+        history: typeof history;
+        onPlay: (item: (typeof history)[number]) => void;
+        onClear: () => void;
+      }) => {
+        const item = items[0];
+        if (!item) return null;
+
+        return React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              "data-history-item": "",
+              onClick: () => onPlay(item),
+            },
+            item.meta.name,
+          ),
+          React.createElement(
+            "button",
+            {
+              type: "button",
+              "data-clear-history": "",
+              onClick: onClear,
+            },
+            "Clear history",
+          ),
+        );
+      },
+    },
     "./use-queue-gesture": { useQueueGesture },
     react: React,
     "react/jsx-runtime": jsxRuntime,
     "react-dom": { createPortal },
-    "lucide-react": { ListVideo: empty, Play: empty, Trash2: empty, X: empty },
+    "lucide-react": {
+      ArrowLeft: empty,
+      History: empty,
+      ListVideo: empty,
+      Play: empty,
+      Trash2: empty,
+      X: empty,
+    },
     "@/hooks/use-start-queue": { useStartQueue: () => () => false },
     "@/hooks/use-queue-surface": { useQueueSurface: () => true },
-    "@/lib/i18n": { useT: () => (key: string) => key },
+    "@/lib/i18n": {
+      useT: () => (key: string, values?: Record<string, string | number>) =>
+        Object.entries(values ?? {}).reduce(
+          (text, [name, value]) => text.replaceAll(`{${name}}`, String(value)),
+          key,
+        ),
+    },
     "./queue-basket.css": {},
-    "./queue-clear-confirm": { QueueClearConfirm: empty },
+    "./queue-clear-confirm": {
+      QueueClearConfirm: ({
+        target,
+        onConfirm,
+      }: {
+        target: "queue" | "history";
+        onConfirm: () => void;
+      }) =>
+        React.createElement(
+          "button",
+          {
+            type: "button",
+            "data-clear-confirm": target,
+            onClick: onConfirm,
+          },
+          `Confirm ${target}`,
+        ),
+    },
     "@/lib/queue": {
       useQueue: () =>
         React.useSyncExternalStore(
@@ -72,11 +181,13 @@ async function setup(extraDependencies: Record<string, unknown> = {}) {
           },
           () => queue,
         ),
-      useQueueResumeItem: () => null,
-      queueClear: () => {
-        queue = [];
+      useQueueHistory: () => history,
+      queueHistoryClear: () => {
+        history = [];
         notify();
       },
+      useQueueResumeItem: () => null,
+      queueClear: clearQueue,
       queueRemove: (id: string) => {
         removed.push(id);
         queue = queue.filter((item) => item.id !== id);
@@ -164,6 +275,9 @@ async function setup(extraDependencies: Record<string, unknown> = {}) {
     touch,
     removed,
     ids: () => queue.map((item) => item.id),
+    openPickerCalls,
+    clearQueue,
+    historyCount: () => history.length,
     cleanup: async () => {
       await React.act(() => root.unmount());
       dom.window.close();
@@ -273,6 +387,211 @@ test("canceling an activated touch drag outside never removes an item", async (t
     assert.equal(document.querySelector(".queue-basket-drag-preview"), null);
   } finally {
     t.mock.timers.reset();
+    await h.cleanup();
+  }
+});
+
+test("queue history opens from the popup and plays without rejoining the queue", async () => {
+  const h = await setup();
+
+  try {
+    const historyButton = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Watching history"]',
+    );
+
+    assert.ok(historyButton);
+    assert.equal(historyButton.disabled, false);
+
+    await React.act(() => historyButton.click());
+
+    assert.equal(document.querySelector("h2")?.textContent, "Watching history");
+
+    const historyItem = document.querySelector<HTMLButtonElement>("[data-history-item]");
+    assert.ok(historyItem);
+
+    await React.act(() => historyItem.click());
+
+    assert.deepEqual(h.openPickerCalls, [
+      {
+        meta: {
+          id: "history-movie",
+          name: "History movie",
+          type: "movie",
+        },
+        episode: undefined,
+        options: {
+          autoPlay: true,
+          resume: true,
+        },
+      },
+    ]);
+
+    assert.equal("queueItemId" in h.openPickerCalls[0].options, false);
+    assert.deepEqual(h.ids(), ["a", "b", "c"]);
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test("queue history clears only after confirmation without changing the queue", async () => {
+  const h = await setup();
+
+  try {
+    const historyButton = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Watching history"]',
+    );
+    assert.ok(historyButton);
+
+    await React.act(() => historyButton.click());
+
+    const clearHistory = document.querySelector<HTMLButtonElement>("[data-clear-history]");
+    assert.ok(clearHistory);
+    await React.act(() => clearHistory.click());
+
+    assert.equal(h.historyCount(), 1);
+    assert.deepEqual(h.ids(), ["a", "b", "c"]);
+
+    const confirm = document.querySelector<HTMLButtonElement>('[data-clear-confirm="history"]');
+    assert.ok(confirm);
+    confirm.focus();
+    assert.equal(document.activeElement, confirm);
+    await React.act(() => confirm.click());
+
+    assert.equal(h.historyCount(), 0);
+    assert.deepEqual(h.ids(), ["a", "b", "c"]);
+    assert.equal(document.querySelector("h2")?.textContent, "Watching queue");
+    assert.equal(
+      document.activeElement,
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close"]'),
+    );
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test("reopening the popup returns from history to the watching queue", async () => {
+  const h = await setup();
+
+  try {
+    const historyButton = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Watching history"]',
+    );
+    const dialog = document.querySelector<HTMLDialogElement>(".queue-basket-dialog");
+    const trigger = document.querySelector<HTMLButtonElement>(".queue-basket-trigger");
+
+    assert.ok(historyButton);
+    assert.ok(dialog);
+    assert.ok(trigger);
+
+    await React.act(() => historyButton.click());
+    assert.equal(document.querySelector("h2")?.textContent, "Watching history");
+
+    await React.act(() => dialog.click());
+    await React.act(() => trigger.click());
+
+    assert.equal(document.querySelector("h2")?.textContent, "Watching queue");
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test("watching history stays accessible after the final queue item is removed", async () => {
+  const h = await setup();
+
+  try {
+    await React.act(() => h.clearQueue());
+
+    const trigger = document.querySelector<HTMLButtonElement>(".queue-basket-trigger");
+    assert.ok(trigger, "history-only state must keep a floating entry point");
+    assert.equal(
+      trigger.querySelector(".queue-basket-trigger-label")?.textContent?.trim(),
+      "Watching history",
+    );
+    assert.match(trigger.getAttribute("aria-label") ?? "", /Watching history.*1 in history/);
+    assert.equal(trigger.querySelector(".queue-basket-count")?.textContent?.trim(), "1");
+    assert.equal(document.querySelector("h2")?.textContent, "Watching history");
+    assert.ok(document.querySelector("[data-history-item]"));
+    assert.equal(document.querySelector("[data-clear-confirm=queue]"), null);
+
+    await React.act(() =>
+      document.querySelector<HTMLButtonElement>('button[aria-label="Close"]')!.click(),
+    );
+    assert.equal(trigger.hidden, false);
+    await React.act(() => trigger.click());
+    assert.equal(document.querySelector("h2")?.textContent, "Watching history");
+
+    await React.act(() =>
+      document.querySelector<HTMLButtonElement>("[data-clear-history]")!.click(),
+    );
+    await React.act(() =>
+      document.querySelector<HTMLButtonElement>('[data-clear-confirm="history"]')!.click(),
+    );
+    assert.equal(h.historyCount(), 0);
+    assert.equal(document.querySelector(".queue-basket-trigger"), null);
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test("clicking inside keeps the queue open while clicking the backdrop closes it", async () => {
+  const h = await setup();
+
+  try {
+    const trigger = document.querySelector<HTMLButtonElement>(".queue-basket-trigger");
+    const dialog = document.querySelector<HTMLDialogElement>(".queue-basket-dialog");
+    const header = dialog?.querySelector<HTMLElement>("header");
+
+    assert.ok(trigger);
+    assert.ok(dialog);
+    assert.ok(header);
+
+    assert.equal(trigger.getAttribute("aria-expanded"), "true");
+    assert.equal(trigger.hidden, true);
+
+    await React.act(() => header.click());
+    assert.equal(trigger.getAttribute("aria-expanded"), "true");
+    assert.equal(trigger.hidden, true);
+
+    await React.act(() => dialog.click());
+    assert.equal(trigger.getAttribute("aria-expanded"), "false");
+    assert.equal(trigger.hidden, false);
+    assert.equal(dialog.open, false);
+
+    assert.equal(document.activeElement, trigger);
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test("queue count uses the plural item label", async () => {
+  const h = await setup();
+
+  try {
+    const trigger = document.querySelector<HTMLButtonElement>(".queue-basket-trigger");
+    const description = document.querySelector("header p");
+
+    assert.ok(trigger);
+    assert.equal(trigger.querySelector(".queue-basket-trigger-label")?.textContent, "Queue");
+    assert.match(trigger.getAttribute("aria-label") ?? "", /^Watching queue ·/);
+    assert.equal(document.querySelector("h2")?.textContent, "Watching queue");
+    assert.equal(description?.textContent, "3 items in queue");
+    assert.match(trigger.getAttribute("aria-label") ?? "", /3 items in queue/);
+  } finally {
+    await h.cleanup();
+  }
+});
+
+test("queue count uses the singular item label", async () => {
+  const h = await setup({ queueIds: ["a"] });
+
+  try {
+    const trigger = document.querySelector<HTMLButtonElement>(".queue-basket-trigger");
+    const description = document.querySelector("header p");
+
+    assert.ok(trigger);
+    assert.equal(description?.textContent, "1 item in queue");
+    assert.match(trigger.getAttribute("aria-label") ?? "", /1 item in queue/);
+  } finally {
     await h.cleanup();
   }
 });

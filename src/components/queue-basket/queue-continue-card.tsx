@@ -5,6 +5,7 @@ import { queueClear, useQueue, useQueueResumeItem } from "@/lib/queue";
 import "./queue-continue-card.css";
 import { useEffect, useState } from "react";
 import { QueueClearConfirm } from "./queue-clear-confirm";
+import { QueueContinueTitle } from "./queue-continue-title";
 
 export function QueueContinueCard() {
   const t = useT();
@@ -19,18 +20,32 @@ export function QueueContinueCard() {
 
   if (!resumeItem) return null;
 
-  const title = resumeItem.episode
-    ? resumeItem.episode.name ||
-      `${resumeItem.meta.name} · S${resumeItem.episode.season} E${resumeItem.episode.episode}`
+  const episode = resumeItem.episode;
+  const title = episode
+    ? [
+        resumeItem.meta.name,
+        `S${episode.imdbSeason ?? episode.season} E${episode.imdbEpisode ?? episode.episode}`,
+        episode.name,
+      ]
+        .filter(Boolean)
+        .join(" · ")
     : resumeItem.meta.name;
 
-  const posters = Array.from(
+  const resumeIndex = queue.findIndex((item) => item.id === resumeItem.id);
+  const remainingQueue =
+    resumeIndex >= 0
+      ? queue.slice(resumeIndex + 1)
+      : queue.filter((item) => item.id !== resumeItem.id);
+
+  const currentPoster = resumeItem.meta.poster;
+  const nextPosters = Array.from(
     new Set(
-      [resumeItem, ...queue]
+      remainingQueue
         .map((item) => item.meta.poster)
-        .filter((poster): poster is string => Boolean(poster)),
+        .filter((poster): poster is string => Boolean(poster))
+        .filter((poster) => poster !== currentPoster),
     ),
-  ).slice(0, 4);
+  ).slice(0, 3);
 
   return (
     <div className="queue-continue-card">
@@ -38,28 +53,34 @@ export function QueueContinueCard() {
         type="button"
         className="queue-continue-card__play"
         onClick={() => startQueue({ resume: true })}
-        aria-label={`${t("Continue your queue?")} ${title}`}
+        aria-label={`${t("Continue your watching queue?")} ${title}`}
       >
         <span
           className="queue-continue-card__posters"
-          data-count={posters.length}
+          data-next-count={nextPosters.length}
           aria-hidden="true"
         >
-          {posters.length > 0 ? (
-            posters.map((poster) => <img key={poster} src={poster} alt="" draggable={false} />)
-          ) : (
-            <ListVideo size={40} />
-          )}
+          <span className="queue-continue-card__poster queue-continue-card__poster--current">
+            {currentPoster ? (
+              <img src={currentPoster} alt="" draggable={false} />
+            ) : (
+              <ListVideo size={40} />
+            )}
+          </span>
+
+          {nextPosters.map((poster) => (
+            <span key={poster} className="queue-continue-card__poster">
+              <img src={poster} alt="" draggable={false} />
+            </span>
+          ))}
         </span>
 
         <span className="queue-continue-card__shade" aria-hidden="true" />
 
         <span className="queue-continue-card__caption">
           <Play size={17} fill="currentColor" aria-hidden="true" />
-          <span className="queue-continue-card__heading">{t("Continue your queue?")}</span>
-          <span className="queue-continue-card__title" title={title}>
-            {title}
-          </span>
+          <span className="queue-continue-card__heading">{t("Continue your watching queue?")}</span>
+          <QueueContinueTitle text={title} />
         </span>
       </button>
 

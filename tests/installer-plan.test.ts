@@ -12,10 +12,10 @@ import {
 
 const ENTRY = {
   version: "1.0.1",
-  win: "https://github.com/Harborofficial/Harbor/releases/download/v1.0.1-beta/harbor-shipyard-v1.0.1-beta.exe",
+  win: "https://github.com/HarborCommunity/Harbor/releases/download/v1.0.1-beta/harbor-shipyard-v1.0.1-beta.exe",
   winSig:
-    "https://github.com/Harborofficial/Harbor/releases/download/v1.0.1-beta/harbor-shipyard-v1.0.1-beta.exe.sig",
-  mac: "https://github.com/Harborofficial/Harbor/releases/download/v1.0.1-beta/Harbor_1.0.1_aarch64.dmg",
+    "https://github.com/HarborCommunity/Harbor/releases/download/v1.0.1-beta/harbor-shipyard-v1.0.1-beta.exe.sig",
+  mac: "https://github.com/HarborCommunity/Harbor/releases/download/v1.0.1-beta/Harbor_1.0.1_aarch64.dmg",
 };
 
 const WINDOWS: InstallerPlatform = { tauri: true, windows: true, mac: false };

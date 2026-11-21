@@ -394,15 +394,15 @@ test("the official queue command remains available on queue-enabled surfaces", a
   };
   try {
     await h.open(target);
-    assert.ok(h.labels().includes("Add to queue"));
+    assert.ok(h.labels().includes("Add to watching queue"));
     const add = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent === "Add to queue",
+      (button) => button.textContent === "Add to watching queue",
     )!;
     await React.act(async () => add.click());
     assert.deepEqual(h.queued, ["queue-movie"]);
     await h.open(target);
     const existing = [...document.querySelectorAll<HTMLButtonElement>("button")].find(
-      (button) => button.textContent === "In your queue",
+      (button) => button.textContent === "In your watching queue",
     )!;
     assert.ok(existing);
     assert.equal(existing.disabled, true);

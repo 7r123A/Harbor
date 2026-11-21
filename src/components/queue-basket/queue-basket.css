@@ -21,6 +21,10 @@
     border-color 160ms ease;
 }
 
+.queue-basket-trigger[hidden] {
+  display: none;
+}
+
 .queue-basket-trigger:dir(ltr) {
   inset-inline-end: calc(24px + env(safe-area-inset-right, 0px));
 }
@@ -89,15 +93,54 @@
 }
 
 .queue-basket-dialog {
+  --queue-basket-top-clearance: max(80px, env(safe-area-inset-top, 0px));
+  --queue-basket-bottom-clearance: max(
+    calc(7rem + env(safe-area-inset-bottom, 0px)),
+    calc(
+      var(--harbor-dock-gap, var(--harbor-viewport-bottom, 0px)) + 12px +
+        env(safe-area-inset-bottom, 0px)
+    )
+  );
+  --queue-basket-max-height: min(
+    680px,
+    max(
+      0px,
+      calc(100dvh - var(--queue-basket-top-clearance) - var(--queue-basket-bottom-clearance))
+    )
+  );
+
   position: fixed;
   inset: auto;
   inset-inline-end: 1rem;
-  bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
-  width: min(30rem, calc(100vw - 2rem));
+  bottom: var(--queue-basket-bottom-clearance);
+  width: min(
+    30rem,
+    calc(100vw - 2rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))
+  );
   max-width: none;
-  max-height: 80dvh;
+  max-height: var(--queue-basket-max-height);
   margin: 0;
-  overflow: visible;
+  overflow: hidden;
+}
+
+.queue-basket-dialog:dir(ltr) {
+  inset-inline-end: max(1rem, env(safe-area-inset-right, 0px));
+}
+
+.queue-basket-dialog:dir(rtl) {
+  inset-inline-end: max(1rem, env(safe-area-inset-left, 0px));
+}
+
+.queue-basket-panel {
+  display: flex;
+  max-height: var(--queue-basket-max-height);
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.queue-basket-panel > header,
+.queue-basket-panel > footer {
+  flex-shrink: 0;
 }
 
 .queue-basket-dialog::backdrop {
@@ -139,6 +182,20 @@
   box-shadow:
     0 16px 40px rgb(0 0 0 / 35%),
     0 0 0 2px #ef4444;
+}
+
+@media (max-width: 480px) {
+  .queue-basket-dialog {
+    width: calc(100vw - 1rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  }
+
+  .queue-basket-dialog:dir(ltr) {
+    inset-inline-end: max(0.5rem, env(safe-area-inset-right, 0px));
+  }
+
+  .queue-basket-dialog:dir(rtl) {
+    inset-inline-end: max(0.5rem, env(safe-area-inset-left, 0px));
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

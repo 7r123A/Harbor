@@ -3,9 +3,10 @@ import { normalizeReleaseTag, type GithubRelease } from "./github-release-format
 import { payloadVersionFor } from "./installer-plan";
 import type { HandoffPlan, HandoffProbe } from "./handoff";
 import type { NormalUpdateChannel } from "./channel";
+import { GITHUB_RELEASES_API_URL, RELEASES_URL } from "./release-links";
 
-const API = "https://api.github.com/repos/Harborofficial/Harbor/releases";
-const RELEASES = "https://github.com/Harborofficial/Harbor/releases";
+const API = GITHUB_RELEASES_API_URL;
+const RELEASES = RELEASES_URL;
 
 export function compareReleaseVersions(a: string, b: string): number {
   const left = a

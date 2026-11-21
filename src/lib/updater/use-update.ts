@@ -31,6 +31,7 @@ import {
   saveBetaReturnContext,
 } from "./beta-return";
 import { launchHandoff, probeHandoff, stageHandoff, type HandoffPlan } from "./handoff";
+import { RELEASES_URL } from "./release-links";
 
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 const DISMISS_KEY = "harbor.update.dismissed";
@@ -665,7 +666,7 @@ export async function openManualDownload(): Promise<void> {
   }
   if (import.meta.env.DEV) return;
   const { openUrl } = await import("@/lib/window");
-  openUrl(releaseDownloadUrl || "https://github.com/Harborofficial/Harbor/releases");
+  openUrl(releaseDownloadUrl || RELEASES_URL);
 }
 
 export async function openHandoffDownload(): Promise<void> {

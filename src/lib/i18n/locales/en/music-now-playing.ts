@@ -42,7 +42,7 @@ const musicNowPlaying: Record<string, string> = {
   "music.dock.part.quality": "Quality badge",
   "music.dock.part.source": "Source",
   "music.dock.part.time": "Time",
-  "music.dock.part.queue": "Queue",
+  "music.dock.part.queue": "Listening queue",
   "music.dock.part.like": "Like",
 
   "music.now.colors": "Album colors",

@@ -3580,6 +3580,51 @@ const uiFallback: Record<string, string> = {
   "Refract could not confirm the watchlist change. Try again.":
     "Refract could not confirm the watchlist change. Try again.",
   "Refract HTTP {status}": "Refract HTTP {status}",
+  // New v1.0.4 interface strings use the English fallback until translated per locale.
+  "music.spotify.playbackChecking": "Checking playback connection",
+  "music.spotify.playbackConnected": "Local playback connected",
+  "music.youtubeAccount.signedIn": "Signed in as {account}.",
+  "music.youtubeAccount.intro":
+    "Harbor browses YouTube Music anonymously. Sign in inside the YouTube Music window to use your own home, mixes and a signed-in stream.",
+  "music.youtubeAccount.open": "Open YouTube Music",
+  "music.youtubeAccount.signOut": "Sign out",
+  "music.youtubeAccount.checking": "Checking the session",
+  "music.youtubeAccount.use": "Use this session",
+  "music.youtubeAccount.sessionNote":
+    "Harbor borrows the session from that window and keeps it in memory; no password is stored.",
+  "music.youtubeAccount.hint":
+    "Sign in inside the YouTube Music window, then choose Use this session.",
+  "music.ytLibrary.notSignedIn":
+    "Sign in to YouTube Music to see your playlists, liked songs and artists here.",
+  "music.ytLibrary.title": "YouTube Music library",
+  "music.ytLibrary.empty": "Your YouTube Music library is empty.",
+  "Install as a second copy and keep the existing one":
+    "Install as a second copy and keep the existing one",
+  "Could not remove source": "Could not remove source",
+  pack: "pack",
+  works: "works",
+  windows: "windows",
+  "Not downloaded yet": "Not downloaded yet",
+  "Anime identity data": "Anime identity data",
+  "Delete local data": "Delete local data",
+  "Anime identity (experimental)": "Anime identity (experimental)",
+  "Download a local anime mapping database so Continue Watching can group parts of the same show and write progress to the correct tracker entry. Off by default.":
+    "Download a local anime mapping database so Continue Watching can group parts of the same show and write progress to the correct tracker entry. Off by default.",
+  "Use the local anime identity database": "Use the local anime identity database",
+  "Downloads about six megabytes once a week and keeps a small local database. Without it, the app behaves exactly as before.":
+    "Downloads about six megabytes once a week and keeps a small local database. Without it, the app behaves exactly as before.",
+  "Repair verified anime Continue Watching identities":
+    "Repair verified anime Continue Watching identities",
+  "Opt in to a display-only correction when a saved native stream or exact catalog episode proof and the local database establish one anime owner. Saved progress stays intact; external tracker, next-up and ambiguous cards are untouched.":
+    "Opt in to a display-only correction when a saved native stream or exact catalog episode proof and the local database establish one anime owner. Saved progress stays intact; external tracker, next-up and ambiguous cards are untouched.",
+  "Use the anime database for live scrobbling": "Use the anime database for live scrobbling",
+  "Resolve an anime episode once as playback starts and use its verified owner for AniList, MAL, Simkl, Trakt and PublicMetaDB. Does not backfill history or synchronize accounts. Off by default.":
+    "Resolve an anime episode once as playback starts and use its verified owner for AniList, MAL, Simkl, Trakt and PublicMetaDB. Does not backfill history or synchronize accounts. Off by default.",
+  "Licence texts and attribution notices": "Licence texts and attribution notices",
+  "Licence texts for bundled software and attribution notices for external data sources. Select any entry to save a copy.":
+    "Licence texts for bundled software and attribution notices for external data sources. Select any entry to save a copy.",
+  "Add up to {n} screenshots to show your theme in action. Screenshots are optional.":
+    "Add up to {n} screenshots to show your theme in action. Screenshots are optional.",
 };
 
 export default uiFallback;

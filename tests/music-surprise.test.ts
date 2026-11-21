@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { selectSourceCandidate } from "../src/lib/music/source-selection.ts";
 import * as selection from "../src/lib/music/surprise-selection";
 import * as automation from "../src/lib/music/queue-automation";
 import * as daily from "../src/lib/music/daily-discovery-selection";
@@ -709,6 +710,7 @@ function playerEntries() {
   ).outputText;
   const scope = {
     ...automation,
+    selectSourceCandidate,
     state,
     initializeMusic: () => initialized.promise,
     queueTrackKey,

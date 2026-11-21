@@ -112,11 +112,19 @@ if (-not $SkipCore) {
   $oldTarget = $env:CARGO_TARGET_DIR
   try {
     $env:CARGO_TARGET_DIR = $coreDir
+    # Prepare both Cargo OUT_DIR layouts before ort-sys copies DLLs.
+    # Missing examples/deps destinations cause ort-sys to panic on Windows.
+    . (Join-Path $PSScriptRoot 'shipyard-ort-runtime.ps1')
+    $coreReleaseDir = Join-Path $coreDir 'release'
+    Initialize-OrtRuntimeDirectories -ReleaseDir $coreReleaseDir
     Invoke-Tool 'cargo' @(
       'build', '--manifest-path', 'src-tauri/Cargo.toml', '--locked',
       '--release', '--no-default-features', '--features',
       'games,plugins,music,music-sidecar,asr-whisper,tauri/custom-protocol', '--bin', 'harbor'
     )
+    # Copy ONNX Runtime from nested Cargo build layouts into release,
+    # where Shipyard collects harbor.exe and its native dependencies.
+    Stage-OrtRuntimeDlls -ReleaseDir $coreReleaseDir
   } finally {
     $env:CARGO_TARGET_DIR = $oldTarget
   }

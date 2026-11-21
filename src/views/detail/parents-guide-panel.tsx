@@ -176,7 +176,9 @@ export function ParentsGuidePanel({
             <ChevronDown
               size={13}
               strokeWidth={2.2}
-              className={`transition-transform duration-200 ${sectionCollapsed ? "" : "rotate-180"}`}
+              aria-hidden="true"
+              focusable="false"
+              className={`pointer-events-none transition-transform duration-200 ${sectionCollapsed ? "" : "rotate-180"}`}
             />
           </button>
           {imdbGuideUrl && (
@@ -278,13 +280,18 @@ function CategoryRow({
     <div className="flex flex-col overflow-hidden rounded-lg border border-edge-soft/60 bg-white/[0.04] transition-colors duration-150 hover:bg-white/[0.07]">
       <button
         type="button"
+        onPointerDown={(event) => {
+          // WebView2 can retarget pointerup/click to the card when maximized,
+          // particularly over the chevron. Keep the full gesture on the button.
+          if (event.button === 0) event.currentTarget.setPointerCapture(event.pointerId);
+        }}
         onClick={onToggle}
         aria-expanded={expanded}
         aria-controls={contentId}
         className="flex w-full cursor-pointer items-center justify-between gap-3 px-4 py-3.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       >
         {/* Left side: Category Icon + Category Label */}
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="pointer-events-none flex min-w-0 items-center gap-3">
           <CategoryIcon
             size={16}
             strokeWidth={2}
@@ -295,7 +302,7 @@ function CategoryRow({
         </div>
 
         {/* Right side: Badge + Thin Boxy Meter + Chevron */}
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="pointer-events-none flex shrink-0 items-center gap-3">
           {/* Severity Badge */}
           <span
             className={`rounded-md border px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wider ${color.badgeClass}`}
@@ -318,7 +325,9 @@ function CategoryRow({
           {/* Chevron */}
           <ChevronDown
             size={16}
-            className={`text-ink-muted transition-transform duration-200 ${
+            aria-hidden="true"
+            focusable="false"
+            className={`pointer-events-none shrink-0 text-ink-muted transition-transform duration-200 ${
               expanded ? "rotate-180 text-ink" : ""
             }`}
           />

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { unzipSync } from "fflate";
+import { isOrtRuntimeFile, listOrtRuntimeFiles } from "./ort-runtime-files.mjs";
 
 const read = (path) => readFileSync(new URL("../" + path, import.meta.url));
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -15,6 +16,7 @@ const musicBinary = "components/music/harbor-music-module.exe";
 const musicModuleExe = process.env.HARBOR_MUSIC_MODULE_DIR
   ? resolve(process.env.HARBOR_MUSIC_MODULE_DIR, "harbor-music-module.exe")
   : new URL("../src-tauri/resources/music-module/harbor-music-module.exe", import.meta.url);
+const isOrtRuntime = isOrtRuntimeFile;
 const extensionsBinary = "capstan/harbor-extensions-module.exe";
 const extensionsManifest = "capstan/extensions-module.json";
 const entries = unzipSync(payload, {
@@ -23,6 +25,7 @@ const entries = unzipSync(payload, {
     return (
       canonical === "harbor.exe" ||
       canonical === "uninstall.exe" ||
+      isOrtRuntime(canonical) ||
       canonical === musicBinary ||
       canonical === extensionsBinary ||
       canonical === extensionsManifest ||
@@ -48,6 +51,18 @@ assert.equal(
   hash(read("installer/src-tauri/target/release/harbor-uninstall.exe")),
   "Stale uninstaller payload",
 );
+if (experimentalCore) {
+  const coreReleaseDir = dirname(resolve(experimentalCore));
+  const runtimeFiles = listOrtRuntimeFiles(coreReleaseDir);
+  for (const name of runtimeFiles) {
+    assert.ok(canonicalEntries[name], `Missing ${name} from the managed payload`);
+    assert.equal(
+      hash(canonicalEntries[name]),
+      hash(readFileSync(join(coreReleaseDir, name))),
+      `Wrong ${name} in the managed payload`,
+    );
+  }
+}
 assert.ok(
   !Object.keys(canonicalEntries).some((name) => name.startsWith("variants/")),
   "A second Harbor executable variant was accidentally embedded",

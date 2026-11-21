@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { selectSourceCandidate } from "../src/lib/music/source-selection.ts";
 
 function load(file, mocks) {
   const source = readFileSync(new URL(`../src/lib/music/${file}.ts`, import.meta.url), "utf8");
@@ -89,6 +90,7 @@ function fixture({ preferred = null, candidates = [] } = {}) {
       unpinSourceFor: noop,
     },
     "@/lib/platform": { isWindowsDesktop: () => false },
+    "./source-selection": { selectSourceCandidate },
     "./source-version": load("source-version", {}),
     "./queue-source": load("queue-source", {}),
     "./transport": {

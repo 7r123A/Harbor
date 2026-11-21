@@ -1546,6 +1546,7 @@ mod tests {
             thumb_width_px: None,
             cache_image: None,
             allow_image_challenge: Some(true),
+            return_image_asset: None,
         };
         assert!(super::can_recover_image(&request));
         assert!(super::can_open_solver(&request));

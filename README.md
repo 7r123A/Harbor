@@ -403,7 +403,7 @@ Harbor is built to keep your data on your machine.
 
 ## Install
 
-Download the latest build for macOS or Windows from the [Releases page](https://github.com/Harborofficial/Harbor/releases), use the [unofficial Linux packages](https://github.com/Thunderhawkk/harbor-linux), or open Harbor in your browser.
+Download the latest build for macOS or Windows from the [Releases page](https://github.com/HarborCommunity/Harbor/releases), use the [unofficial Linux packages](https://github.com/Thunderhawkk/harbor-linux), or open Harbor in your browser.
 
 | Platform    | Format                                                                                                   |
 | ----------- | -------------------------------------------------------------------------------------------------------- |
@@ -665,10 +665,10 @@ Thank you to everyone, named and unnamed, whose open work Harbor builds upon.
 
 <!-- reference links -->
 
-[releases]: https://github.com/harborstremio/harbor/releases
+[releases]: https://github.com/HarborCommunity/Harbor/releases
 [linux-packages]: https://github.com/AdityaHebballe/harbor-linux-builds
-[issues]: https://github.com/harborstremio/harbor/issues
-[discussions]: https://github.com/harborstremio/harbor/discussions
+[issues]: https://github.com/HarborCommunity/Harbor/issues
+[discussions]: https://github.com/HarborCommunity/Harbor/discussions
 [license]: ./LICENSE
 [tauri]: https://v2.tauri.app/
 [react]: https://react.dev/

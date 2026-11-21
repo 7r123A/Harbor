@@ -42,7 +42,7 @@ test("the cache dot shows Caching on hover until it becomes Cached", () => {
   assert.match(timeDisplay, /aria-describedby=\{tooltipId\}/);
   assert.match(timeDisplay, /group-hover\/cache:opacity-100/);
   assert.match(timeDisplay, /group-focus-visible\/cache:opacity-100/);
-  assert.match(uiFallback, /"Cached": "Cached"/);
-  assert.match(uiFallback, /"Caching": "Caching"/);
+  assert.match(uiFallback, /(?:"Cached"|Cached): "Cached"/);
+  assert.match(uiFallback, /(?:"Caching"|Caching): "Caching"/);
   assert.match(uiFallback, /"Toggle P2P stats": "Toggle P2P stats"/);
 });

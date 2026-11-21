@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { selectSourceCandidate } from "../src/lib/music/source-selection.ts";
 import { castOwnershipFixture } from "./helpers/cast-ownership.ts";
 import { queueTrackKey } from "../src/lib/music/queue-order.ts";
 import { dedupeMusicTracks, sameMusicTrack } from "../src/lib/music/track-identity.ts";
@@ -71,6 +72,7 @@ function fixture(respond?: (command: string, args?: any) => unknown, realCasting
     },
     react: {},
     "./catalog": {},
+    "./source-selection": { selectSourceCandidate },
     "./source-version": {
       compatibleVocalVersion: () => true,
       shouldResolvePreferredSource: () => false,

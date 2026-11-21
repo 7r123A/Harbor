@@ -8,9 +8,11 @@ import {
   type GithubRelease,
   type ParsedRelease,
 } from "./github-release-format";
+import { GITHUB_RELEASES_API_URL } from "./release-links";
 
-const API_URL = "https://api.github.com/repos/Harborofficial/Harbor/releases?per_page=30";
-const CACHE_KEY = "harbor.github.releases.v1";
+const API_URL = `${GITHUB_RELEASES_API_URL}?per_page=30`;
+// Do not reuse release data cached from the previous GitHub repository.
+const CACHE_KEY = "harbor.github.releases.v2";
 const FRESH_MS = 30 * 60 * 1000;
 
 type Cache = { etag: string | null; fetchedAt: number; releases: GithubRelease[] };

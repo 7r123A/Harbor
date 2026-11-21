@@ -300,7 +300,7 @@ export function forgetUpload(id: string): void {
   saveMyUploads(getMyUploads().filter((x) => x.id !== id));
 }
 
-export const THEME_SUBMISSION_SCREENSHOT_LIMIT = 5;
+export const THEME_SUBMISSION_SCREENSHOT_LIMIT = 6;
 
 export async function uploadTheme(
   themeJson: string,
@@ -360,7 +360,9 @@ export async function updateTheme(
   const fd = new FormData();
   fd.append("theme", new Blob([themeJson], { type: "application/json" }), "theme.json");
   if (cover) fd.append("cover", cover, "cover.png");
-  for (const s of screenshots.slice(0, 6)) fd.append("screenshots", s, "shot.png");
+  for (const s of screenshots.slice(0, THEME_SUBMISSION_SCREENSHOT_LIMIT)) {
+    fd.append("screenshots", s, "shot.png");
+  }
   if (changelog) fd.append("changelog", changelog);
   const r = await fetch(`${API}/themes/${id}/update`, {
     method: "POST",

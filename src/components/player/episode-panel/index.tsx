@@ -213,7 +213,7 @@ export function EpisodePanel({
     queueSessionAvailable,
     queuePlaybackEnabled,
   });
-  const showQueueList = hasQueue && (followQueue || !isSeries);
+  const showQueueList = followQueue || (hasQueue && !isSeries);
   const queuedNext = followQueue && currentEpisode ? queueItemAfter(meta, currentEpisode) : null;
   const preDownloadEpisode = followQueue
     ? queuedNext?.meta.id === meta.id
@@ -626,7 +626,7 @@ export function EpisodePanel({
                           title={t("Next and Previous follow your queue")}
                           className={`rounded-full px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${followQueue ? "bg-accent text-canvas" : "text-ink-muted hover:text-ink"}`}
                         >
-                          {t("Queue")}
+                          {t("Watching queue")}
                         </button>
                         <button
                           type="button"
@@ -706,16 +706,12 @@ export function EpisodePanel({
                       onToast={showPreDownloadToast}
                     />
                   )}
-                  {followQueue && !hasQueue && (
-                    <p role="status" className="px-1 py-5 text-sm text-ink-subtle">
-                      {t("Your queue is empty. Add an item or switch to This show.")}
-                    </p>
-                  )}
                   {showQueueList && (
                     <QueueUpNext
                       meta={meta}
                       currentEpisode={currentEpisode}
                       roomGuest={roomGuest}
+                      open={open}
                       onClose={onClose}
                     />
                   )}

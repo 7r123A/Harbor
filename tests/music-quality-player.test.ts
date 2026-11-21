@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { selectSourceCandidate } from "../src/lib/music/source-selection.ts";
 import { queueTrackKey } from "../src/lib/music/queue-order.ts";
 import { dedupeMusicTracks, sameMusicTrack } from "../src/lib/music/track-identity.ts";
 import type { MusicTrack } from "../src/lib/music/types.ts";
@@ -63,6 +64,7 @@ function player() {
       likedIdsFor: (t: any) => (t ? [t.id] : []),
       withoutLiked: (ids: readonly string[], t: any) => ids.filter((id: string) => id !== t.id),
     },
+    "./source-selection": { selectSourceCandidate },
     "./source-version": {
       compatibleVocalVersion: () => true,
       shouldResolvePreferredSource: () => false,

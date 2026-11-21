@@ -52,6 +52,12 @@ function addonsHarness(response) {
         prefetchRequest: (_key, signal, _prefetch, run) => run(signal),
       },
       "./identity": { streamKey },
+      "./addon-priority": {
+        declaresStream: (addon) =>
+          (addon.manifest?.resources ?? []).some((resource) =>
+            typeof resource === "string" ? resource === "stream" : resource.name === "stream",
+          ),
+      },
       "@/lib/debug": { dlog() {}, dwarn() {} },
       "@/lib/fetch-fallback-policy": { isHarborFetchPolicyError: () => false },
       "./addon-detect": { ...detect, isAddonRanked: () => false, isStatusOnlyAddon: () => false },

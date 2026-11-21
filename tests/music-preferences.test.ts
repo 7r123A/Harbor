@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
+import { selectSourceCandidate } from "../src/lib/music/source-selection.ts";
 import { readMusicPreference, writeMusicPreference } from "../src/lib/music/preferences.ts";
 import { MusicQueueOrder, queueTrackKey } from "../src/lib/music/queue-order.ts";
 import { dedupeMusicTracks, sameMusicTrack } from "../src/lib/music/track-identity.ts";
@@ -90,6 +91,7 @@ function player(localStorage: unknown) {
       "@tauri-apps/api/event": { listen: async () => () => {} },
       react: {},
       "./catalog": {},
+      "./source-selection": { selectSourceCandidate },
       "./source-version": {
         compatibleVocalVersion: () => true,
         shouldResolvePreferredSource: () => false,

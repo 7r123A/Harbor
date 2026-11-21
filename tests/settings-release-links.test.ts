@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { RELEASES_URL } from "../src/lib/updater/release-links.ts";
+import {
+  GITHUB_RELEASES_API_URL,
+  GITHUB_REPOSITORY_URL,
+  RELEASES_URL,
+} from "../src/lib/updater/release-links.ts";
 
 test("changelog downloads use the in-app installer controls", () => {
   for (const path of ["rollback-row/version-item.tsx", "rollback-row/version-notes-modal.tsx"]) {
@@ -12,7 +16,9 @@ test("changelog downloads use the in-app installer controls", () => {
 });
 
 test("rollback release actions open the official repository", () => {
-  assert.equal(RELEASES_URL, "https://github.com/Harborofficial/Harbor/releases");
+  assert.equal(GITHUB_REPOSITORY_URL, "https://github.com/HarborCommunity/Harbor");
+  assert.equal(GITHUB_RELEASES_API_URL, "https://api.github.com/repos/HarborCommunity/Harbor/releases");
+  assert.equal(RELEASES_URL, "https://github.com/HarborCommunity/Harbor/releases");
 
   for (const path of [
     "rollback-row.tsx",

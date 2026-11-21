@@ -187,7 +187,7 @@ test("the local-addon trust path is wired through every fetch choke point", () =
   const safeFetch = read("src/lib/safe-fetch.ts");
   assert.match(
     safeFetch,
-    /tauriHarborFetch\(target, init, "base64", timeoutMs, maxResponseBytes, allowLocalNetwork\)/,
+    /tauriHarborFetch\(\s*target,\s*cleanInit,\s*"base64",\s*timeoutMs,\s*maxResponseBytes,\s*allowLocalNetwork,\s*allowImageChallenge\)/,
   );
 
   const mpv = read("src/lib/player/mpv.ts");

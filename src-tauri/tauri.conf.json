@@ -129,7 +129,7 @@
     },
     "updater": {
       "endpoints": ["https://harborcommunity.site/updates/latest.json"],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ1NzhDMkEzMDU4RkJFQzQKUldURXZvOEZvOEo0Ulh3bmpxUEtrOE1wZnViN3dDUER1L3hNMzdnSDlaNWptTGM3NWdmczFiWlQK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU2N0VDNzA1NUM2OERFRTYKUldUbTNtaGNCY2QrVnNmU1VwU1dXcEN5L0xZY0ZpeFBlSzM4MDBoL1B5QWJydFdQNEE4QzNQWFYK",
       "windows": {
         "installMode": "passive"
       }

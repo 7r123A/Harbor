@@ -1,4 +1,5 @@
 import { extensionsModuleProblems } from "../../scripts/build-extensions-module.mjs";
+import { listOrtRuntimeFiles } from "../../scripts/ort-runtime-files.mjs";
 import { execFileSync } from "node:child_process";
 import {
   cpSync,
@@ -47,6 +48,15 @@ const FILES = [
   [join(APP, "libmpv", "libmpv-2.dll"), "libmpv-2.dll"],
   [UNINSTALLER, "uninstall.exe"],
 ];
+
+// ONNX Runtime is statically linked by the pinned Windows ort-sys archive.
+// DirectML.dll is a runtime dependency of harbor.exe and must be packaged.
+// Optional ONNX DLLs from other supported archive layouts are preserved.
+if (experimentalCore) {
+  const coreReleaseDir = dirname(resolve(experimentalCore));
+  const runtimeFiles = listOrtRuntimeFiles(coreReleaseDir);
+  for (const name of runtimeFiles) FILES.push([join(coreReleaseDir, name), name]);
+}
 
 // The NSIS bundle gets this from tauri.conf.json bundle.resources. This installer builds its own
 // payload, so it has to be named here or extensions are dead in every managed install.
