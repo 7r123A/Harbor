@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { unzipSync } from "fflate";
+import { isOrtRuntimeFile, listOrtRuntimeFiles } from "./ort-runtime-files.mjs";
 
 const read = (path) => readFileSync(new URL("../" + path, import.meta.url));
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -15,7 +16,7 @@ const musicBinary = "components/music/harbor-music-module.exe";
 const musicModuleExe = process.env.HARBOR_MUSIC_MODULE_DIR
   ? resolve(process.env.HARBOR_MUSIC_MODULE_DIR, "harbor-music-module.exe")
   : new URL("../src-tauri/resources/music-module/harbor-music-module.exe", import.meta.url);
-const isOrtRuntime = (name) => /^(?:onnxruntime.*|DirectML)\.dll$/i.test(name);
+const isOrtRuntime = isOrtRuntimeFile;
 const extensionsBinary = "capstan/harbor-extensions-module.exe";
 const extensionsManifest = "capstan/extensions-module.json";
 const entries = unzipSync(payload, {
@@ -52,11 +53,7 @@ assert.equal(
 );
 if (experimentalCore) {
   const coreReleaseDir = dirname(resolve(experimentalCore));
-  const runtimeFiles = readdirSync(coreReleaseDir).filter(isOrtRuntime);
-  assert.ok(
-    runtimeFiles.some((name) => name.toLowerCase() === "onnxruntime.dll"),
-    "Sidecar Core is missing ONNX Runtime",
-  );
+  const runtimeFiles = listOrtRuntimeFiles(coreReleaseDir);
   for (const name of runtimeFiles) {
     assert.ok(canonicalEntries[name], `Missing ${name} from the managed payload`);
     assert.equal(

@@ -1,4 +1,5 @@
 import { extensionsModuleProblems } from "../../scripts/build-extensions-module.mjs";
+import { listOrtRuntimeFiles } from "../../scripts/ort-runtime-files.mjs";
 import { execFileSync } from "node:child_process";
 import {
   cpSync,
@@ -48,17 +49,12 @@ const FILES = [
   [UNINSTALLER, "uninstall.exe"],
 ];
 
-// The experimental core enables Silero VAD, which dynamically loads ONNX Runtime.
-// ort-sys stages DLLs separately from the executable: include those copied next
-// to the core by build-shipyard-modules.ps1 in the managed installer payload.
+// ONNX Runtime is statically linked by the pinned Windows ort-sys archive.
+// DirectML.dll is a runtime dependency of harbor.exe and must be packaged.
+// Optional ONNX DLLs from other supported archive layouts are preserved.
 if (experimentalCore) {
   const coreReleaseDir = dirname(resolve(experimentalCore));
-  const runtimeFiles = readdirSync(coreReleaseDir).filter((name) =>
-    /^(?:onnxruntime.*|DirectML)\.dll$/i.test(name),
-  );
-  if (!runtimeFiles.some((name) => name.toLowerCase() === "onnxruntime.dll")) {
-    throw new Error("Sidecar Core is missing onnxruntime.dll; rebuild the modular Shipyard core.");
-  }
+  const runtimeFiles = listOrtRuntimeFiles(coreReleaseDir);
   for (const name of runtimeFiles) FILES.push([join(coreReleaseDir, name), name]);
 }
 

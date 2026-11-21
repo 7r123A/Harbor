@@ -27,7 +27,7 @@ const run = (fn, releaseDir, fail = false) => {
     if (fail) return String(error.stderr ?? error.message);
     throw error;
   }
-  if (fail) assert.fail(`${fn} should fail without onnxruntime.dll`);
+  if (fail) assert.fail(`${fn} should fail without DirectML.dll`);
   return output;
 };
 
@@ -73,21 +73,37 @@ test(
 );
 
 test(
-  "Shipyard refuses to package the sidecar when ONNX Runtime is missing",
-  {
-    skip: process.platform !== "win32",
+  "Shipyard accepts statically linked ONNX Runtime with only DirectML.dll",
+  { skip: process.platform !== "win32" },
+  () => {
+    const scratch = mkdtempSync(join(tmpdir(), "harbor-ort-static-"));
+    try {
+      const releaseDir = join(scratch, "release");
+      run("Initialize-OrtRuntimeDirectories", releaseDir);
+      const nestedDirectML = join(releaseDir, "build", "DirectML.dll");
+      writeFileSync(nestedDirectML, "DirectML sample");
+      run("Stage-OrtRuntimeDlls", releaseDir);
+      assert.equal(readFileSync(join(releaseDir, "DirectML.dll"), "utf8"), "DirectML sample");
+      assert.equal(existsSync(join(releaseDir, "onnxruntime.dll")), false);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   },
+);
+
+test(
+  "Shipyard refuses a missing or empty DirectML runtime",
+  { skip: process.platform !== "win32" },
   () => {
     const scratch = mkdtempSync(join(tmpdir(), "harbor-ort-missing-"));
     try {
       const releaseDir = join(scratch, "release");
       run("Initialize-OrtRuntimeDirectories", releaseDir);
       const error = run("Stage-OrtRuntimeDlls", releaseDir, true);
-      assert.match(error, /did not stage a valid onnxruntime\.dll/);
-      mkdirSync(join(releaseDir, "unused"), { recursive: true });
-      writeFileSync(join(releaseDir, "onnxruntime.dll"), "");
+      assert.match(error, /did not stage a valid DirectML\.dll/);
+      writeFileSync(join(releaseDir, "DirectML.dll"), "");
       const emptyError = run("Stage-OrtRuntimeDlls", releaseDir, true);
-      assert.match(emptyError, /did not stage a valid onnxruntime\.dll/);
+      assert.match(emptyError, /did not stage a valid DirectML\.dll/);
     } finally {
       rmSync(scratch, { recursive: true, force: true });
     }
