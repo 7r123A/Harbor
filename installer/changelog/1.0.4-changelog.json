@@ -3,13 +3,14 @@
   "notes": {
     "1.0.4": {
       "title": "Harbor v1.0.4 Beta",
-      "intro": "Harbor 1.0.4 introduces Refract tracking, IMDb Content Advisory on detail pages, customizable playback controls, stream sorting, improved PDF reading, and a custom Harbor cursor. This update also improves P2P streaming, adds Spotify Soloist and signed-in YouTube Music support, and introduces optional offline anime identity mapping. Continue Watching, anime navigation, library management, subtitles, reader features, browsing performance, and desktop reliability receive major refinements across Windows, macOS, and Linux.",
+      "intro": "Harbor 1.0.4 introduces Refract tracking, IMDb Content Advisory on detail pages, customizable playback controls, stream sorting, improved PDF reading, and a custom Harbor cursor. Social features now include reviews, direct messages, people discovery, mutual ratings, and customizable profile cards. This update also improves P2P streaming, adds Spotify Soloist and signed-in YouTube Music support, and introduces optional offline anime identity mapping. Continue Watching, anime navigation, library management, subtitles, reader features, browsing performance, and desktop reliability receive major refinements across Windows, macOS, and Linux.",
       "sections": [
         {
           "heading": "🎬 Playback & Player Controls",
           "items": [
             "Remembered Stream Priority: Playback prioritizes the previously used stream and addon instead of automatically selecting whichever addon responds first. Exact episode files are preferred, with fallback to related releases. Remembered sources are also prioritized in the source picker and Big Picture mode. This behavior is now always enabled, with no separate Remember last stream setting.",
             "Automatic Source Continuity: When automatically playing the next episode, Harbor keeps the previous stream source when possible. Source continuity is now always enabled instead of controlled by a separate Keep same source on next episode setting.",
+            "Watching Queue History (PR #142 by pengunnn): The Watching Queue now keeps the 20 most recent completed or skipped items, with dates and one-click replay. View history from the queue basket or in-player queue, and clear history separately from the active queue. History persists across restarts and stays separate between profiles.",
             "Player Shortcuts Overlay: Press Shift + ? during playback to open a panel displaying all available player shortcuts, including customized key bindings. The panel supports keyboard, remote, and gamepad navigation without interfering with playback controls. Customize the overlay shortcut in Settings → Playback → Hotkeys → Shortcuts → Player → Panels → Show keyboard shortcuts.",
             "New Track Shortcuts: Added configurable hotkeys for cycling audio tracks (D), decreasing subtitle size (Shift + {), and increasing subtitle size (Shift + }). Audio changes preserve language preferences, and adjustments display a player notification. Find them in Settings → Playback → Hotkeys → Shortcuts → Player → Tracks → Cycle audio tracks / Smaller subtitles / Larger subtitles.",
             "Custom Seek & Speed Steps: Seek distances can now be customized from 0.1 to 600 seconds. Long-seek distances, playback speed increments, and a new slow-speed toggle are also configurable. Find them in Settings → Playback → Hotkeys → Behaviour → Behavior → Seek step / Long seek / Slow speed / Speed step.",
@@ -80,6 +81,18 @@
             "Tracker Sync Indicators: AniList and MyAnimeList now have separate synchronization indicators for clearer status reporting.",
             "MDBList Compatibility: Custom list URLs now support usernames containing dots and tildes, fixing valid MDBList URLs that were previously rejected.",
             "Harbor Account Session Persistence: Improved session refresh and recovery so Harbor accounts are less likely to be unexpectedly signed out after restarting the application."
+          ]
+        },
+        {
+          "heading": "👥 Social Reviews, Messaging & Discovery",
+          "items": [
+            "Social Reviews & Conversations (PR #1 by Auramist): Read member reviews from title pages and reviewer Quick Access, like reviews, browse threaded comments and replies, and reveal spoiler-marked content when wanted.",
+            "Direct Messages & Sharing: Open conversations from profiles or the account menu, send messages and reactions, share titles with other members, and use an inbox with unread badges.",
+            "Message Notifications & Privacy: Configure DM toast and sound alerts, including custom alert audio. Switching accounts clears private message state and prevents older requests from repopulating the wrong account.",
+            "Mutual Ratings & Friend Reviews: Compare rating overlap with other members, see friends' ratings and reviewer avatars in poster hover previews, and view community average scores with consistent rating indicators.",
+            "People Discovery: Find members in an overlay with rating-match thresholds, minimum shared-title counts, profile filters, joined-date and review-count sorting, combined ranking options, and a refreshed shuffle.",
+            "Profile Card Personalization: Customize shared profile-card appearance and preview theme colors, with an option to control who can see your account join date.",
+            "Friends & Watch-Party Invitations: See friendship status in social shortcuts, invite friends to watch parties, and access incoming invitations through the invite center."
           ]
         },
         {
