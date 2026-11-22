@@ -16,9 +16,17 @@ import {
   Tv,
   Volume2,
 } from "lucide-react";
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
-import type { CastCapabilities, CastDeviceInfo, CastPreview, CastTranscodeStats } from "@/lib/cast";
+import { useId, useMemo, useState, type ReactNode } from "react";
+import type {
+  CastCapabilities,
+  CastDeviceInfo,
+  CastPlanSummary,
+  CastPreview,
+  CastTranscodeStats,
+} from "@/lib/cast";
 import {
+  CAST_DELAY_LIMIT_MS,
+  DEFAULT_CAST_LOOK,
   castOptionsFor,
   deviceHasOverrides,
   panelDevice,
@@ -56,6 +64,8 @@ export type CastSettingsPanelProps = {
   casting: boolean;
   applying: boolean;
   stats: CastTranscodeStats | null;
+  /** What the running cast actually does; while casting it replaces the preview. */
+  summary?: CastPlanSummary | null;
 };
 
 const SIZE_STEPS = [75, 100, 125, 150, 175, 200, 250, 300];
@@ -69,13 +79,27 @@ const KIND_LABEL: Record<string, string> = {
   roku: "Roku",
 };
 
+/** The usual speaker layout for a channel count: 6 is 5.1, but 4 is quad 4.0 and 5 is 5.0. */
+const CHANNEL_LAYOUTS: Record<number, string> = {
+  1: "1.0",
+  2: "2.0",
+  3: "2.1",
+  4: "4.0",
+  5: "5.0",
+  6: "5.1",
+  7: "6.1",
+  8: "7.1",
+};
+
+export function channelLayout(count: number): string {
+  return CHANNEL_LAYOUTS[count] ?? `${count}ch`;
+}
+
 function trackName(track: TrackInfo, fallback: string): string {
   const lang = track.lang ? languageName(track.lang) : "";
   const title = track.title && track.title !== track.lang ? track.title : "";
   const base = [lang, title].filter(Boolean).join(" · ") || track.label || fallback;
-  const channels = track.channelCount
-    ? ` (${track.channelCount > 2 ? `${track.channelCount - 1}.1` : `${track.channelCount}.0`})`
-    : "";
+  const channels = track.channelCount ? ` (${channelLayout(track.channelCount)})` : "";
   return `${base}${track.kind === "audio" ? channels : ""}`;
 }
 
@@ -338,8 +362,8 @@ function DelayNudge({
   return (
     <Nudge
       value={`${valueMs > 0 ? "+" : ""}${(valueMs / 1000).toFixed(2)}s`}
-      onDecrease={() => onChange(valueMs - 50)}
-      onIncrease={() => onChange(valueMs + 50)}
+      onDecrease={() => onChange(Math.max(-CAST_DELAY_LIMIT_MS, valueMs - 50))}
+      onIncrease={() => onChange(Math.min(CAST_DELAY_LIMIT_MS, valueMs + 50))}
       onReset={() => onChange(0)}
       label={label}
       changed={valueMs !== 0}
@@ -390,11 +414,10 @@ function withAuto<T extends string | number>(
 
 /** Plain-language account of what the converter does with this film. */
 export function describePlan(
-  preview: CastPreview | null,
+  s: CastPlanSummary | null,
   t: (key: string, vars?: Record<string, string | number>) => string,
 ) {
-  if (!preview) return null;
-  const s = preview.summary;
+  if (!s) return null;
   // "none": an audio-only source, so there is no picture to describe.
   const video =
     s.video === "none"
@@ -467,7 +490,10 @@ export function CastSettingsPanel(props: CastSettingsPanelProps) {
     return rows;
   }, [props.subtitleTracks, props.subtitleFileName, t]);
 
-  const plan = describePlan(props.preview, t);
+  // A running cast reports what it really does (receiver limits, a swapped stream); the preview
+  // only describes the player's own source.
+  const summary = props.summary ?? props.preview?.summary ?? null;
+  const plan = describePlan(summary, t);
   const hardware =
     props.preview?.hardware ??
     (props.caps?.nvenc
@@ -476,14 +502,12 @@ export function CastSettingsPanel(props: CastSettingsPanelProps) {
         ? "Intel Quick Sync"
         : props.caps?.amf
           ? "AMD AMF"
-          : null);
+          : props.caps?.videotoolbox
+            ? "Apple VideoToolbox"
+            : null);
   const live = props.casting && props.stats?.running ? props.stats : null;
   const sizeAt = Math.max(0, SIZE_STEPS.indexOf(look.sizePercent));
   const subtitlesShown = props.burnSubs && props.subtitleChoice !== "off";
-
-  useEffect(() => {
-    if (!props.casting && view === "troubleshoot") setView("settings");
-  }, [props.casting, view]);
 
   if (view !== "settings") {
     return (
@@ -817,7 +841,7 @@ export function CastSettingsPanel(props: CastSettingsPanelProps) {
               <Nudge
                 value={`${look.sizePercent}%`}
                 label={t("Size")}
-                changed={look.sizePercent !== 100}
+                changed={look.sizePercent !== DEFAULT_CAST_LOOK.sizePercent}
                 onDecrease={() => setLook({ sizePercent: SIZE_STEPS[Math.max(0, sizeAt - 1)] })}
                 onIncrease={() =>
                   setLook({ sizePercent: SIZE_STEPS[Math.min(SIZE_STEPS.length - 1, sizeAt + 1)] })
@@ -948,22 +972,18 @@ export function CastSettingsPanel(props: CastSettingsPanelProps) {
         ) : null}
         {props.applying ? (
           <span className="font-semibold text-ink">{t("Applying to the TV…")}</span>
-        ) : plan && props.preview ? (
+        ) : plan && summary ? (
           <>
-            {props.preview.summary.sourceVideo ? (
-              <Pill>{props.preview.summary.sourceVideo}</Pill>
-            ) : null}
-            {props.preview.summary.sourceAudio ? (
-              <Pill>{props.preview.summary.sourceAudio}</Pill>
-            ) : null}
+            {summary.sourceVideo ? <Pill>{summary.sourceVideo}</Pill> : null}
+            {summary.sourceAudio ? <Pill>{summary.sourceAudio}</Pill> : null}
             <ArrowRight size={13} className="shrink-0 text-accent rtl:rotate-180" />
             {plan.video ? <Pill tone="accent">{plan.video}</Pill> : null}
             <Pill tone="accent">{plan.audio}</Pill>
-            {props.preview.summary.tonemap ? <Pill>{t("HDR tone-mapped")}</Pill> : null}
-            {props.preview.summary.hardware ? (
+            {summary.tonemap ? <Pill>{t("HDR tone-mapped")}</Pill> : null}
+            {summary.hardware ? (
               <Pill>
                 <Cpu size={10} className="shrink-0" />
-                {props.preview.summary.hardware}
+                {summary.hardware}
               </Pill>
             ) : null}
           </>

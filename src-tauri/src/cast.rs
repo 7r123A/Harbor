@@ -674,7 +674,7 @@ pub async fn cast_load(
         sub_style: sub_style.clone(),
         sub_base: None,
         burn_bitmap: None,
-        force_video_encode: transcode.unwrap_or(false) && profile.as_ref().is_some_and(|p| p.force_h264),
+        force_video_encode: forces_video_encode(transcode.unwrap_or(false), profile.as_ref()),
         limits: device_limits(profile.as_ref()),
         hls: wants_hls(&kind_str, &options),
     };
@@ -792,6 +792,11 @@ pub async fn cast_load(
             Err(error)
         }
     }
+}
+
+/// The caller asked for a conversion whose profile rules out the source's video codec.
+fn forces_video_encode(transcode: bool, profile: Option<&TranscodeProfile>) -> bool {
+    transcode && profile.is_some_and(|p| p.force_h264)
 }
 
 /// The receiver's limits from its device profile. They hold for every conversion, including one
@@ -1081,6 +1086,8 @@ pub async fn cast_preview(
     audio_track_ordinal: Option<u32>,
     burn_subtitles: Option<bool>,
     subtitle_ordinal: Option<u32>,
+    transcode: Option<bool>,
+    profile: Option<TranscodeProfile>,
 ) -> Result<CastPreview, String> {
     let headers = headers.unwrap_or_default();
     let cached = preview_cache()
@@ -1115,8 +1122,10 @@ pub async fn cast_preview(
             audio_ordinal: audio_track_ordinal.unwrap_or(0),
             burn_sub: (burning && bitmap.is_none()).then_some(&text_burn),
             burn_bitmap: if burning { bitmap } else { None },
-            force_video_encode: false,
-            limits: DeviceLimits::default(),
+            // The same receiver limits and forced encode cast_load applies, so the panel shows the
+            // conversion the TV will actually get.
+            force_video_encode: forces_video_encode(transcode.unwrap_or(false), profile.as_ref()),
+            limits: device_limits(profile.as_ref()),
         },
         &caps,
     );
@@ -1830,6 +1839,25 @@ mod pause_state_tests {
         assert_eq!(limits.max_height, Some(720));
         assert_eq!(limits.max_video_kbps, Some(3_500));
         assert_eq!(device_limits(None), DeviceLimits::default());
+    }
+
+    #[test]
+    fn only_a_requested_conversion_whose_profile_rules_out_the_codec_forces_an_encode() {
+        let h264_only = TranscodeProfile {
+            fragmented_mp4: false,
+            max_height: 1080,
+            force_h264: true,
+            force_aac: false,
+            force_stereo: false,
+            max_video_kbps: None,
+        };
+        let keep_codecs = TranscodeProfile { force_h264: false, ..h264_only.clone() };
+        assert!(forces_video_encode(true, Some(&h264_only)));
+        // A remux or subtitle burn-in on codecs the receiver plays keeps them.
+        assert!(!forces_video_encode(true, Some(&keep_codecs)));
+        // A profile sent along with a cast that asked for no conversion changes nothing.
+        assert!(!forces_video_encode(false, Some(&h264_only)));
+        assert!(!forces_video_encode(true, None));
     }
 
     #[test]

@@ -513,13 +513,17 @@ pub async fn get_volume(control_url: &str) -> Result<(u32, bool), String> {
     let rc = rendering_control_for(control_url).ok_or("This TV does not report its volume")?;
     let body = rendering_envelope("GetVolume", "<InstanceID>0</InstanceID><Channel>Master</Channel>".into());
     let resp = soap_post_service(&rc, "RenderingControl", "GetVolume", &body).await?;
-    let volume = extract_xml_tag(&resp, "CurrentVolume").and_then(|v| v.parse().ok()).unwrap_or(0);
+    // Some renderers pad the value or report a scale above 100; the panel shows 0..=100.
+    let volume = extract_xml_tag(&resp, "CurrentVolume")
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or(0)
+        .min(100);
     let body = rendering_envelope("GetMute", "<InstanceID>0</InstanceID><Channel>Master</Channel>".into());
     let muted = soap_post_service(&rc, "RenderingControl", "GetMute", &body)
         .await
         .ok()
         .and_then(|r| extract_xml_tag(&r, "CurrentMute"))
-        .is_some_and(|m| m == "1" || m.eq_ignore_ascii_case("true"));
+        .is_some_and(|m| m.trim() == "1" || m.trim().eq_ignore_ascii_case("true"));
     Ok((volume, muted))
 }
 

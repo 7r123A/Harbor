@@ -18,6 +18,7 @@ export function CastMenu({
   burnSubsOnTv,
   setBurnSubsOnTv,
   panel,
+  openWithSettings = false,
   activeDevice,
   onStop,
 }: {
@@ -30,6 +31,8 @@ export function CastMenu({
   setBurnSubsOnTv: (next: boolean) => void;
   /** The cast settings panel; omitted where the menu only picks a device. */
   panel?: CastSettingsPanelProps;
+  /** Opened from the session bar's settings button: the settings start unfolded. */
+  openWithSettings?: boolean;
   /** The receiver currently playing this film, if any. */
   activeDevice?: CastDeviceInfo | null;
   onStop?: () => void;
@@ -43,11 +46,11 @@ export function CastMenu({
   const wrapRef = useRef<HTMLDivElement>(null);
   const expanded = Boolean(panel) && prefs.panelOpen;
 
-  // The menu always opens on the device list; the settings unfold only when asked for. Done
-  // before paint so the full panel never flashes open.
+  // The menu opens on the device list and the settings unfold only when asked for, either here or
+  // with the session bar's settings button. Done before paint so the panel never flashes.
   useLayoutEffect(() => {
-    if (open) updateCastPreferences({ panelOpen: false });
-  }, [open]);
+    if (open) updateCastPreferences({ panelOpen: openWithSettings });
+  }, [open, openWithSettings]);
 
   useEffect(() => {
     if (!open) return;

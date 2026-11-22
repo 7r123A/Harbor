@@ -26,6 +26,15 @@ export function isDeviceOption(key: string): key is DeviceOptionKey {
   return (DEVICE_OPTION_KEYS as readonly string[]).includes(key);
 }
 
+/** Only the device settings out of a set of options; the rest belong to every cast. */
+export function pickDeviceOptions(options: Partial<CastOptions>): Partial<DeviceOptions> {
+  const out: Partial<Record<DeviceOptionKey, unknown>> = {};
+  for (const key of DEVICE_OPTION_KEYS) {
+    if (key in options) out[key] = options[key];
+  }
+  return out as Partial<DeviceOptions>;
+}
+
 /**
  * What suits the device out of the box: its largest picture, H.265 and HDR sent untouched only
  * where it shows them itself, and Dolby Digital only where it is known to decode it. A DLNA

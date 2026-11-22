@@ -47,6 +47,34 @@ function urlNeedsRemuxForCast(url: string, kind: string): boolean {
   );
 }
 
+/** The player's stream as the receiver checks see it: its release fields plus the decoded size. */
+function castStreamFor(src: PlayerSrc, liveDims: { width: number; height: number }) {
+  return src.streamRef
+    ? { ...src.streamRef, liveWidth: liveDims.width, liveHeight: liveDims.height }
+    : { liveWidth: liveDims.width, liveHeight: liveDims.height };
+}
+
+/**
+ * Whether casting the player's own stream to `device` converts it, and the receiver limits that
+ * bound the conversion, decided as `resolveCompatibleCastUrl` decides them for that stream. The
+ * settings panel uses it to preview a cast before (or without) looking for an alternative stream.
+ */
+export function previewCastResolution(
+  src: PlayerSrc,
+  device: Pick<CastDeviceInfo, "kind" | "name" | "model">,
+  liveDims: { width: number; height: number },
+): { kind: "compat" | "transcode"; profile: TranscodeProfile } {
+  const caps = getDeviceCaps(device);
+  const stream = castStreamFor(src, liveDims);
+  if (checkStreamCompat(stream, caps).ok) {
+    return {
+      kind: urlNeedsRemuxForCast(src.url, device.kind) ? "transcode" : "compat",
+      profile: keepCodecsProfile(stream, caps),
+    };
+  }
+  return { kind: "transcode", profile: pickTranscodeProfile(stream, caps) };
+}
+
 export async function resolveCompatibleCastUrl(
   src: PlayerSrc,
   device: CastDeviceInfo,
@@ -55,9 +83,7 @@ export async function resolveCompatibleCastUrl(
   animePreferImdbStreams = true,
 ): Promise<CastResolution> {
   const caps = getDeviceCaps(device);
-  const augmented = src.streamRef
-    ? { ...src.streamRef, liveWidth: liveDims.width, liveHeight: liveDims.height }
-    : { liveWidth: liveDims.width, liveHeight: liveDims.height };
+  const augmented = castStreamFor(src, liveDims);
   const currentCompat = checkStreamCompat(augmented, caps);
   if (currentCompat.ok) {
     if (urlNeedsRemuxForCast(src.url, device.kind)) {

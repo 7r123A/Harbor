@@ -13,7 +13,7 @@ import {
   rememberCastDevice,
   type CastSubtitleLook,
 } from "@/lib/cast/cast-preferences";
-import { fitTracksToCastSource } from "@/lib/cast/cast-source";
+import { castNeedsConversion, fitTracksToCastSource } from "@/lib/cast/cast-source";
 import type { RememberedDevice } from "@/lib/cast/device-settings";
 import { useDebridClients } from "@/lib/debrid/registry";
 import { t } from "@/lib/i18n";
@@ -305,21 +305,7 @@ export function useCastPick(params: {
       );
       const audioTrackOrdinal = media.audioTrackOrdinal;
       const burnSub = media.subtitle;
-      // A copied stream plays its first audio track untouched, so another track or any audio
-      // processing needs the conversion.
-      const o = media.options;
-      const audioWork =
-        (audioTrackOrdinal ?? 0) > 0 ||
-        o.volumeBoost > 0 ||
-        o.nightMode ||
-        o.dialogueBoost ||
-        o.audioDelayMs !== 0;
-      const forceTranscode =
-        resolved.kind === "transcode" ||
-        isLiveIptv ||
-        burnSub != null ||
-        audioWork ||
-        o.forceConversion;
+      const forceTranscode = castNeedsConversion(resolved.kind, isLiveIptv, media);
       // Any conversion (burning in subtitles, audio work, or one Harbor starts itself) keeps to
       // the receiver's resolution and bit rate, and changes no codec it plays; live TV gets the
       // safe 1080p H.264 profile.

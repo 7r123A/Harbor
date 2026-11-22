@@ -44,6 +44,7 @@ export function CastLayer({
         burnSubsOnTv={cast.burnSubsOnTv}
         setBurnSubsOnTv={cast.setBurnSubsOnTv}
         panel={cast.panelFor(audioTracks, subtitleTracks)}
+        openWithSettings={cast.castMenuSettings}
         activeDevice={videoCast}
         onStop={() => {
           cast.setCastTranscoding(false);
@@ -102,7 +103,7 @@ export function CastLayer({
             trouble={cast.castTrouble}
             applying={cast.castApplying}
             onRestart={() => void cast.restartCast()}
-            onOpenSettings={() => cast.openCastMenu(cast.castMenuAnchor)}
+            onOpenSettings={() => cast.openCastMenu(cast.castMenuAnchor, { settings: true })}
           />
         </>
       )}

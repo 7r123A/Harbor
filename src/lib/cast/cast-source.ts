@@ -1,4 +1,4 @@
-import type { CastSubInfo, CastSubStyle } from "@/lib/cast";
+import type { CastOptions, CastSubInfo, CastSubStyle } from "@/lib/cast";
 
 type TrackSelection = {
   subtitle: CastSubInfo | null;
@@ -20,4 +20,33 @@ export function fitTracksToCastSource<T extends TrackSelection>(media: T, swappe
     subtitle,
     subStyle: subtitle ? media.subStyle : null,
   };
+}
+
+/**
+ * Whether the cast goes through Harbor's converter. A copied stream plays its first audio track
+ * untouched, so another track or any audio processing needs the conversion too.
+ */
+export function castNeedsConversion(
+  resolvedKind: "compat" | "swapped" | "transcode",
+  liveIptv: boolean,
+  media: {
+    subtitle: CastSubInfo | null;
+    audioTrackOrdinal: number | undefined;
+    options: CastOptions;
+  },
+): boolean {
+  const o = media.options;
+  const audioWork =
+    (media.audioTrackOrdinal ?? 0) > 0 ||
+    o.volumeBoost > 0 ||
+    o.nightMode ||
+    o.dialogueBoost ||
+    o.audioDelayMs !== 0;
+  return (
+    resolvedKind === "transcode" ||
+    liveIptv ||
+    media.subtitle != null ||
+    audioWork ||
+    o.forceConversion
+  );
 }

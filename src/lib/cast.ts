@@ -228,6 +228,9 @@ export async function castPreview(opts: {
   audioTrackOrdinal?: number;
   burnSubtitles: boolean;
   subtitleOrdinal?: number;
+  /** The conversion the cast would ask for, and the receiver's limits that bound it. */
+  transcode?: boolean;
+  profile?: TranscodeProfile;
 }): Promise<CastPreview | null> {
   if (!isTauri) return null;
   return await invoke<CastPreview>("cast_preview", {
@@ -237,6 +240,8 @@ export async function castPreview(opts: {
     audioTrackOrdinal: opts.audioTrackOrdinal ?? null,
     burnSubtitles: opts.burnSubtitles,
     subtitleOrdinal: opts.subtitleOrdinal ?? null,
+    transcode: opts.transcode ?? null,
+    profile: opts.profile ?? null,
   });
 }
 

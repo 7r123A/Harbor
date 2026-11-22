@@ -4,6 +4,7 @@ import {
   castOptionsForDevice,
   isDeviceOption,
   mergeDeviceOverrides,
+  pickDeviceOptions,
   type DeviceOptions,
   type RememberedDevice,
 } from "./device-settings";
@@ -40,6 +41,83 @@ export type CastPreferences = {
 
 const KEY = "harbor.cast.preferences.v1";
 
+/** Audio and subtitle delays stop at ±30 s; more is never a sync fix. */
+export const CAST_DELAY_LIMIT_MS = 30_000;
+/** Devices whose own settings are remembered; the longest unused are forgotten first. */
+const MAX_REMEMBERED_DEVICES = 32;
+
+const CHOICES = {
+  quality: ["720p", "1080p", "1080p-hq", "4k", "original"],
+  tonemap: ["auto", "on", "off"],
+  deinterlace: ["none", "auto", "always"],
+  aspect: ["default", "16:9", "4:3", "21:9", "fill"],
+  streamFormat: ["auto", "ts", "hls"],
+  audioMode: ["stereo", "surround", "original"],
+} as const satisfies { [K in keyof CastOptions]?: ReadonlyArray<CastOptions[K]> };
+
+const BOOLEANS = [
+  "forceConversion",
+  "hevcNative",
+  "hardwareDecoding",
+  "hardwareEncoding",
+  "fastSeek",
+  "nightMode",
+  "dialogueBoost",
+] as const satisfies ReadonlyArray<keyof CastOptions>;
+
+const VOLUME_BOOSTS = [0, 25, 50, 100];
+
+function wholeMs(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return Math.max(-CAST_DELAY_LIMIT_MS, Math.min(CAST_DELAY_LIMIT_MS, Math.round(value)));
+}
+
+/**
+ * Keeps only stored values the converter accepts. The Rust side reads numbers strictly, so a
+ * fractional delay or a negative boost left by an older build would otherwise fail every cast.
+ */
+export function sanitizeCastOptions(raw: unknown): Partial<CastOptions> {
+  if (!raw || typeof raw !== "object") return {};
+  const input = raw as Record<string, unknown>;
+  const out: Partial<Record<keyof CastOptions, unknown>> = {};
+  for (const [key, allowed] of Object.entries(CHOICES) as Array<
+    [keyof typeof CHOICES, readonly string[]]
+  >) {
+    if (typeof input[key] === "string" && allowed.includes(input[key])) out[key] = input[key];
+  }
+  for (const key of BOOLEANS) {
+    if (typeof input[key] === "boolean") out[key] = input[key];
+  }
+  if (typeof input.volumeBoost === "number" && VOLUME_BOOSTS.includes(input.volumeBoost)) {
+    out.volumeBoost = input.volumeBoost;
+  }
+  const audioDelay = wholeMs(input.audioDelayMs);
+  if (audioDelay !== undefined) out.audioDelayMs = audioDelay;
+  const subDelay = wholeMs(input.subDelayMs);
+  if (subDelay !== undefined) out.subDelayMs = subDelay;
+  if (typeof input.subEncoding === "string" && /^[a-z0-9_-]{1,32}$/i.test(input.subEncoding)) {
+    out.subEncoding = input.subEncoding;
+  }
+  return out as Partial<CastOptions>;
+}
+
+function sanitizeLook(raw: unknown): Partial<CastSubtitleLook> {
+  if (!raw || typeof raw !== "object") return {};
+  const input = raw as Record<string, unknown>;
+  const out: Partial<CastSubtitleLook> = {};
+  if (typeof input.sizePercent === "number" && Number.isFinite(input.sizePercent)) {
+    out.sizePercent = Math.max(50, Math.min(400, Math.round(input.sizePercent)));
+  }
+  if (typeof input.color === "string" && /^#[0-9a-f]{6}$/i.test(input.color)) {
+    out.color = input.color;
+  }
+  if (typeof input.background === "boolean") out.background = input.background;
+  if (typeof input.lift === "number" && Number.isFinite(input.lift)) {
+    out.lift = Math.max(0, Math.min(200, Math.round(input.lift)));
+  }
+  return out;
+}
+
 export const DEFAULT_CAST_LOOK: CastSubtitleLook = {
   sizePercent: 150,
   color: "#FFFFFF",
@@ -63,7 +141,7 @@ function readDevices(raw: unknown): Record<string, CastDeviceMemory> {
     if (!device || typeof device.name !== "string" || typeof device.kind !== "string") continue;
     out[id] = {
       device: { id, name: device.name, kind: device.kind, model: device.model ?? null },
-      overrides: entry.overrides && typeof entry.overrides === "object" ? entry.overrides : {},
+      overrides: pickDeviceOptions(sanitizeCastOptions(entry.overrides)),
     };
   }
   return out;
@@ -76,8 +154,8 @@ function read(): CastPreferences {
     const parsed = JSON.parse(raw) as Partial<CastPreferences>;
     const devices = readDevices(parsed.devices);
     return {
-      options: { ...DEFAULT_CAST_OPTIONS, ...parsed.options },
-      look: { ...DEFAULT_CAST_LOOK, ...parsed.look },
+      options: { ...DEFAULT_CAST_OPTIONS, ...sanitizeCastOptions(parsed.options) },
+      look: { ...DEFAULT_CAST_LOOK, ...sanitizeLook(parsed.look) },
       panelOpen: parsed.panelOpen === true,
       devices,
       lastDeviceId:
@@ -130,10 +208,13 @@ export function rememberCastDevice(device: CastDeviceInfo): CastPreferences {
     kind: device.kind,
     model: device.model,
   };
+  // The device moves to the end, so the ones cast to longest ago are the first to be forgotten.
+  const others = Object.entries(current.devices).filter(([id]) => id !== device.id);
+  const kept = others.slice(Math.max(0, others.length - (MAX_REMEMBERED_DEVICES - 1)));
   return commit({
     ...current,
     devices: {
-      ...current.devices,
+      ...Object.fromEntries(kept),
       [device.id]: { device: remembered, overrides: known?.overrides ?? {} },
     },
     lastDeviceId: device.id,

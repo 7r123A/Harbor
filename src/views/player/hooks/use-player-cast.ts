@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { castCapabilities, castPreview, type CastCapabilities, type CastPreview } from "@/lib/cast";
-import { castOptionsFor, panelDevice, useCastPreferences } from "@/lib/cast/cast-preferences";
-import { fitTracksToCastSource } from "@/lib/cast/cast-source";
+import { panelDevice, useCastPreferences } from "@/lib/cast/cast-preferences";
+import { castNeedsConversion, fitTracksToCastSource } from "@/lib/cast/cast-source";
+import { castProfile } from "@/lib/cast/device-caps";
 import { useDebridClients } from "@/lib/debrid/registry";
 import type { PlayerBridge, PlayerSnapshot, TrackInfo } from "@/lib/player/bridge";
 import {
@@ -11,6 +12,7 @@ import {
 } from "@/lib/player/playback-clock";
 import type { Settings } from "@/lib/settings";
 import type { PlayerSrc } from "@/lib/view";
+import { previewCastResolution } from "../cast-resolve";
 import { resolveCastMedia, useCastPick, type CastMediaChoices } from "./use-cast-pick";
 import { useCastSession } from "./use-cast-session";
 
@@ -66,14 +68,17 @@ export function usePlayerCast(params: {
   const casting = session.castDevice != null && !session.audioRouting;
   const castDevice = session.castDevice;
   const previewDevice = panelDevice(prefs, castDevice);
-  const settingsKey = JSON.stringify([
-    castOptionsFor(previewDevice, prefs),
-    prefs.look,
-    castChoices,
-  ]);
-  const appliedKeyRef = useRef<string | null>(null);
   const reloadCast = session.reloadCast;
   const swapped = pick.castSourceSwapped;
+  // Everything the TV would receive, resolved the way a load resolves it. "Same as the player"
+  // follows the player's own track and subtitle style changes, so those restart the cast too.
+  const settingsKey = JSON.stringify(
+    fitTracksToCastSource(
+      resolveCastMedia(snapRef.current, castChoices, settings, previewDevice),
+      swapped,
+    ),
+  );
+  const appliedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!casting) {
       appliedKeyRef.current = null;
@@ -158,12 +163,15 @@ export function usePlayerCast(params: {
     const timer = window.setTimeout(() => {
       const snap = snapRef.current;
       const media = resolveCastMedia(snap, castChoices, settings, previewDevice);
-      const embeddedSubs = snap.subtitleTracks.filter((t) => !t.external);
-      const subTrack =
-        castChoices.subtitleChoice === "auto"
-          ? snap.subtitleTracks.find((t) => t.selected)
-          : snap.subtitleTracks.find((t) => t.id === castChoices.subtitleChoice);
-      const subOrdinal = subTrack && !subTrack.external ? embeddedSubs.indexOf(subTrack) : -1;
+      // The receiver's limits and the conversion a load would ask for, so the preview shows what
+      // the TV will get rather than an unbounded conversion.
+      const liveIptv = src.meta.id?.startsWith("iptv:") ?? false;
+      const resolution = previewDevice
+        ? previewCastResolution(src, previewDevice, {
+            width: snap.videoWidth,
+            height: snap.videoHeight,
+          })
+        : null;
       setPreviewBusy(true);
       void castPreview({
         url: src.url,
@@ -171,7 +179,10 @@ export function usePlayerCast(params: {
         options: media.options,
         audioTrackOrdinal: media.audioTrackOrdinal,
         burnSubtitles: media.subtitle != null,
-        subtitleOrdinal: subOrdinal >= 0 ? subOrdinal : undefined,
+        // The same embedded track a load would burn in, not a second guess at it.
+        subtitleOrdinal: media.subtitle?.kind === "embedded" ? media.subtitle.src_index : undefined,
+        transcode: resolution ? castNeedsConversion(resolution.kind, liveIptv, media) : undefined,
+        profile: resolution ? castProfile(resolution, liveIptv) : undefined,
       })
         .then((p) => {
           if (!cancelled) setPreview(p);
@@ -187,17 +198,7 @@ export function usePlayerCast(params: {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [
-    menuOpen,
-    isRemoteManifest,
-    src.url,
-    src.headers,
-    settingsKey,
-    castChoices,
-    settings,
-    snapRef,
-    previewDevice,
-  ]);
+  }, [menuOpen, isRemoteManifest, src, settingsKey, castChoices, settings, snapRef, previewDevice]);
 
   const panelFor = useCallback(
     (audioTracks: TrackInfo[], subtitleTracks: TrackInfo[]) => ({
@@ -218,6 +219,7 @@ export function usePlayerCast(params: {
       casting,
       applying: session.castApplying,
       stats: session.castStats,
+      summary: casting ? session.castSummary : null,
     }),
     [session, addSubtitleFile, preview, previewBusy, caps, casting],
   );
