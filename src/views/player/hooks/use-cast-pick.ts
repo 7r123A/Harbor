@@ -6,7 +6,7 @@ import {
   type CastSubInfo,
   type CastSubStyle,
 } from "@/lib/cast";
-import { castProfile } from "@/lib/cast/device-caps";
+import { castProfile, knownStreamHeight } from "@/lib/cast/device-caps";
 import {
   castOptionsFor,
   getCastPreferences,
@@ -190,6 +190,12 @@ export function useCastPick(params: {
   const [castTranscoding, setCastTranscoding] = useState(false);
   // Whether the TV plays a compatible alternative instead of the player's file.
   const [castSourceSwapped, setCastSourceSwapped] = useState(false);
+  // The stream the TV plays: how it reached it and its height, which a settings change during
+  // the cast needs to decide whether the converter must take over.
+  const [castSource, setCastSource] = useState<{
+    kind: "compat" | "swapped" | "transcode";
+    height: number | undefined;
+  }>({ kind: "compat", height: undefined });
 
   useEffect(() => {
     if (!castIncompatError) return;
@@ -299,13 +305,20 @@ export function useCastPick(params: {
       rememberCastDevice(device);
       const swapped = resolved.kind === "swapped";
       setCastSourceSwapped(swapped);
+      // A swapped stream is another file: only its own release name tells its height.
+      const sourceHeight = swapped
+        ? knownStreamHeight(resolved.alt)
+        : snap.videoHeight > 0
+          ? snap.videoHeight
+          : knownStreamHeight(src.streamRef ?? {});
+      setCastSource({ kind: resolved.kind, height: sourceHeight });
       const media = fitTracksToCastSource(
         resolveCastMedia(snap, castChoices, settings, device),
         swapped,
       );
       const audioTrackOrdinal = media.audioTrackOrdinal;
       const burnSub = media.subtitle;
-      const forceTranscode = castNeedsConversion(resolved.kind, isLiveIptv, media);
+      const forceTranscode = castNeedsConversion(resolved.kind, isLiveIptv, media, sourceHeight);
       // Any conversion (burning in subtitles, audio work, or one Harbor starts itself) keeps to
       // the receiver's resolution and bit rate, and changes no codec it plays; live TV gets the
       // safe 1080p H.264 profile.
@@ -351,6 +364,7 @@ export function useCastPick(params: {
     castTranscoding,
     setCastTranscoding,
     castSourceSwapped,
+    castSource,
     onPickDevice,
   };
 }

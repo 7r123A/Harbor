@@ -90,6 +90,13 @@ impl CastOptions {
         self.volume_boost > 0 || self.night_mode || self.dialogue_boost || self.audio_delay_ms != 0
     }
 
+    /// Picture settings that change the video whatever the source is, so a stream handed to the
+    /// receiver as it is would ignore them. A quality limit needs the source's height, which only
+    /// the probe knows; the frontend asks for the conversion when it knows the source is taller.
+    pub(crate) fn picture_changes_requested(&self) -> bool {
+        self.aspect_ratio().is_some() || self.deinterlace == "always" || self.tonemap == "on"
+    }
+
     fn aspect_ratio(&self) -> Option<(u32, u32)> {
         match self.aspect.as_str() {
             "16:9" | "fill" => Some((16, 9)),

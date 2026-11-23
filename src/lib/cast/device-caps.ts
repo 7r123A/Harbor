@@ -271,6 +271,16 @@ export type CompatVerdict = {
   reasons: string[];
 };
 
+function resolutionFromName(s: StreamLike): number | undefined {
+  const hay = `${s.parsedTitle ?? ""} ${s.title ?? ""} ${s.resolution ?? ""}`.toLowerCase();
+  if (/\b(2160p|4k|uhd|3840)\b/.test(hay)) return 2160;
+  if (/\b1440p\b/.test(hay)) return 1440;
+  if (/\b1080p|fhd\b/.test(hay)) return 1080;
+  if (/\b720p|hd\b/.test(hay)) return 720;
+  if (/\b480p|sd\b/.test(hay)) return 480;
+  return undefined;
+}
+
 function detectResolution(s: StreamLike): number {
   if (typeof s.liveHeight === "number" && s.liveHeight > 0) {
     if (s.liveHeight >= 1800) return 2160;
@@ -279,13 +289,17 @@ function detectResolution(s: StreamLike): number {
     if (s.liveHeight >= 600) return 720;
     return 480;
   }
-  const hay = `${s.parsedTitle ?? ""} ${s.title ?? ""} ${s.resolution ?? ""}`.toLowerCase();
-  if (/\b(2160p|4k|uhd|3840)\b/.test(hay)) return 2160;
-  if (/\b1440p\b/.test(hay)) return 1440;
-  if (/\b1080p|fhd\b/.test(hay)) return 1080;
-  if (/\b720p|hd\b/.test(hay)) return 720;
-  if (/\b480p|sd\b/.test(hay)) return 480;
-  return 1080;
+  return resolutionFromName(s) ?? 1080;
+}
+
+/**
+ * The picture height when it is actually known: the decoded height, else the one the release
+ * names. Unlike the compatibility checks it never guesses, so an unknown source is not treated as
+ * taller than a quality setting.
+ */
+export function knownStreamHeight(s: StreamLike): number | undefined {
+  if (typeof s.liveHeight === "number" && s.liveHeight > 0) return s.liveHeight;
+  return resolutionFromName(s);
 }
 
 function noAudioPassthrough(caps: DeviceCaps): boolean {

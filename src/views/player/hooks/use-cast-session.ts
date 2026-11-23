@@ -25,6 +25,7 @@ import {
   type CastTranscodeStats,
   type TranscodeProfile,
 } from "@/lib/cast";
+import { directReloadRequest, type CastReloadChange } from "@/lib/cast/cast-source";
 import type { PlayerBridge, PlayerSnapshot } from "@/lib/player/bridge";
 import { VideoAudioCast } from "@/lib/player/video-audio-cast";
 import {
@@ -556,12 +557,7 @@ export function useCastSession(
 
   /** Restarts the running cast with changed settings at the current position. */
   const reloadCast = useCallback(
-    async (params: {
-      options?: CastOptions;
-      subtitle?: CastSubInfo | null;
-      subStyle?: CastSubStyle | null;
-      audioTrackOrdinal?: number;
-    }): Promise<CastLoadInfo | null> => {
+    async (params: CastReloadChange): Promise<CastLoadInfo | null> => {
       const device = castDeviceRef.current;
       if (!device || audio.getSnapshot().device) return null;
       // A seek still waiting for its timer is where the viewer wants to be; the restart goes there
@@ -576,17 +572,7 @@ export function useCastSession(
         if (loaded && loaded.device.id === device.id && loaded.stream === "direct") {
           // A stream handed to the receiver directly has nothing to restart: it is loaded again
           // with the new settings, and the converter takes over if they need it.
-          const next = {
-            ...loaded.params,
-            startTimeSec: position,
-            ...(params.options ? { options: params.options } : {}),
-            ...(params.subtitle !== undefined
-              ? { subtitle: params.subtitle, subStyle: params.subtitle ? params.subStyle : null }
-              : {}),
-            ...(params.audioTrackOrdinal !== undefined
-              ? { audioTrackOrdinal: params.audioTrackOrdinal }
-              : {}),
-          };
+          const next = directReloadRequest(loaded.params, params, position);
           const res = await owned(() =>
             castLoad({
               host: device.host,
@@ -606,7 +592,16 @@ export function useCastSession(
           lastLoadRef.current = { device, params: next, stream: info?.stream ?? "direct" };
           setCastSummary(info?.summary ?? null);
         } else {
-          info = await owned(() => castReload({ positionSec: position, ...params }));
+          // A converted cast restarts its conversion; the new settings shape the plan there.
+          info = await owned(() =>
+            castReload({
+              positionSec: position,
+              options: params.options,
+              subtitle: params.subtitle,
+              subStyle: params.subStyle,
+              audioTrackOrdinal: params.audioTrackOrdinal,
+            }),
+          );
         }
         lastCastPositionRef.current = position;
         castStartTargetRef.current = position;

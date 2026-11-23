@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import "./_localstorage-stub.ts";
 import { DEFAULT_CAST_OPTIONS, type CastDeviceInfo, type CastSubInfo } from "../src/lib/cast.ts";
-import { castNeedsConversion } from "../src/lib/cast/cast-source.ts";
+import {
+  castNeedsConversion,
+  directReloadRequest,
+  pictureNeedsConversion,
+} from "../src/lib/cast/cast-source.ts";
+import { knownStreamHeight } from "../src/lib/cast/device-caps.ts";
 
 // Preferences written by an older build, or edited by hand: wrong types, unknown choices and
 // fractional numbers the Rust side would refuse.
@@ -104,4 +109,93 @@ test("the converter runs exactly when the cast needs something a copy cannot giv
   // Settings the converter only uses when it runs anyway do not start it.
   const passive = { ...DEFAULT_CAST_OPTIONS, subDelayMs: 500, quality: "720p" as const };
   assert.equal(castNeedsConversion("compat", false, { ...plain, options: passive }), false);
+});
+
+const direct = { subtitle: null, audioTrackOrdinal: undefined, options: DEFAULT_CAST_OPTIONS };
+const withOptions = (change: Partial<typeof DEFAULT_CAST_OPTIONS>) => ({
+  ...direct,
+  options: { ...DEFAULT_CAST_OPTIONS, ...change },
+});
+
+test("picture settings send a directly compatible stream through the converter", () => {
+  // A 1080p stream the receiver plays as it is.
+  assert.equal(castNeedsConversion("compat", false, direct, 1080), false);
+  assert.equal(castNeedsConversion("compat", false, withOptions({ quality: "720p" }), 1080), true);
+  assert.equal(castNeedsConversion("compat", false, withOptions({ aspect: "4:3" }), 1080), true);
+  assert.equal(castNeedsConversion("compat", false, withOptions({ aspect: "fill" }), 1080), true);
+  assert.equal(
+    castNeedsConversion("compat", false, withOptions({ deinterlace: "always" }), 1080),
+    true,
+  );
+  assert.equal(castNeedsConversion("compat", false, withOptions({ tonemap: "on" }), 1080), true);
+  // A swapped alternative is judged by its own height, like the player's file.
+  assert.equal(castNeedsConversion("swapped", false, withOptions({ quality: "720p" }), 1080), true);
+});
+
+test("a quality setting converts only a source known to be taller than it", () => {
+  const at = (quality: typeof DEFAULT_CAST_OPTIONS.quality, height: number | undefined) =>
+    pictureNeedsConversion({ ...DEFAULT_CAST_OPTIONS, quality }, height);
+  assert.equal(at("1080p", 1080), false, "already that size");
+  assert.equal(at("1080p-hq", 1080), false);
+  assert.equal(at("720p", 720), false);
+  assert.equal(at("720p", 800), true, "a 1920x800 scope film is taller than 720p");
+  assert.equal(at("1080p", 2160), true);
+  assert.equal(at("4k", 2160), false);
+  assert.equal(at("original", 4320), false);
+  // An unknown height is left to the converter's probe instead of converting every cast.
+  assert.equal(at("720p", undefined), false);
+  assert.equal(at("720p", 0), false);
+  // Settings the converter applies only when it runs anyway.
+  for (const change of [{ deinterlace: "auto" as const }, { tonemap: "off" as const }]) {
+    assert.equal(pictureNeedsConversion({ ...DEFAULT_CAST_OPTIONS, ...change }, 1080), false);
+  }
+});
+
+test("a stream's height is the decoded or named one, never a guess", () => {
+  assert.equal(knownStreamHeight({ liveHeight: 800 }), 800);
+  assert.equal(knownStreamHeight({ parsedTitle: "Film.2024.2160p.WEB-DL" }), 2160);
+  assert.equal(knownStreamHeight({ title: "Film 720p" }), 720);
+  assert.equal(knownStreamHeight({ title: "Film" }), undefined);
+  assert.equal(knownStreamHeight({ liveHeight: 0, title: "Film" }), undefined);
+});
+
+test("changing a picture setting during a direct cast reloads it through the converter", () => {
+  // The TV plays a compatible 1080p stream directly.
+  const loaded = {
+    url: "https://cdn.example/film.m3u8",
+    startTimeSec: 0,
+    transcode: false,
+    options: DEFAULT_CAST_OPTIONS,
+    subtitle: null,
+    subStyle: null,
+    audioTrackOrdinal: 0,
+  };
+  const media = withOptions({ aspect: "4:3" });
+  const change = {
+    options: media.options,
+    subtitle: media.subtitle,
+    subStyle: null,
+    audioTrackOrdinal: 0,
+    transcode: castNeedsConversion("compat", false, media, 1080),
+  };
+  const next = directReloadRequest(loaded, change, 754.5);
+  assert.equal(next.transcode, true, "the 4:3 picture needs the converter");
+  assert.equal(next.options.aspect, "4:3");
+  assert.equal(next.startTimeSec, 754.5, "it continues where the TV was");
+  assert.equal(next.url, loaded.url);
+  // Going back to the default picture mid-cast keeps the conversion running.
+  const back = directReloadRequest(
+    next,
+    {
+      options: DEFAULT_CAST_OPTIONS,
+      transcode: castNeedsConversion("compat", false, direct, 1080),
+    },
+    800,
+  );
+  assert.equal(back.transcode, true);
+  // A change that needs nothing leaves a direct cast direct, and keeps what it did not mention.
+  const louder = directReloadRequest(loaded, { audioTrackOrdinal: 0, transcode: false }, 10);
+  assert.equal(louder.transcode, false);
+  assert.equal(louder.options, DEFAULT_CAST_OPTIONS);
+  assert.equal(louder.subtitle, null);
 });

@@ -647,14 +647,13 @@ pub async fn cast_load(
     // processing needs the converter too. A file on this computer always goes through it: the
     // direct path relays HTTP and cannot open a filesystem path.
     let local_source = !cast_transcode::is_http(&url);
-    let convert = local_source
-        || !audio_type
-        && (transcode.unwrap_or(false)
-            || wants_sub
-            || options.force_conversion
-            || options.audio_filters_requested()
-            || audio_track_ordinal.unwrap_or(0) > 0
-            || needs_auto_remux(&kind_str, &url, content_type.as_deref()));
+    let convert = load_converts(
+        local_source,
+        audio_type,
+        transcode.unwrap_or(false) || wants_sub || audio_track_ordinal.unwrap_or(0) > 0,
+        &options,
+        needs_auto_remux(&kind_str, &url, content_type.as_deref()),
+    );
     eprintln!(
         "[harbor::cast] load kind={} host={} convert={} subtitle={} start={:.1}",
         kind_str, host, convert, wants_sub, start
@@ -792,6 +791,26 @@ pub async fn cast_load(
             Err(error)
         }
     }
+}
+
+/// Whether a load goes through the converter rather than handing the receiver the source as it is.
+/// `requested` covers what the caller decided (a conversion, a subtitle to burn in, another audio
+/// track); the settings that change the audio or the picture need the converter too, or a stream
+/// sent as it is would silently ignore them.
+fn load_converts(
+    local_source: bool,
+    audio_type: bool,
+    requested: bool,
+    options: &CastOptions,
+    auto_remux: bool,
+) -> bool {
+    local_source
+        || !audio_type
+            && (requested
+                || options.force_conversion
+                || options.audio_filters_requested()
+                || options.picture_changes_requested()
+                || auto_remux)
 }
 
 /// The caller asked for a conversion whose profile rules out the source's video codec.
@@ -1858,6 +1877,37 @@ mod pause_state_tests {
         // A profile sent along with a cast that asked for no conversion changes nothing.
         assert!(!forces_video_encode(false, Some(&h264_only)));
         assert!(!forces_video_encode(true, None));
+    }
+
+    #[test]
+    fn picture_settings_never_let_a_compatible_stream_play_directly() {
+        let direct = CastOptions::default();
+        // A stream the receiver plays as it is, with nothing asked of the converter.
+        assert!(!load_converts(false, false, false, &direct, false));
+        for options in [
+            CastOptions { aspect: "4:3".into(), ..Default::default() },
+            CastOptions { aspect: "fill".into(), ..Default::default() },
+            CastOptions { deinterlace: "always".into(), ..Default::default() },
+            CastOptions { tonemap: "on".into(), ..Default::default() },
+        ] {
+            assert!(load_converts(false, false, false, &options, false), "{options:?}");
+        }
+        // Settings the converter applies only when it runs anyway do not start it.
+        for options in [
+            CastOptions { deinterlace: "auto".into(), ..Default::default() },
+            CastOptions { tonemap: "auto".into(), ..Default::default() },
+            CastOptions { tonemap: "off".into(), ..Default::default() },
+            CastOptions { quality: "720p".into(), ..Default::default() },
+        ] {
+            assert!(!load_converts(false, false, false, &options, false), "{options:?}");
+        }
+        // The frontend asks for a conversion when it knows the source is taller than the quality.
+        let smaller = CastOptions { quality: "720p".into(), ..Default::default() };
+        assert!(load_converts(false, false, true, &smaller, false));
+        // An audio stream has no picture to change; a local file always converts.
+        let square = CastOptions { aspect: "4:3".into(), ..Default::default() };
+        assert!(!load_converts(false, true, false, &square, false));
+        assert!(load_converts(true, false, false, &direct, false));
     }
 
     #[test]

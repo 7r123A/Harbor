@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } fro
 import { castCapabilities, castPreview, type CastCapabilities, type CastPreview } from "@/lib/cast";
 import { panelDevice, useCastPreferences } from "@/lib/cast/cast-preferences";
 import { castNeedsConversion, fitTracksToCastSource } from "@/lib/cast/cast-source";
-import { castProfile } from "@/lib/cast/device-caps";
+import { castProfile, knownStreamHeight } from "@/lib/cast/device-caps";
 import { useDebridClients } from "@/lib/debrid/registry";
 import type { PlayerBridge, PlayerSnapshot, TrackInfo } from "@/lib/player/bridge";
 import {
@@ -70,6 +70,25 @@ export function usePlayerCast(params: {
   const previewDevice = panelDevice(prefs, castDevice);
   const reloadCast = session.reloadCast;
   const swapped = pick.castSourceSwapped;
+  const castSource = pick.castSource;
+  const liveIptv = src.meta.id?.startsWith("iptv:") ?? false;
+  /**
+   * What the running cast should receive now, and whether that needs the converter: a picture,
+   * audio or subtitle setting can turn a cast the TV plays directly into a converted one.
+   */
+  const castChange = useCallback(() => {
+    const media = fitTracksToCastSource(
+      resolveCastMedia(snapRef.current, castChoices, settings, castDevice),
+      swapped,
+    );
+    return {
+      options: media.options,
+      subtitle: media.subtitle,
+      subStyle: media.subStyle,
+      audioTrackOrdinal: media.audioTrackOrdinal ?? 0,
+      transcode: castNeedsConversion(castSource.kind, liveIptv, media, castSource.height),
+    };
+  }, [snapRef, castChoices, settings, castDevice, swapped, castSource, liveIptv]);
   // Everything the TV would receive, resolved the way a load resolves it. "Same as the player"
   // follows the player's own track and subtitle style changes, so those restart the cast too.
   const settingsKey = JSON.stringify(
@@ -91,32 +110,12 @@ export function usePlayerCast(params: {
     if (appliedKeyRef.current === settingsKey) return;
     const timer = window.setTimeout(() => {
       appliedKeyRef.current = settingsKey;
-      const media = fitTracksToCastSource(
-        resolveCastMedia(snapRef.current, castChoices, settings, castDevice),
-        swapped,
-      );
-      void reloadCast({
-        options: media.options,
-        subtitle: media.subtitle,
-        subStyle: media.subStyle,
-        audioTrackOrdinal: media.audioTrackOrdinal ?? 0,
-      });
+      void reloadCast(castChange());
     }, 700);
     return () => window.clearTimeout(timer);
-  }, [casting, settingsKey, castChoices, settings, snapRef, reloadCast, castDevice, swapped]);
+  }, [casting, settingsKey, reloadCast, castChange]);
 
-  const restartCast = useCallback(() => {
-    const media = fitTracksToCastSource(
-      resolveCastMedia(snapRef.current, castChoices, settings, castDevice),
-      swapped,
-    );
-    return reloadCast({
-      options: media.options,
-      subtitle: media.subtitle,
-      subStyle: media.subStyle,
-      audioTrackOrdinal: media.audioTrackOrdinal ?? 0,
-    });
-  }, [snapRef, castChoices, settings, reloadCast, castDevice, swapped]);
+  const restartCast = useCallback(() => reloadCast(castChange()), [reloadCast, castChange]);
 
   const addSubtitleFile = useCallback(async () => {
     try {
@@ -165,7 +164,8 @@ export function usePlayerCast(params: {
       const media = resolveCastMedia(snap, castChoices, settings, previewDevice);
       // The receiver's limits and the conversion a load would ask for, so the preview shows what
       // the TV will get rather than an unbounded conversion.
-      const liveIptv = src.meta.id?.startsWith("iptv:") ?? false;
+      const sourceHeight =
+        snap.videoHeight > 0 ? snap.videoHeight : knownStreamHeight(src.streamRef ?? {});
       const resolution = previewDevice
         ? previewCastResolution(src, previewDevice, {
             width: snap.videoWidth,
@@ -181,7 +181,9 @@ export function usePlayerCast(params: {
         burnSubtitles: media.subtitle != null,
         // The same embedded track a load would burn in, not a second guess at it.
         subtitleOrdinal: media.subtitle?.kind === "embedded" ? media.subtitle.src_index : undefined,
-        transcode: resolution ? castNeedsConversion(resolution.kind, liveIptv, media) : undefined,
+        transcode: resolution
+          ? castNeedsConversion(resolution.kind, liveIptv, media, sourceHeight)
+          : undefined,
         profile: resolution ? castProfile(resolution, liveIptv) : undefined,
       })
         .then((p) => {
