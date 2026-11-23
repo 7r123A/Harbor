@@ -126,7 +126,7 @@ export function CastMenu({
       role="dialog"
       aria-label={t("Cast to TV or speaker")}
       onMouseDown={(e) => e.stopPropagation()}
-      className={`animate-menu-pop fixed z-[140] flex max-h-[calc(100vh-120px)] flex-col overflow-y-auto rounded-md bg-elevated p-4 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)] ${
+      className={`animate-menu-pop fixed z-[140] flex max-h-[calc(100vh-120px)] flex-col overflow-y-auto rounded-md bg-elevated p-4 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.6)] transition-[width] duration-300 ease-[var(--ease-out)] ${
         expanded ? "w-[760px] max-w-[calc(100vw-32px)]" : "w-[340px] max-w-[calc(100vw-32px)]"
       }`}
       style={{
@@ -136,7 +136,15 @@ export function CastMenu({
     >
       <div className="mb-2 flex items-center justify-between">
         <span className="flex items-center gap-2 text-[12.5px] font-semibold text-ink">
-          <Cast size={13} strokeWidth={2.4} />
+          <span className="relative flex h-[13px] w-[13px] items-center justify-center">
+            {loading ? (
+              <span
+                aria-hidden
+                className="absolute inset-[-4px] animate-ping rounded-full bg-accent/25"
+              />
+            ) : null}
+            <Cast size={13} strokeWidth={2.4} className={loading ? "text-accent" : undefined} />
+          </span>
           {t("Cast to TV or speaker")}
         </span>
         <button
@@ -255,9 +263,28 @@ export function CastMenu({
         )
       )}
       {loading ? (
-        <div className="flex items-center gap-2 px-1 py-3 text-[12.5px] text-ink-muted">
-          <Loader2 size={13} strokeWidth={2.2} className="animate-spin" />
-          {t("Scanning your network…")}
+        <div role="status" className="flex flex-col gap-1">
+          <div className="flex items-center gap-2 px-1 pb-1 pt-0.5 text-[12px] text-ink-muted">
+            <Loader2 size={12} strokeWidth={2.2} className="animate-spin" />
+            {t("Scanning your network…")}
+          </div>
+          {[0, 1, 2].map((row) => (
+            <div
+              key={row}
+              aria-hidden
+              className="flex animate-pulse items-center gap-3 rounded-lg px-2.5 py-2"
+              style={{ animationDelay: `${row * 150}ms` }}
+            >
+              <span className="h-8 w-8 shrink-0 rounded-lg bg-canvas/70" />
+              <span className="flex flex-1 flex-col gap-1.5">
+                <span
+                  className="h-2.5 rounded-full bg-canvas/70"
+                  style={{ width: `${62 - row * 12}%` }}
+                />
+                <span className="h-2 w-1/3 rounded-full bg-canvas/50" />
+              </span>
+            </div>
+          ))}
         </div>
       ) : devices.length === 0 ? (
         <div className="flex flex-col gap-2 px-1 py-3">
@@ -275,19 +302,26 @@ export function CastMenu({
         </div>
       ) : (
         <div className={`grid gap-1 ${expanded ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}>
-          {devices.map((d) => {
+          {devices.map((d, index) => {
             const current = activeDevice?.host === d.host && activeDevice?.kind === d.kind;
             return (
               <button
                 key={d.id}
                 data-cast-device
                 onClick={() => onPick(d)}
-                className={`flex items-center gap-3 rounded-lg px-2.5 py-2 text-start transition-colors hover:bg-canvas/65 ${
-                  current ? "ring-1 ring-accent/50" : ""
+                style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
+                className={`group flex animate-row-in items-center gap-3 rounded-lg px-2.5 py-2 text-start outline-none transition-colors hover:bg-canvas/65 focus-visible:ring-2 focus-visible:ring-accent ${
+                  current ? "bg-accent/5 ring-1 ring-accent/50" : ""
                 }`}
               >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-canvas/55 p-1">
+                <span className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-canvas/55 p-1 transition-transform duration-200 group-hover:scale-105">
                   <CastIcon device={d} size={28} />
+                  {current ? (
+                    <span aria-hidden className="absolute -end-0.5 -top-0.5 flex h-2 w-2">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-success ring-2 ring-elevated" />
+                    </span>
+                  ) : null}
                 </span>
                 <div className="flex min-w-0 flex-1 flex-col">
                   <span className="flex items-center gap-1.5 truncate text-[13px] font-medium text-ink">
@@ -340,7 +374,7 @@ export function CastMenu({
             />
           </button>
           {expanded && (
-            <div className="mt-2">
+            <div className="mt-2 animate-panel-in">
               <CastSettingsPanel {...panel} />
             </div>
           )}

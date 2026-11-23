@@ -16,7 +16,7 @@ import {
   Tv,
   Volume2,
 } from "lucide-react";
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type {
   CastCapabilities,
   CastDeviceInfo,
@@ -37,6 +37,7 @@ import {
   useCastPreferences,
   type CastSubtitleLook,
 } from "@/lib/cast/cast-preferences";
+import { pictureClass } from "@/lib/cast/cast-source";
 import { automaticDeviceOptions, automaticStreamFormat } from "@/lib/cast/device-settings";
 import { useT } from "@/lib/i18n";
 import type { TrackInfo } from "@/lib/player/bridge";
@@ -123,14 +124,20 @@ function Section({
   title,
   aside,
   children,
+  order = 0,
 }: {
   icon: ReactNode;
   title: string;
   aside?: ReactNode;
   children: ReactNode;
+  /** Its place among the cards, so they come in one after another when the panel opens. */
+  order?: number;
 }) {
   return (
-    <section className="flex flex-col gap-1 rounded-lg border border-edge-soft bg-surface/60 p-3">
+    <section
+      className="flex animate-row-in flex-col gap-1 rounded-lg border border-edge-soft bg-surface/60 p-3 transition-colors duration-200 hover:border-edge"
+      style={{ animationDelay: `${order * 45}ms` }}
+    >
       <header className="mb-1 flex min-h-[24px] items-center gap-2">
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-accent-soft text-accent">
           {icon}
@@ -205,12 +212,44 @@ function Segmented<T extends string | number>({
   label: string;
   disabled?: boolean;
 }) {
+  const box = useRef<HTMLDivElement>(null);
+  const selected = options.findIndex(([v]) => v === value);
+  // The highlight slides to the chosen option instead of jumping; it follows the option's own
+  // size and place, so long translations and right-to-left layouts keep it aligned.
+  const [thumb, setThumb] = useState<{ left: number; width: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const measure = () => {
+      const option = el.querySelectorAll<HTMLElement>("[role=radio]")[selected];
+      setThumb((previous) => {
+        if (!option) return null;
+        const next = { left: option.offsetLeft, width: option.offsetWidth };
+        return previous?.left === next.left && previous.width === next.width ? previous : next;
+      });
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    // The options themselves too: another language changes their widths, not the row's.
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    el.querySelectorAll<HTMLElement>("[role=radio]").forEach((option) => observer.observe(option));
+    return () => observer.disconnect();
+  }, [selected, options.length]);
   return (
     <div
+      ref={box}
       role="radiogroup"
       aria-label={label}
-      className={`flex h-[28px] min-w-0 flex-1 rounded-md border border-edge-soft bg-canvas/60 p-0.5 ${disabled ? "opacity-40" : ""}`}
+      className={`relative flex h-[28px] min-w-0 flex-1 rounded-md border border-edge-soft bg-canvas/60 p-0.5 ${disabled ? "opacity-40" : ""}`}
     >
+      {thumb ? (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute bottom-0.5 top-0.5 rounded-[5px] bg-accent-soft ring-1 ring-inset ring-accent/25 transition-[left,width] duration-300 ease-[var(--ease-out)]"
+          style={{ left: thumb.left, width: thumb.width }}
+        />
+      ) : null}
       {options.map(([v, text]) => {
         const on = v === value;
         return (
@@ -222,8 +261,10 @@ function Segmented<T extends string | number>({
             disabled={disabled}
             title={text}
             onClick={() => onChange(v)}
-            className={`min-w-0 flex-auto truncate rounded-[5px] px-1.5 text-[11.5px] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent ${
-              on ? "bg-accent-soft font-semibold text-accent" : "text-ink-muted hover:text-ink"
+            className={`relative min-w-0 flex-auto truncate rounded-[5px] px-1.5 text-[11.5px] outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-accent ${
+              on
+                ? `font-semibold text-accent ${thumb ? "" : "bg-accent-soft"}`
+                : "text-ink-muted hover:text-ink"
             }`}
           >
             <span dir={LETTER.test(text) ? undefined : "ltr"}>{text}</span>
@@ -258,12 +299,12 @@ function Switch({
       <span className="min-w-0 flex-1 leading-tight">{label}</span>
       <span
         aria-hidden
-        className={`relative h-4 w-7 shrink-0 rounded-full transition-colors ${
+        className={`relative h-4 w-7 shrink-0 rounded-full transition-colors duration-200 ${
           checked ? "bg-accent" : "bg-raised ring-1 ring-inset ring-edge"
         }`}
       >
         <span
-          className={`absolute start-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform ${
+          className={`absolute start-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] ${
             checked ? "translate-x-3 rtl:-translate-x-3" : ""
           }`}
         />
@@ -424,7 +465,9 @@ export function describePlan(
       ? null
       : s.video === "copy"
         ? t("Video sent as is")
-        : t("Video converted to H.264 {height}p", { height: s.outputHeight });
+        : t("Video converted to H.264 {height}p", {
+            height: pictureClass(s.outputWidth ?? 0, s.outputHeight),
+          });
   const audio = s.audio.includes("original")
     ? t("Audio sent as is")
     : t("Audio as {codec}", { codec: s.audio });
@@ -441,6 +484,89 @@ function Pill({ children, tone = "plain" }: { children: ReactNode; tone?: "plain
       }`}
     >
       {children}
+    </span>
+  );
+}
+
+type Translate = (key: string, vars?: Record<string, string | number>) => string;
+
+/** The source and what the TV receives, as pills that come in one after another. */
+function PlanPills({
+  summary,
+  plan,
+  t,
+}: {
+  summary: CastPlanSummary;
+  plan: NonNullable<ReturnType<typeof describePlan>>;
+  t: Translate;
+}) {
+  const pills: ReactNode[] = [
+    summary.sourceVideo ? <Pill>{summary.sourceVideo}</Pill> : null,
+    summary.sourceAudio ? <Pill>{summary.sourceAudio}</Pill> : null,
+    <ArrowRight size={13} className="shrink-0 text-accent rtl:rotate-180" />,
+    plan.video ? <Pill tone="accent">{plan.video}</Pill> : null,
+    <Pill tone="accent">{plan.audio}</Pill>,
+    summary.tonemap ? <Pill>{t("HDR tone-mapped")}</Pill> : null,
+    summary.hardware ? (
+      <Pill>
+        <Cpu size={10} className="shrink-0" />
+        {summary.hardware}
+      </Pill>
+    ) : null,
+  ].filter(Boolean);
+  return (
+    <>
+      {pills.map((pill, i) => (
+        <span
+          key={i}
+          className="inline-flex max-w-full"
+          style={{ animation: `cast-pill-in 260ms var(--ease-out) ${i * 35}ms both` }}
+        >
+          {pill}
+        </span>
+      ))}
+      <style>{`
+        @keyframes cast-pill-in {
+          from { opacity: 0; transform: translateY(3px) scale(0.96); }
+          to { opacity: 1; transform: none; }
+        }
+      `}</style>
+    </>
+  );
+}
+
+/**
+ * How fast the converter runs against the film. Below 1× the TV runs out of picture and waits,
+ * so it turns red and says what helps; a full bar is twice real time.
+ */
+function SpeedMeter({ speed }: { speed: number }) {
+  const t = useT();
+  const slow = speed < 1;
+  return (
+    <span
+      dir="ltr"
+      title={
+        slow
+          ? t(
+              "The computer converts slower than the film plays. Turn on the graphics card or lower the quality.",
+            )
+          : t("Conversion speed")
+      }
+      className={`ms-auto inline-flex shrink-0 items-center gap-1.5 font-mono font-semibold tabular-nums transition-colors duration-500 ${
+        slow ? "text-danger" : "text-success"
+      }`}
+    >
+      <Gauge size={12} className={slow ? "animate-pulse" : undefined} />
+      <span aria-hidden className="relative h-1 w-10 overflow-hidden rounded-full bg-raised">
+        <span
+          className={`absolute inset-y-0 left-0 rounded-full transition-[width,background-color] duration-700 ease-[var(--ease-out)] ${
+            slow ? "bg-danger" : "bg-success"
+          }`}
+          style={{ width: `${Math.min(1, speed / 2) * 100}%` }}
+        />
+        <span className="absolute inset-y-0 left-1/2 w-px bg-ink/40" />
+      </span>
+      {speed.toFixed(1)}×
     </span>
   );
 }
@@ -511,7 +637,7 @@ export function CastSettingsPanel(props: CastSettingsPanelProps) {
 
   if (view !== "settings") {
     return (
-      <div className="flex flex-col gap-2.5 text-[12px] text-ink">
+      <div key={view} className="flex animate-panel-in flex-col gap-2.5 text-[12px] text-ink">
         <button
           type="button"
           onClick={() => setView("settings")}
@@ -537,6 +663,16 @@ export function CastSettingsPanel(props: CastSettingsPanelProps) {
               <dd>{plan?.from || "—"}</dd>
               <dt className="text-ink-muted">{t("Sent to the TV")}</dt>
               <dd>{plan ? [plan.video, plan.audio].filter(Boolean).join(" · ") : "—"}</dd>
+              {summary && summary.video !== "none" && summary.outputWidth > 0 ? (
+                <>
+                  <dt className="text-ink-muted">{t("Picture")}</dt>
+                  <dd>
+                    <span dir="ltr" className="font-mono text-[11.5px] tabular-nums">
+                      {summary.outputWidth}×{summary.outputHeight}
+                    </span>
+                  </dd>
+                </>
+              ) : null}
               <dt className="text-ink-muted">{t("Hardware")}</dt>
               <dd>{hardware ?? t("Processor only")}</dd>
             </dl>
@@ -625,7 +761,7 @@ export function CastSettingsPanel(props: CastSettingsPanelProps) {
 
       <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2">
         <div className="flex flex-col gap-3">
-          <Section icon={<Volume2 size={13} />} title={t("Audio")}>
+          <Section icon={<Volume2 size={13} />} title={t("Audio")} order={1}>
             <div className="mb-1 flex">
               <Select
                 label={t("Audio")}
@@ -690,7 +826,7 @@ export function CastSettingsPanel(props: CastSettingsPanelProps) {
             </Row>
           </Section>
 
-          <Section icon={<MonitorPlay size={13} />} title={t("Picture")}>
+          <Section icon={<MonitorPlay size={13} />} title={t("Picture")} order={2}>
             <Row
               label={t("Quality")}
               help={t("Higher quality needs a faster Wi-Fi. 4K needs a 4K TV.")}
@@ -790,7 +926,7 @@ export function CastSettingsPanel(props: CastSettingsPanelProps) {
         </div>
 
         <div className="flex flex-col gap-3">
-          <Section icon={<Captions size={13} />} title={t("Subtitles")}>
+          <Section icon={<Captions size={13} />} title={t("Subtitles")} order={2}>
             <div className="mb-1 flex">
               <Select
                 label={t("Subtitles")}
@@ -913,6 +1049,7 @@ export function CastSettingsPanel(props: CastSettingsPanelProps) {
           <Section
             icon={<Cpu size={13} />}
             title={t("Accelerate")}
+            order={3}
             aside={
               <>
                 <Pill tone={hardware ? "accent" : "plain"}>{hardware ?? t("Processor only")}</Pill>
@@ -966,27 +1103,28 @@ export function CastSettingsPanel(props: CastSettingsPanelProps) {
       </div>
 
       {/* Where the film goes: what it is, what the TV receives, and how fast the conversion runs. */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-lg border border-edge-soft bg-canvas/50 px-3 py-2 text-[11px] text-ink-muted">
+      <div
+        className="relative flex animate-row-in flex-wrap items-center gap-x-2 gap-y-1.5 overflow-hidden rounded-lg border border-edge-soft bg-canvas/50 px-3 py-2 text-[11px] text-ink-muted"
+        style={{ animationDelay: "180ms" }}
+      >
+        {props.applying ? (
+          // An indeterminate bar along the edge while the TV restarts with the new settings.
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px] overflow-hidden bg-accent/10"
+          >
+            <span className="absolute inset-y-0 w-1/3 animate-[cast-apply-sweep_1.1s_var(--ease-in-out)_infinite] rounded-full bg-accent" />
+          </span>
+        ) : null}
         {props.applying || props.previewBusy ? (
           <Loader2 size={13} className="shrink-0 animate-spin text-accent" />
         ) : null}
         {props.applying ? (
           <span className="font-semibold text-ink">{t("Applying to the TV…")}</span>
         ) : plan && summary ? (
-          <>
-            {summary.sourceVideo ? <Pill>{summary.sourceVideo}</Pill> : null}
-            {summary.sourceAudio ? <Pill>{summary.sourceAudio}</Pill> : null}
-            <ArrowRight size={13} className="shrink-0 text-accent rtl:rotate-180" />
-            {plan.video ? <Pill tone="accent">{plan.video}</Pill> : null}
-            <Pill tone="accent">{plan.audio}</Pill>
-            {summary.tonemap ? <Pill>{t("HDR tone-mapped")}</Pill> : null}
-            {summary.hardware ? (
-              <Pill>
-                <Cpu size={10} className="shrink-0" />
-                {summary.hardware}
-              </Pill>
-            ) : null}
-          </>
+          <span key={plan.video + plan.audio} className="contents">
+            <PlanPills summary={summary} plan={plan} t={t} />
+          </span>
         ) : (
           <span>
             {props.casting
@@ -994,19 +1132,14 @@ export function CastSettingsPanel(props: CastSettingsPanelProps) {
               : t("These settings apply when you pick a device.")}
           </span>
         )}
-        {live && live.speed > 0 ? (
-          <span
-            dir="ltr"
-            title={t("Conversion speed")}
-            className={`ms-auto inline-flex shrink-0 items-center gap-1 font-mono font-semibold tabular-nums ${
-              live.speed >= 1 ? "text-success" : "text-danger"
-            }`}
-          >
-            <Gauge size={12} />
-            {live.speed.toFixed(1)}×
-          </span>
-        ) : null}
+        {live && live.speed > 0 ? <SpeedMeter speed={live.speed} /> : null}
       </div>
+      <style>{`
+        @keyframes cast-apply-sweep {
+          from { left: -33%; }
+          to { left: 100%; }
+        }
+      `}</style>
 
       <div className="-mt-1 flex flex-wrap items-center justify-end gap-1">
         <button type="button" onClick={() => setView("about")} className={footerButton}>

@@ -99,5 +99,7 @@ const castStudio: Record<string, string> = {
     "ये सेटिंग्स आपके चुने हुए डिवाइस के हिसाब से अपने-आप सेट होती हैं।",
   "Subtitles will look like this on the TV.": "टीवी पर उपशीर्षक ऐसे दिखेंगे।",
   "Conversion speed": "रूपांतरण गति",
+  "The computer converts slower than the film plays. Turn on the graphics card or lower the quality.":
+    "कंप्यूटर फ़िल्म चलने की गति से धीमे कन्वर्ट कर रहा है। ग्राफ़िक्स कार्ड चालू करें या क्वालिटी कम करें।",
 };
 export default castStudio;

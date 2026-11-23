@@ -101,5 +101,7 @@ const castStudio: Record<string, string> = {
     "Bu ayarlar seçtiğiniz cihaza göre kendiliğinden ayarlanır.",
   "Subtitles will look like this on the TV.": "Altyazılar TV'de böyle görünecek.",
   "Conversion speed": "Dönüştürme hızı",
+  "The computer converts slower than the film plays. Turn on the graphics card or lower the quality.":
+    "Bilgisayar, filmin oynatılmasından daha yavaş dönüştürüyor. Ekran kartını açın veya kaliteyi düşürün.",
 };
 export default castStudio;

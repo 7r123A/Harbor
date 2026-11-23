@@ -252,6 +252,8 @@ export function CastSessionBar({
     ? !["copy", "none"].includes(summary.video) || !summary.audio.includes("original")
     : transcoding;
   const speed = stats?.running && stats.speed > 0 ? stats.speed : null;
+  // Below 1× the conversion falls behind the film and the TV ends up waiting for picture.
+  const slow = !applying && converting && speed != null && speed < 1;
   const badge = applying
     ? t("Applying…")
     : converting
@@ -263,8 +265,14 @@ export function CastSessionBar({
         : null;
   return (
     <div className="pointer-events-auto absolute left-1/2 top-6 z-30 flex -translate-x-1/2 flex-col items-center gap-2">
-      <div className="flex items-center gap-3 rounded-full border border-edge bg-elevated/95 px-4 py-2.5 shadow-[0_18px_40px_-14px_rgba(0,0,0,0.7)] backdrop-blur-md">
-        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-accent/20 text-accent">
+      <div className="flex animate-[cast-bar-in_360ms_var(--ease-out)_both] items-center gap-3 rounded-full border border-edge bg-elevated/95 px-4 py-2.5 shadow-[0_18px_40px_-14px_rgba(0,0,0,0.7)] backdrop-blur-md">
+        <span className="relative flex h-7 w-7 items-center justify-center rounded-full bg-accent/20 text-accent">
+          {playing && !trouble ? (
+            <span
+              aria-hidden
+              className="absolute inset-0 animate-[cast-bar-signal_2.2s_ease-out_infinite] rounded-full ring-1 ring-accent/50"
+            />
+          ) : null}
           <svg
             width="14"
             height="14"
@@ -289,9 +297,18 @@ export function CastSessionBar({
         </div>
         {badge && (
           <span
-            title={summary?.hardware ?? undefined}
-            className="flex items-center gap-1 rounded-full bg-amber-400/15 px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-amber-200"
+            title={
+              slow
+                ? t(
+                    "The computer converts slower than the film plays. Turn on the graphics card or lower the quality.",
+                  )
+                : (summary?.hardware ?? undefined)
+            }
+            className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] transition-colors duration-500 ${
+              slow ? "bg-rose-400/20 text-rose-100" : "bg-amber-400/15 text-amber-200"
+            }`}
           >
+            {slow && <AlertTriangle size={10} className="shrink-0" />}
             {applying && <Loader2 size={10} className="animate-spin" />}
             {badge}
             {!applying && summary?.hardware && converting
@@ -302,16 +319,30 @@ export function CastSessionBar({
         <div className="ms-2 flex items-center gap-1.5">
           <button
             onClick={() => void onTogglePlay()}
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-canvas/60 text-ink transition-colors hover:bg-canvas/85"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-canvas/60 text-ink transition-[background-color,transform] duration-150 hover:bg-canvas/85 active:scale-90"
             aria-label={playing ? t("Pause") : t("Play")}
           >
             {playing ? (
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+              <svg
+                key="pause"
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                className="animate-[cast-bar-icon_220ms_var(--ease-out)]"
+              >
                 <rect x="6" y="5" width="4" height="14" rx="1" />
                 <rect x="14" y="5" width="4" height="14" rx="1" />
               </svg>
             ) : (
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+              <svg
+                key="play"
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                className="animate-[cast-bar-icon_220ms_var(--ease-out)]"
+              >
                 <path d="M7 5v14l12-7z" />
               </svg>
             )}
@@ -352,7 +383,7 @@ export function CastSessionBar({
       {trouble && (
         <div
           role="alert"
-          className="flex items-center gap-3 rounded-full border border-amber-300/40 bg-amber-400/15 px-4 py-2 text-[12px] text-amber-50 shadow-[0_18px_40px_-18px_rgba(0,0,0,0.6)] backdrop-blur-md"
+          className="flex animate-[cast-bar-in_320ms_var(--ease-out)_both] items-center gap-3 rounded-full border border-amber-300/40 bg-amber-400/15 px-4 py-2 text-[12px] text-amber-50 shadow-[0_18px_40px_-18px_rgba(0,0,0,0.6)] backdrop-blur-md"
         >
           <AlertTriangle size={14} className="shrink-0" />
           <span>
@@ -373,10 +404,24 @@ export function CastSessionBar({
         </div>
       )}
       {stats?.error && !trouble && converting && (
-        <div className="max-w-[560px] truncate rounded-full border border-rose-300/30 bg-rose-400/10 px-4 py-1.5 text-[11px] text-rose-100">
+        <div className="max-w-[560px] animate-[cast-bar-in_320ms_var(--ease-out)_both] truncate rounded-full border border-rose-300/30 bg-rose-400/10 px-4 py-1.5 text-[11px] text-rose-100">
           {stats.error}
         </div>
       )}
+      <style>{`
+        @keyframes cast-bar-in {
+          from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+          to { opacity: 1; transform: none; }
+        }
+        @keyframes cast-bar-signal {
+          0% { opacity: 0.8; transform: scale(1); }
+          100% { opacity: 0; transform: scale(1.7); }
+        }
+        @keyframes cast-bar-icon {
+          from { opacity: 0; transform: scale(0.6) rotate(-12deg); }
+          to { opacity: 1; transform: none; }
+        }
+      `}</style>
     </div>
   );
 }

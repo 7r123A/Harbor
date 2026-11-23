@@ -102,5 +102,7 @@ const castStudio: Record<string, string> = {
     "Queste impostazioni si adattano al dispositivo che scegli.",
   "Subtitles will look like this on the TV.": "Ecco come appariranno i sottotitoli sulla TV.",
   "Conversion speed": "Velocità di conversione",
+  "The computer converts slower than the film plays. Turn on the graphics card or lower the quality.":
+    "Il computer converte più lentamente di quanto scorre il film. Attiva la scheda grafica o abbassa la qualità.",
 };
 export default castStudio;

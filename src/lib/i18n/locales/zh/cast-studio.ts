@@ -97,5 +97,7 @@ const castStudio: Record<string, string> = {
   "These settings set themselves for the device you pick.": "这些设置会根据你选择的设备自动调整。",
   "Subtitles will look like this on the TV.": "字幕在电视上将显示为这样。",
   "Conversion speed": "转换速度",
+  "The computer converts slower than the film plays. Turn on the graphics card or lower the quality.":
+    "转换速度跟不上影片播放。请开启显卡加速或降低画质。",
 };
 export default castStudio;

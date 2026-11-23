@@ -100,5 +100,7 @@ const castStudio: Record<string, string> = {
     "이 설정은 선택한 기기에 맞게 자동으로 조정됩니다.",
   "Subtitles will look like this on the TV.": "TV에서 자막이 이렇게 보입니다.",
   "Conversion speed": "변환 속도",
+  "The computer converts slower than the film plays. Turn on the graphics card or lower the quality.":
+    "변환 속도가 영화 재생 속도보다 느립니다. 그래픽 카드를 켜거나 화질을 낮추세요.",
 };
 export default castStudio;
