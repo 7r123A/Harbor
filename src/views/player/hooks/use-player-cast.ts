@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } fro
 import { castCapabilities, castPreview, type CastCapabilities, type CastPreview } from "@/lib/cast";
 import { panelDevice, useCastPreferences } from "@/lib/cast/cast-preferences";
 import { castNeedsConversion, fitTracksToCastSource } from "@/lib/cast/cast-source";
-import { castProfile, knownStreamHeight } from "@/lib/cast/device-caps";
+import { castProfile, playerPicture } from "@/lib/cast/device-caps";
 import { useDebridClients } from "@/lib/debrid/registry";
 import type { PlayerBridge, PlayerSnapshot, TrackInfo } from "@/lib/player/bridge";
 import {
@@ -86,7 +86,7 @@ export function usePlayerCast(params: {
       subtitle: media.subtitle,
       subStyle: media.subStyle,
       audioTrackOrdinal: media.audioTrackOrdinal ?? 0,
-      transcode: castNeedsConversion(castSource.kind, liveIptv, media, castSource.height),
+      transcode: castNeedsConversion(castSource.kind, liveIptv, media, castSource.picture),
     };
   }, [snapRef, castChoices, settings, castDevice, swapped, castSource, liveIptv]);
   // Everything the TV would receive, resolved the way a load resolves it. "Same as the player"
@@ -164,8 +164,7 @@ export function usePlayerCast(params: {
       const media = resolveCastMedia(snap, castChoices, settings, previewDevice);
       // The receiver's limits and the conversion a load would ask for, so the preview shows what
       // the TV will get rather than an unbounded conversion.
-      const sourceHeight =
-        snap.videoHeight > 0 ? snap.videoHeight : knownStreamHeight(src.streamRef ?? {});
+      const picture = playerPicture(snap, src.streamRef);
       const resolution = previewDevice
         ? previewCastResolution(src, previewDevice, {
             width: snap.videoWidth,
@@ -182,7 +181,7 @@ export function usePlayerCast(params: {
         // The same embedded track a load would burn in, not a second guess at it.
         subtitleOrdinal: media.subtitle?.kind === "embedded" ? media.subtitle.src_index : undefined,
         transcode: resolution
-          ? castNeedsConversion(resolution.kind, liveIptv, media, sourceHeight)
+          ? castNeedsConversion(resolution.kind, liveIptv, media, picture)
           : undefined,
         profile: resolution ? castProfile(resolution, liveIptv) : undefined,
       })

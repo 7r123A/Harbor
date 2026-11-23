@@ -35,6 +35,7 @@ export type CastPlanSummary = {
   audio: string;
   sourceVideo: string;
   sourceAudio: string;
+  outputWidth: number;
   outputHeight: number;
   tonemap: string | null;
   hardware: string | null;
@@ -152,6 +153,12 @@ export async function castLoad(opts: {
   options?: CastOptions;
   /** The discovered device id; lets Harbor find a DLNA renderer again after it restarts. */
   deviceId?: string;
+  /**
+   * The source's picture size when the player knows it. A load of a stream the receiver could play
+   * as it is checks the quality setting against it, and probes the source when it is not given.
+   */
+  sourceWidth?: number;
+  sourceHeight?: number;
 }): Promise<{ ok: boolean; error: string | null; info?: CastLoadInfo | null }> {
   if (!isTauri) return { ok: false, error: "Casting requires the desktop build." };
   try {
@@ -175,6 +182,8 @@ export async function castLoad(opts: {
       audioStartPaused: opts.audioStartPaused ?? false,
       options: opts.options ?? null,
       deviceId: opts.deviceId ?? null,
+      sourceWidth: opts.sourceWidth ?? null,
+      sourceHeight: opts.sourceHeight ?? null,
     });
     return { ok: true, error: null, info: info ?? null };
   } catch (e) {

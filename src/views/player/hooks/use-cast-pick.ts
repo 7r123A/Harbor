@@ -6,14 +6,18 @@ import {
   type CastSubInfo,
   type CastSubStyle,
 } from "@/lib/cast";
-import { castProfile, knownStreamHeight } from "@/lib/cast/device-caps";
+import { castProfile, knownStreamHeight, playerPicture } from "@/lib/cast/device-caps";
 import {
   castOptionsFor,
   getCastPreferences,
   rememberCastDevice,
   type CastSubtitleLook,
 } from "@/lib/cast/cast-preferences";
-import { castNeedsConversion, fitTracksToCastSource } from "@/lib/cast/cast-source";
+import {
+  castNeedsConversion,
+  fitTracksToCastSource,
+  type SourcePicture,
+} from "@/lib/cast/cast-source";
 import type { RememberedDevice } from "@/lib/cast/device-settings";
 import { useDebridClients } from "@/lib/debrid/registry";
 import { t } from "@/lib/i18n";
@@ -194,8 +198,8 @@ export function useCastPick(params: {
   // the cast needs to decide whether the converter must take over.
   const [castSource, setCastSource] = useState<{
     kind: "compat" | "swapped" | "transcode";
-    height: number | undefined;
-  }>({ kind: "compat", height: undefined });
+    picture: SourcePicture;
+  }>({ kind: "compat", picture: {} });
 
   useEffect(() => {
     if (!castIncompatError) return;
@@ -306,19 +310,17 @@ export function useCastPick(params: {
       const swapped = resolved.kind === "swapped";
       setCastSourceSwapped(swapped);
       // A swapped stream is another file: only its own release name tells its height.
-      const sourceHeight = swapped
-        ? knownStreamHeight(resolved.alt)
-        : snap.videoHeight > 0
-          ? snap.videoHeight
-          : knownStreamHeight(src.streamRef ?? {});
-      setCastSource({ kind: resolved.kind, height: sourceHeight });
+      const picture: SourcePicture = swapped
+        ? { height: knownStreamHeight(resolved.alt) }
+        : playerPicture(snap, src.streamRef);
+      setCastSource({ kind: resolved.kind, picture });
       const media = fitTracksToCastSource(
         resolveCastMedia(snap, castChoices, settings, device),
         swapped,
       );
       const audioTrackOrdinal = media.audioTrackOrdinal;
       const burnSub = media.subtitle;
-      const forceTranscode = castNeedsConversion(resolved.kind, isLiveIptv, media, sourceHeight);
+      const forceTranscode = castNeedsConversion(resolved.kind, isLiveIptv, media, picture);
       // Any conversion (burning in subtitles, audio work, or one Harbor starts itself) keeps to
       // the receiver's resolution and bit rate, and changes no codec it plays; live TV gets the
       // safe 1080p H.264 profile.
@@ -341,6 +343,9 @@ export function useCastPick(params: {
           subStyle: burnSub ? media.subStyle : null,
           audioTrackOrdinal,
           options: media.options,
+          // What the player knows of the picture; an unknown size is probed before direct play.
+          sourceWidth: picture.width,
+          sourceHeight: picture.height,
         },
         () => bridgeRef.current?.pause("cast"),
       );

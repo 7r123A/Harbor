@@ -302,6 +302,23 @@ export function knownStreamHeight(s: StreamLike): number | undefined {
   return resolutionFromName(s);
 }
 
+/**
+ * The player's own picture: the size it decoded, else the height its release names (a name says
+ * nothing of the width). Never a guess.
+ */
+export function playerPicture(
+  decoded: { videoWidth: number; videoHeight: number },
+  stream: StreamLike | undefined,
+): { height?: number; width?: number } {
+  if (decoded.videoHeight > 0) {
+    return {
+      height: decoded.videoHeight,
+      width: decoded.videoWidth > 0 ? decoded.videoWidth : undefined,
+    };
+  }
+  return { height: knownStreamHeight(stream ?? {}) };
+}
+
 function noAudioPassthrough(caps: DeviceCaps): boolean {
   return (
     !caps.passthroughAc3 && !caps.passthroughEac3 && !caps.passthroughDts && !caps.passthroughTruehd

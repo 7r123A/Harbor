@@ -32,20 +32,45 @@ const QUALITY_HEIGHT: Record<CastOptions["quality"], number> = {
 };
 
 /**
+ * The widest picture a receiver of a height class decodes, as `max_width_for` in
+ * `cast_transcode.rs`: 16:9 at that height, and DCI's 4096 from 2160 up.
+ */
+export function qualityWidthLimit(height: number): number {
+  const width = height >= 2160 ? (4096 * height) / 2160 : (height * 16) / 9;
+  return Math.max(2, Math.round(width / 2) * 2);
+}
+
+/**
+ * The usual name of a picture size: the smallest standard height whose 16:9 frame holds it, so a
+ * 1920x804 scope film is 1080p, as Blu-ray calls it, not "804p". An unknown width goes by height.
+ */
+export function pictureClass(width: number, height: number): number {
+  for (const standard of [480, 576, 720, 1080, 1440, 2160, 4320]) {
+    if (height <= standard && width <= qualityWidthLimit(standard)) return standard;
+  }
+  return height;
+}
+
+/** What is known of the source's picture: the decoded size, or the height its release names. */
+export type SourcePicture = { height?: number; width?: number };
+
+/**
  * Picture settings that change the video itself. A stream sent to the receiver as it is would
  * silently ignore them, so they need the converter. A quality setting only does when the source is
- * known to be taller than it; an unknown height is left to the converter's own probe.
+ * known to be taller or wider than it; an unknown size is left to the converter's own probe.
  */
 export function pictureNeedsConversion(
   options: CastOptions,
-  sourceHeight: number | undefined,
+  source: SourcePicture | undefined,
 ): boolean {
   const limit = QUALITY_HEIGHT[options.quality];
+  const height = source?.height ?? 0;
+  const width = source?.width ?? 0;
   return (
     options.aspect !== "default" ||
     options.deinterlace === "always" ||
     options.tonemap === "on" ||
-    (sourceHeight != null && sourceHeight > 0 && limit != null && sourceHeight > limit)
+    (limit != null && (height > limit || width > qualityWidthLimit(limit)))
   );
 }
 
@@ -62,7 +87,7 @@ export function castNeedsConversion(
     audioTrackOrdinal: number | undefined;
     options: CastOptions;
   },
-  sourceHeight?: number,
+  source?: SourcePicture,
 ): boolean {
   const o = media.options;
   const audioWork =
@@ -77,7 +102,7 @@ export function castNeedsConversion(
     media.subtitle != null ||
     audioWork ||
     o.forceConversion ||
-    pictureNeedsConversion(o, sourceHeight)
+    pictureNeedsConversion(o, source)
   );
 }
 

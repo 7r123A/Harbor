@@ -86,6 +86,13 @@ impl CastOptions {
         }
     }
 
+    /// Whether a picture of this size is beyond the quality setting: taller than its height, or
+    /// wider than a receiver of that height decodes. `build_plan` brings such a picture within it.
+    pub(crate) fn picture_beyond_quality(&self, width: u32, height: u32) -> bool {
+        let (max_height, _) = self.quality();
+        height > max_height || width > max_width_for(max_height)
+    }
+
     pub(crate) fn audio_filters_requested(&self) -> bool {
         self.volume_boost > 0 || self.night_mode || self.dialogue_boost || self.audio_delay_ms != 0
     }
@@ -118,6 +125,12 @@ pub struct VideoInfo {
     pub fps: f64,
     pub hdr: bool,
     pub dolby_vision: Option<u32>,
+    /// The transfer characteristic the stream declares ("smpte2084", "bt709"); empty when it
+    /// declares none, as Dolby Vision profile 5 and many untagged files do.
+    pub transfer: String,
+    /// The colour primaries ("bt2020") and matrix ("bt2020nc") it declares; empty when unknown.
+    pub primaries: String,
+    pub matrix: String,
     pub interlaced: bool,
     /// Average bits per second (the stream's own field, or Matroska's BPS tag); 0 when unknown.
     pub bitrate: u64,
@@ -280,6 +293,10 @@ struct ProbeStream {
     #[serde(default)]
     color_transfer: Option<String>,
     #[serde(default)]
+    color_primaries: Option<String>,
+    #[serde(default)]
+    color_space: Option<String>,
+    #[serde(default)]
     field_order: Option<String>,
     #[serde(default)]
     channels: Option<u32>,
@@ -327,6 +344,14 @@ fn stream_bitrate(bit_rate: Option<&str>, tags: &HashMap<String, String>) -> u64
         .unwrap_or(0)
 }
 
+/// A colour property ffprobe reports, or "" when the stream does not declare it.
+fn declared_colour(value: Option<&str>) -> String {
+    match value.map(str::trim).unwrap_or("") {
+        "" | "unknown" | "reserved" | "unspecified" | "N/A" => String::new(),
+        other => other.to_string(),
+    }
+}
+
 /// "16:15" -> (16, 15); square ("1:1") and unknown ("0:1", "N/A") ratios give None.
 fn parse_sar(sar: Option<&str>) -> Option<(u32, u32)> {
     let (n, d) = sar?.split_once(':')?;
@@ -367,6 +392,9 @@ pub(crate) fn parse_probe(json: &str) -> Result<MediaProbe, String> {
                         .unwrap_or(24.0),
                     hdr: matches!(transfer, "smpte2084" | "arib-std-b67") || dolby_vision.is_some(),
                     dolby_vision,
+                    transfer: declared_colour(Some(transfer)),
+                    primaries: declared_colour(s.color_primaries.as_deref()),
+                    matrix: declared_colour(s.color_space.as_deref()),
                     interlaced: matches!(field_order, "tt" | "bb" | "tb" | "bt"),
                     bitrate: stream_bitrate(s.bit_rate.as_deref(), &s.tags),
                     max_bitrate: s.max_bit_rate.as_deref().and_then(|b| b.trim().parse().ok()).unwrap_or(0),
@@ -626,6 +654,7 @@ pub struct PlanSummary {
     pub audio: String,
     pub source_video: String,
     pub source_audio: String,
+    pub output_width: u32,
     pub output_height: u32,
     pub tonemap: Option<String>,
     pub hardware: Option<String>,
@@ -680,6 +709,36 @@ pub struct DeviceLimits {
 
 fn even(v: f64) -> u32 {
     ((v / 2.0).round() as u32 * 2).max(2)
+}
+
+/// The widest picture a receiver of a height class decodes: 16:9 at that height (1920 at 1080p,
+/// 1280 at 720p), and DCI's 4096 from 2160 up.
+fn max_width_for(max_height: u32) -> u32 {
+    if max_height >= 2160 {
+        even(4096.0 * f64::from(max_height) / 2160.0)
+    } else {
+        even(f64::from(max_height) * 16.0 / 9.0)
+    }
+}
+
+/// zscale refuses a picture that does not declare its colours ("no path between colorspaces"), as
+/// Dolby Vision profile 5 and many untagged files do, and the cast then sends no picture at all.
+/// The missing ones are declared on the frames first: HDR10's for an HDR source, BT.709's for any
+/// other.
+fn declare_input_colours(video: Option<&VideoInfo>) -> Option<String> {
+    let hdr = video.is_some_and(|v| v.hdr);
+    let (transfer, primaries, matrix) = if hdr { ("smpte2084", "bt2020", "bt2020nc") } else { ("bt709", "bt709", "bt709") };
+    let mut named = Vec::new();
+    if video.is_none_or(|v| v.transfer.is_empty()) {
+        named.push(format!("color_trc={transfer}"));
+    }
+    if video.is_none_or(|v| v.primaries.is_empty()) {
+        named.push(format!("color_primaries={primaries}"));
+    }
+    if video.is_none_or(|v| v.matrix.is_empty()) {
+        named.push(format!("colorspace={matrix}"));
+    }
+    (!named.is_empty()).then(|| format!("setparams={}", named.join(":")))
 }
 
 fn ffmpeg_number(v: f64) -> String {
@@ -890,6 +949,7 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
     let limits = input.limits;
     let (quality_height, quality_kbps) = options.quality();
     let max_height = limits.max_height.map_or(quality_height, |m| m.clamp(240, quality_height));
+    let max_width = max_width_for(max_height);
     // The receiver's budget caps what is encoded, even below the quality setting's rate.
     let device_kbps = limits.max_video_kbps.filter(|k| *k > 0);
     let target_kbps = device_kbps.map_or(quality_kbps, |k| k.min(quality_kbps));
@@ -938,6 +998,11 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         }
         if v.height > max_height {
             reasons.push(format!("{}p above {}p", v.height, max_height));
+            encode_video = true;
+        } else if v.width > max_width {
+            // A scope or DCI picture no taller than the limit can still be wider than what a
+            // receiver of that class decodes (2560x1080 at 1080p).
+            reasons.push(format!("{} px wide above {} px", v.width, max_width));
             encode_video = true;
         }
         // The bit rate budget does not decide between copying and encoding: it caps what Harbor
@@ -995,11 +1060,13 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         Some((n, d)) if options.aspect == "default" => src_w as f64 * n as f64 / d as f64,
         _ => src_w as f64,
     };
-    let (out_w, out_h) = if src_w > 0 && src_h > 0 {
-        let h = src_h.min(max_height);
-        (even(display_w * h as f64 / src_h as f64), even(h as f64))
+    // The picture fits inside max_width x max_height without growing: a 3840x2076 scope film is
+    // 1920x1038 at 1080p, not 1998x1080, which a 1080p decoder may refuse.
+    let (out_w, out_h) = if src_w > 0 && src_h > 0 && display_w > 0.0 {
+        let scale = (f64::from(max_height) / f64::from(src_h)).min(f64::from(max_width) / display_w).min(1.0);
+        (even(display_w * scale), even(f64::from(src_h) * scale))
     } else {
-        (1920, 1080)
+        (max_width.min(1920), max_height.min(1080))
     };
 
     let mut summary = PlanSummary {
@@ -1012,6 +1079,7 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
             })
             .unwrap_or_default(),
         source_audio: audio.map(|a| format!("{} {}ch", a.codec.to_uppercase(), a.channels)).unwrap_or_default(),
+        output_width: if encode_video { out_w } else { src_w },
         output_height: if encode_video { out_h } else { src_h },
         tonemap: None,
         hardware: None,
@@ -1035,8 +1103,15 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
             "libx264"
         };
         let wants_tonemap = video.is_some_and(|v| v.hdr) && options.tonemap != "off" || options.tonemap == "on";
-        // libplacebo runs on the GPU; with both GPU switches off the CPU tone mapper is used.
-        let placebo = wants_tonemap && caps.libplacebo && (options.hardware_decoding || options.hardware_encoding);
+        // Dolby Vision profile 5 has no picture of its own: its colours exist only through the
+        // reshaping metadata, which libplacebo applies and the CPU tone mapper cannot.
+        let reshaping = video.is_some_and(|v| v.dolby_vision == Some(5));
+        // libplacebo runs on the GPU; with both GPU switches off the CPU tone mapper is used,
+        // except for a picture only libplacebo can show.
+        let placebo = wants_tonemap && caps.libplacebo && (options.hardware_decoding || options.hardware_encoding || reshaping);
+        if reshaping && wants_tonemap && !placebo {
+            summary.reasons.push("Dolby Vision profile 5 colours need libplacebo".into());
+        }
         if placebo {
             pre_input.extend(["-init_hw_device".into(), "vulkan".into()]);
         }
@@ -1053,14 +1128,21 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
             ));
             summary.tonemap = Some("libplacebo".into());
         } else if wants_tonemap && caps.zscale_tonemap {
+            vf.extend(declare_input_colours(video));
+            // FFmpeg's own scaler shrinks the picture before zimg converts its colours: zimg
+            // scaling a 4K frame was the slowest step of the CPU conversion, with the same result
+            // (SSIM 0.998 against scaling in zimg). The move to linear light and to BT.709
+            // primaries is one zimg pass.
             vf.push(format!(
-                "zscale=w={out_w}:h={out_h}:filter=bilinear,zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p"
+                "scale={out_w}:{out_h}:flags=bilinear,zscale=t=linear:npl=100:p=bt709,format=gbrpf32le,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p"
             ));
             summary.tonemap = Some("zscale".into());
         } else if src_w > 0 && src_h > 0 {
             vf.push(format!("scale={out_w}:{out_h}"));
         } else {
-            vf.push(format!("scale=-2:'min(ih,{max_height})'"));
+            vf.push(format!(
+                "scale=w='min(iw,{max_width})':h='min(ih,{max_height})':force_original_aspect_ratio=decrease:force_divisible_by=2"
+            ));
         }
         // Square pixels: some TVs mis-scale the slightly anamorphic sizes even dimensions leave.
         vf.push("setsar=1".into());
@@ -1137,6 +1219,7 @@ pub fn build_plan(input: &PlanInput, caps: &FfmpegCaps) -> CastPlan {
         hls_video_codec = h264_codec_string(level);
         summary.video = encoder.into();
         summary.hardware = (encoder != "libx264").then(|| caps.hardware_label().unwrap_or("GPU").to_string());
+        summary.output_width = out_w;
         summary.output_height = out_h;
     } else if audio_only {
         output.push("-vn".into());
@@ -1404,7 +1487,9 @@ mod tests {
             &FfmpegCaps::default(),
         );
         let args = p.output.join(" ");
-        assert!(args.contains("-filter_complex [0:0]scale=1998:1080,setsar=1[base];[0:3]scale=1998:1080:force_original_aspect_ratio=decrease[sub];[base][sub]overlay=x=(W-w)/2:y=H-h:eof_action=pass,format=yuv420p[vout]"), "{args}");
+        // A 3840x2076 scope film fits 1080p by its width: 1920x1038, not 1998x1080.
+        assert!(args.contains("-filter_complex [0:0]scale=1920:1038,setsar=1[base];[0:3]scale=1920:1038:force_original_aspect_ratio=decrease[sub];[base][sub]overlay=x=(W-w)/2:y=H-h:eof_action=pass,format=yuv420p[vout]"), "{args}");
+        assert_eq!((p.width, p.height, p.summary.output_height), (1920, 1038, 1038));
         assert!(args.contains("-map [vout] -map 0:a:0?"), "{args}");
         assert!(!args.contains("-vf "));
         assert!(p.summary.burned_subtitles);
@@ -1419,16 +1504,18 @@ mod tests {
         let plan = plan(Some(&probe), &CastOptions::default(), &caps);
         let args = plan.output.join(" ");
         assert!(args.contains("-map 0:0 -map 0:a:1?"), "{args}");
-        assert!(args.contains("libplacebo=w=2582:h=1080"), "{args}");
+        // 2.39:1 at 1080p is 1920x804, the size a 1080p decoder takes (level 4.0); filling the
+        // height instead made 2582x1080, which needs level 5.0.
+        assert!(args.contains("libplacebo=w=1920:h=804"), "{args}");
         assert!(args.contains("-c:v h264_nvenc"));
         assert!(args.contains("-b:v 14000k"), "1080p HQ is the default quality: {args}");
         assert!(args.contains("-c:a aac -b:a 192k -ac 2"));
         assert_eq!(plan.pre_input, ["-init_hw_device", "vulkan", "-hwaccel", "cuda"]);
         assert_eq!(plan.summary.tonemap.as_deref(), Some("libplacebo"));
         assert_eq!(plan.summary.source_video, "HEVC 1606p DV");
-        assert_eq!(plan.hls_codecs, "avc1.640032,mp4a.40.2", "2582x1080 is wider than level 4.2 allows");
-        assert!(args.contains("-level 5.0"), "{args}");
-        assert_eq!((plan.width, plan.height), (2582, 1080));
+        assert_eq!(plan.hls_codecs, "avc1.640028,mp4a.40.2");
+        assert!(args.contains("-level 4.0"), "{args}");
+        assert_eq!((plan.width, plan.height), (1920, 804));
     }
 
     #[test]
@@ -1438,17 +1525,102 @@ mod tests {
         let options = CastOptions { audio_mode: "surround".into(), hardware_encoding: false, hardware_decoding: false, ..Default::default() };
         let plan = plan(Some(&probe), &options, &caps);
         let args = plan.output.join(" ");
-        assert!(args.contains("zscale=w=2582:h=1080"), "{args}");
+        // The probe names the transfer but not the primaries or matrix, which zscale needs.
+        assert!(
+            args.contains("-vf setparams=color_primaries=bt2020:colorspace=bt2020nc,scale=1920:804:flags=bilinear,zscale=t=linear:npl=100:p=bt709,format=gbrpf32le,tonemap=tonemap=hable"),
+            "{args}"
+        );
         assert!(args.contains("-c:v libx264"));
         assert!(args.contains("-c:a ac3 -b:a 640k -ac 6"));
         assert!(plan.pre_input.is_empty());
-        assert_eq!(plan.hls_codecs, "avc1.640032,ac-3");
-        assert!(args.contains("-level 5.0"), "{args}");
+        assert_eq!(plan.hls_codecs, "avc1.640028,ac-3");
+        assert!(args.contains("-level 4.0"), "{args}");
         // Decoding on the GPU while encoding on the CPU stays available.
         let options = CastOptions { hardware_encoding: false, ..Default::default() };
         let plan = self::plan(Some(&probe), &options, &caps);
         assert_eq!(plan.pre_input, ["-hwaccel", "cuda"]);
         assert!(plan.output.join(" ").contains("-c:v libx264"));
+    }
+
+    fn video_probe(stream: &str) -> MediaProbe {
+        parse_probe(&format!(
+            r#"{{"streams":[{stream},{{"index":1,"codec_type":"audio","codec_name":"aac","channels":2}}],"format":{{"duration":"100"}}}}"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn pictures_fit_the_width_a_receiver_of_that_height_decodes() {
+        assert_eq!([max_width_for(720), max_width_for(1080), max_width_for(2160), max_width_for(4320)], [1280, 1920, 4096, 8192]);
+        let caps = FfmpegCaps { available: true, nvenc: true, ..Default::default() };
+        let at = |probe: &MediaProbe, quality: &str| {
+            build_plan(
+                &PlanInput {
+                    probe: Some(probe),
+                    options: &CastOptions { quality: quality.into(), ..Default::default() },
+                    audio_ordinal: 0,
+                    burn_sub: None,
+                    burn_bitmap: None,
+                    force_video_encode: false,
+                    limits: DeviceLimits::default(),
+                },
+                &caps,
+            )
+        };
+        // The UHD Blu-ray scope film: 1080p and 720p both keep its shape inside the 16:9 frame.
+        let scope = video_probe(r#"{"index":0,"codec_type":"video","codec_name":"hevc","pix_fmt":"yuv420p10le","width":3840,"height":2076,"color_transfer":"smpte2084"}"#);
+        let p = at(&scope, "1080p-hq");
+        assert_eq!((p.width, p.height), (1920, 1038));
+        assert!(p.hls_codecs.starts_with("avc1.640028"), "level 4.0, not 4.2: {}", p.hls_codecs);
+        let p = at(&scope, "720p");
+        assert_eq!((p.width, p.height, p.summary.output_height), (1280, 692, 692));
+        // An H.264 picture no taller than 1080 but wider than 1920 is converted, not copied.
+        let ultrawide = video_probe(r#"{"index":0,"codec_type":"video","codec_name":"h264","pix_fmt":"yuv420p","width":2560,"height":1080}"#);
+        let p = at(&ultrawide, "1080p");
+        assert_eq!(p.summary.video, "h264_nvenc");
+        assert!(p.summary.reasons.contains(&"2560 px wide above 1920 px".to_string()), "{:?}", p.summary.reasons);
+        assert_eq!((p.width, p.height), (1920, 810));
+        // DCI 4K is within a 4K receiver's width and stays untouched.
+        let dci = video_probe(r#"{"index":0,"codec_type":"video","codec_name":"h264","pix_fmt":"yuv420p","width":4096,"height":2160}"#);
+        assert_eq!(at(&dci, "4k").summary.video, "copy");
+        // A source smaller than the limit is never enlarged.
+        let small = video_probe(r#"{"index":0,"codec_type":"video","codec_name":"mpeg4","pix_fmt":"yuv420p","width":640,"height":272}"#);
+        assert_eq!((at(&small, "1080p").width, at(&small, "1080p").height), (640, 272));
+    }
+
+    #[test]
+    fn dolby_vision_profile_5_is_shown_in_its_own_colours_or_at_least_shown() {
+        // Profile 5 (Netflix and Disney+ WEB-DLs) declares no colours of its own.
+        let p5 = video_probe(
+            r#"{"index":0,"codec_type":"video","codec_name":"hevc","pix_fmt":"yuv420p10le","width":3840,"height":2160,"color_transfer":"unknown","color_primaries":"unknown","color_space":"unknown","side_data_list":[{"side_data_type":"DOVI configuration record","dv_profile":5}]}"#,
+        );
+        let v = p5.video.as_ref().unwrap();
+        assert_eq!((v.hdr, v.dolby_vision, v.transfer.as_str(), v.matrix.as_str()), (true, Some(5), "", ""));
+        let cpu = CastOptions { hardware_decoding: false, hardware_encoding: false, ..Default::default() };
+        // Only libplacebo applies the reshaping, so it stays even with both GPU switches off.
+        let caps = FfmpegCaps { available: true, nvenc: true, libplacebo: true, zscale_tonemap: true, ..Default::default() };
+        let p = plan(Some(&p5), &cpu, &caps);
+        assert_eq!(p.summary.tonemap.as_deref(), Some("libplacebo"));
+        assert_eq!(p.pre_input, ["-init_hw_device", "vulkan"], "no GPU decoding was asked for");
+        assert!(p.output.join(" ").contains("-c:v libx264"));
+        // Without libplacebo the CPU tone mapper gets the colours declared, or zscale stops the
+        // cast with "no path between colorspaces".
+        let caps = FfmpegCaps { available: true, zscale_tonemap: true, ..Default::default() };
+        let p = plan(Some(&p5), &cpu, &caps);
+        let args = p.output.join(" ");
+        assert!(args.contains("-vf setparams=color_trc=smpte2084:color_primaries=bt2020:colorspace=bt2020nc,scale=1920:1080:flags=bilinear,zscale="), "{args}");
+        assert!(p.summary.reasons.contains(&"Dolby Vision profile 5 colours need libplacebo".to_string()));
+        // An HDR10 film that declares its colours gets none added.
+        let hdr10 = video_probe(
+            r#"{"index":0,"codec_type":"video","codec_name":"hevc","pix_fmt":"yuv420p10le","width":3840,"height":2160,"color_transfer":"smpte2084","color_primaries":"bt2020","color_space":"bt2020nc"}"#,
+        );
+        let args = plan(Some(&hdr10), &cpu, &caps).output.join(" ");
+        assert!(args.contains("-vf scale=1920:1080:flags=bilinear,zscale=") && !args.contains("setparams"), "{args}");
+        // Forced tone mapping on an untagged SDR file names BT.709 instead of failing.
+        let sdr = video_probe(r#"{"index":0,"codec_type":"video","codec_name":"h264","pix_fmt":"yuv420p","width":1920,"height":1080}"#);
+        let forced = CastOptions { tonemap: "on".into(), ..cpu };
+        let args = plan(Some(&sdr), &forced, &caps).output.join(" ");
+        assert!(args.contains("-vf setparams=color_trc=bt709:color_primaries=bt709:colorspace=bt709,scale=1920:1080:flags=bilinear,zscale="), "{args}");
     }
 
     #[test]

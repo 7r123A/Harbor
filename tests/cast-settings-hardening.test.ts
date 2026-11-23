@@ -5,9 +5,11 @@ import { DEFAULT_CAST_OPTIONS, type CastDeviceInfo, type CastSubInfo } from "../
 import {
   castNeedsConversion,
   directReloadRequest,
+  pictureClass,
   pictureNeedsConversion,
+  qualityWidthLimit,
 } from "../src/lib/cast/cast-source.ts";
-import { knownStreamHeight } from "../src/lib/cast/device-caps.ts";
+import { knownStreamHeight, playerPicture } from "../src/lib/cast/device-caps.ts";
 
 // Preferences written by an older build, or edited by hand: wrong types, unknown choices and
 // fractional numbers the Rust side would refuse.
@@ -119,22 +121,37 @@ const withOptions = (change: Partial<typeof DEFAULT_CAST_OPTIONS>) => ({
 
 test("picture settings send a directly compatible stream through the converter", () => {
   // A 1080p stream the receiver plays as it is.
-  assert.equal(castNeedsConversion("compat", false, direct, 1080), false);
-  assert.equal(castNeedsConversion("compat", false, withOptions({ quality: "720p" }), 1080), true);
-  assert.equal(castNeedsConversion("compat", false, withOptions({ aspect: "4:3" }), 1080), true);
-  assert.equal(castNeedsConversion("compat", false, withOptions({ aspect: "fill" }), 1080), true);
+  assert.equal(castNeedsConversion("compat", false, direct, { height: 1080 }), false);
   assert.equal(
-    castNeedsConversion("compat", false, withOptions({ deinterlace: "always" }), 1080),
+    castNeedsConversion("compat", false, withOptions({ quality: "720p" }), { height: 1080 }),
     true,
   );
-  assert.equal(castNeedsConversion("compat", false, withOptions({ tonemap: "on" }), 1080), true);
+  assert.equal(
+    castNeedsConversion("compat", false, withOptions({ aspect: "4:3" }), { height: 1080 }),
+    true,
+  );
+  assert.equal(
+    castNeedsConversion("compat", false, withOptions({ aspect: "fill" }), { height: 1080 }),
+    true,
+  );
+  assert.equal(
+    castNeedsConversion("compat", false, withOptions({ deinterlace: "always" }), { height: 1080 }),
+    true,
+  );
+  assert.equal(
+    castNeedsConversion("compat", false, withOptions({ tonemap: "on" }), { height: 1080 }),
+    true,
+  );
   // A swapped alternative is judged by its own height, like the player's file.
-  assert.equal(castNeedsConversion("swapped", false, withOptions({ quality: "720p" }), 1080), true);
+  assert.equal(
+    castNeedsConversion("swapped", false, withOptions({ quality: "720p" }), { height: 1080 }),
+    true,
+  );
 });
 
 test("a quality setting converts only a source known to be taller than it", () => {
   const at = (quality: typeof DEFAULT_CAST_OPTIONS.quality, height: number | undefined) =>
-    pictureNeedsConversion({ ...DEFAULT_CAST_OPTIONS, quality }, height);
+    pictureNeedsConversion({ ...DEFAULT_CAST_OPTIONS, quality }, { height });
   assert.equal(at("1080p", 1080), false, "already that size");
   assert.equal(at("1080p-hq", 1080), false);
   assert.equal(at("720p", 720), false);
@@ -147,8 +164,26 @@ test("a quality setting converts only a source known to be taller than it", () =
   assert.equal(at("720p", 0), false);
   // Settings the converter applies only when it runs anyway.
   for (const change of [{ deinterlace: "auto" as const }, { tonemap: "off" as const }]) {
-    assert.equal(pictureNeedsConversion({ ...DEFAULT_CAST_OPTIONS, ...change }, 1080), false);
+    assert.equal(
+      pictureNeedsConversion({ ...DEFAULT_CAST_OPTIONS, ...change }, { height: 1080 }),
+      false,
+    );
   }
+});
+
+test("a quality setting also converts a source wider than that class of receiver decodes", () => {
+  assert.deepEqual(
+    [720, 1080, 2160, 4320].map(qualityWidthLimit),
+    [1280, 1920, 4096, 8192],
+    "the same limits as max_width_for in cast_transcode.rs",
+  );
+  const at = (quality: typeof DEFAULT_CAST_OPTIONS.quality, width: number, height: number) =>
+    pictureNeedsConversion({ ...DEFAULT_CAST_OPTIONS, quality }, { width, height });
+  assert.equal(at("1080p", 2560, 1080), true, "a 2560x1080 picture is no taller than 1080p");
+  assert.equal(at("1080p", 1920, 1080), false);
+  assert.equal(at("1080p", 1920, 800), false, "a scope film within 1920 stays direct");
+  assert.equal(at("4k", 4096, 2160), false, "DCI 4K fits a 4K receiver");
+  assert.equal(at("720p", 1440, 600), true);
 });
 
 test("a stream's height is the decoded or named one, never a guess", () => {
@@ -157,6 +192,17 @@ test("a stream's height is the decoded or named one, never a guess", () => {
   assert.equal(knownStreamHeight({ title: "Film 720p" }), 720);
   assert.equal(knownStreamHeight({ title: "Film" }), undefined);
   assert.equal(knownStreamHeight({ liveHeight: 0, title: "Film" }), undefined);
+  // The player's picture: the decoded size when it has one; a name gives only a height.
+  assert.deepEqual(playerPicture({ videoWidth: 3840, videoHeight: 2076 }, undefined), {
+    width: 3840,
+    height: 2076,
+  });
+  assert.deepEqual(playerPicture({ videoWidth: 0, videoHeight: 0 }, { title: "Film 2160p" }), {
+    height: 2160,
+  });
+  assert.deepEqual(playerPicture({ videoWidth: 0, videoHeight: 0 }, undefined), {
+    height: undefined,
+  });
 });
 
 test("changing a picture setting during a direct cast reloads it through the converter", () => {
@@ -176,7 +222,7 @@ test("changing a picture setting during a direct cast reloads it through the con
     subtitle: media.subtitle,
     subStyle: null,
     audioTrackOrdinal: 0,
-    transcode: castNeedsConversion("compat", false, media, 1080),
+    transcode: castNeedsConversion("compat", false, media, { height: 1080 }),
   };
   const next = directReloadRequest(loaded, change, 754.5);
   assert.equal(next.transcode, true, "the 4:3 picture needs the converter");
@@ -188,7 +234,7 @@ test("changing a picture setting during a direct cast reloads it through the con
     next,
     {
       options: DEFAULT_CAST_OPTIONS,
-      transcode: castNeedsConversion("compat", false, direct, 1080),
+      transcode: castNeedsConversion("compat", false, direct, { height: 1080 }),
     },
     800,
   );
@@ -198,4 +244,52 @@ test("changing a picture setting during a direct cast reloads it through the con
   assert.equal(louder.transcode, false);
   assert.equal(louder.options, DEFAULT_CAST_OPTIONS);
   assert.equal(louder.subtitle, null);
+});
+
+test("a cast load tells the native side what the player knows of the picture", async () => {
+  // cast.ts compiled on its own, with the Tauri bridge replaced by a recorder.
+  const { readFileSync } = await import("node:fs");
+  const ts = (await import("typescript")).default;
+  const source = readFileSync(new URL("../src/lib/cast.ts", import.meta.url), "utf8");
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const sent: Array<Record<string, unknown>> = [];
+  const invoke = async (command: string, args: Record<string, unknown>) => {
+    assert.equal(command, "cast_load");
+    sent.push(args);
+    return { stream: "direct", summary: null };
+  };
+  const exports: { castLoad?: (opts: Record<string, unknown>) => Promise<{ ok: boolean }> } = {};
+  new Function("require", "exports", "window", compiled)(
+    (id: string) => {
+      assert.equal(id, "@tauri-apps/api/core");
+      return { invoke };
+    },
+    exports,
+    { __TAURI_INTERNALS__: {} },
+  );
+  const base = { host: "192.0.2.20", port: 0, url: "https://cdn.example/film.mkv", kind: "dlna" };
+  assert.ok((await exports.castLoad!({ ...base, sourceWidth: 1920, sourceHeight: 1080 })).ok);
+  assert.equal(sent[0].sourceWidth, 1920);
+  assert.equal(sent[0].sourceHeight, 1080);
+  // An unknown size goes as null, so the native side probes the source before playing it directly.
+  await exports.castLoad!({ ...base, options: { ...DEFAULT_CAST_OPTIONS, quality: "720p" } });
+  assert.equal(sent[1].sourceWidth, null);
+  assert.equal(sent[1].sourceHeight, null);
+  assert.equal(sent[1].transcode, false, "the frontend leaves the decision to the probe");
+});
+
+test("a converted picture is named by its standard class, not its exact height", () => {
+  // Scope films keep their shape inside the 16:9 frame and are still the class they fill.
+  assert.equal(pictureClass(1920, 1038), 1080);
+  assert.equal(pictureClass(1920, 804), 1080);
+  assert.equal(pictureClass(1280, 692), 720);
+  assert.equal(pictureClass(1920, 1080), 1080);
+  assert.equal(pictureClass(3840, 1606), 2160);
+  assert.equal(pictureClass(720, 576), 576, "PAL DVD");
+  // A picture as tall as 720p but wider than its frame is the next class up.
+  assert.equal(pictureClass(1440, 720), 1080);
+  // Without a width (an older summary) the height decides.
+  assert.equal(pictureClass(0, 720), 720);
 });

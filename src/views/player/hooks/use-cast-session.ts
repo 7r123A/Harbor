@@ -54,6 +54,9 @@ type LoadParams = {
   audioTrackOrdinal?: number;
   options?: CastOptions;
   deviceId?: string;
+  /** What the player knows of the source's picture; an unknown size is probed natively. */
+  sourceWidth?: number;
+  sourceHeight?: number;
 };
 
 /** Receiver trouble the session bar offers a fix for. */

@@ -610,6 +610,8 @@ pub async fn cast_load(
     audio_start_paused: Option<bool>,
     options: Option<CastOptions>,
     device_id: Option<String>,
+    source_width: Option<u32>,
+    source_height: Option<u32>,
 ) -> Result<CastLoadInfo, String> {
     let kind_str = kind.unwrap_or_else(|| "chromecast".into());
     let _operation = TRANSPORT_OPS.lock().await;
@@ -647,13 +649,18 @@ pub async fn cast_load(
     // processing needs the converter too. A file on this computer always goes through it: the
     // direct path relays HTTP and cannot open a filesystem path.
     let local_source = !cast_transcode::is_http(&url);
-    let convert = load_converts(
+    let mut convert = load_converts(
         local_source,
         audio_type,
         transcode.unwrap_or(false) || wants_sub || audio_track_ordinal.unwrap_or(0) > 0,
         &options,
         needs_auto_remux(&kind_str, &url, content_type.as_deref()),
     );
+    let mut probed = None;
+    if !convert && !audio_type {
+        (convert, probed) =
+            quality_converts(&url, &req_headers, &options, known_picture(source_width, source_height)).await;
+    }
     eprintln!(
         "[harbor::cast] load kind={} host={} convert={} subtitle={} start={:.1}",
         kind_str, host, convert, wants_sub, start
@@ -667,7 +674,8 @@ pub async fn cast_load(
         host: host.clone(),
         port,
         options: options.clone(),
-        probe: None,
+        // A source probed for its size is not probed again by the conversion.
+        probe: probed,
         audio_ordinal: audio_track_ordinal.unwrap_or(0),
         subtitle: subtitle.clone().filter(|s| !s.off),
         sub_style: sub_style.clone(),
@@ -811,6 +819,55 @@ fn load_converts(
                 || options.audio_filters_requested()
                 || options.picture_changes_requested()
                 || auto_remux)
+}
+
+/// The source's picture size as the player reports it; a height of 0 or none means it does not know.
+fn known_picture(width: Option<u32>, height: Option<u32>) -> Option<(u32, u32)> {
+    height.filter(|h| *h > 0).map(|h| (width.unwrap_or(0), h))
+}
+
+/// The size a direct load is judged by: what the player knows of the source, else what probing it
+/// found. None when neither says (a probe that failed, or a source with no picture).
+fn source_picture(known: Option<(u32, u32)>, probe: Option<&MediaProbe>) -> Option<(u32, u32)> {
+    known.or_else(|| {
+        probe
+            .and_then(|p| p.video.as_ref())
+            .map(|v| (v.width, v.height))
+            .filter(|(_, height)| *height > 0)
+    })
+}
+
+/// Whether the quality setting needs the converter for a source the receiver could otherwise play
+/// as it is, and the probe made to find out, for the conversion to reuse.
+///
+/// A size the player knows decides at once, so a source confirmed to fit stays direct without a
+/// probe. An unknown size is probed: the receiver would otherwise get a picture beyond the limit
+/// with nothing to stop it. A source the probe cannot read is handed over as before, since FFmpeg
+/// could not convert it either. "Original" has no limit to keep, so nothing is probed for it.
+async fn quality_converts(
+    url: &str,
+    headers: &HashMap<String, String>,
+    options: &CastOptions,
+    known: Option<(u32, u32)>,
+) -> (bool, Option<MediaProbe>) {
+    if options.quality == "original" {
+        return (false, None);
+    }
+    let probed = match known {
+        Some(_) => None,
+        None => match cast_transcode::probe(url, headers).await {
+            Ok(probe) => Some(probe),
+            Err(error) => {
+                eprintln!("[harbor::cast] could not read the source's size ({error}); sending it as it is");
+                None
+            }
+        },
+    };
+    let beyond = source_picture(known, probed.as_ref()).is_some_and(|(w, h)| options.picture_beyond_quality(w, h));
+    if beyond {
+        eprintln!("[harbor::cast] the source is beyond the {} quality setting; converting it", options.quality);
+    }
+    (beyond, probed)
 }
 
 /// The caller asked for a conversion whose profile rules out the source's video codec.
@@ -1908,6 +1965,82 @@ mod pause_state_tests {
         let square = CastOptions { aspect: "4:3".into(), ..Default::default() };
         assert!(!load_converts(false, true, false, &square, false));
         assert!(load_converts(true, false, false, &direct, false));
+    }
+
+    #[test]
+    fn a_quality_limit_holds_whether_the_size_is_known_or_probed() {
+        let at = |quality: &str| CastOptions { quality: quality.into(), ..Default::default() };
+        let full_hd = crate::cast_transcode::parse_probe(
+            r#"{"streams":[{"index":0,"codec_type":"video","codec_name":"h264","width":1920,"height":1080},
+               {"index":1,"codec_type":"audio","codec_name":"aac","channels":2}],"format":{}}"#,
+        )
+        .unwrap();
+        // The player reports no size: the probe's decides.
+        assert_eq!(known_picture(None, None), None);
+        assert_eq!(known_picture(Some(1920), Some(0)), None, "a height of 0 is not a size");
+        let probed = source_picture(None, Some(&full_hd));
+        assert_eq!(probed, Some((1920, 1080)));
+        assert!(probed.is_some_and(|(w, h)| at("720p").picture_beyond_quality(w, h)), "1080p is beyond 720p");
+        assert!(!probed.is_some_and(|(w, h)| at("1080p-hq").picture_beyond_quality(w, h)), "it fits 1080p");
+        // What the player knows comes first, so a source confirmed to fit is never probed.
+        assert_eq!(source_picture(Some((1280, 720)), Some(&full_hd)), Some((1280, 720)));
+        assert_eq!(known_picture(None, Some(720)), Some((0, 720)), "a release name gives a height only");
+        // Wider than a receiver of that height decodes counts too.
+        assert!(at("1080p").picture_beyond_quality(2560, 1080));
+        assert!(!at("4k").picture_beyond_quality(4096, 2160));
+        // A source with no picture, or one the probe could not read, has no size to limit.
+        let music = crate::cast_transcode::parse_probe(
+            r#"{"streams":[{"index":0,"codec_type":"audio","codec_name":"flac","channels":2}],"format":{}}"#,
+        )
+        .unwrap();
+        assert_eq!(source_picture(None, Some(&music)), None);
+        assert_eq!(source_picture(None, None), None);
+    }
+
+    /// The whole decision against real files: FFmpeg makes a 1080p and a 720p clip, and an unsized
+    /// load of each is probed against the quality setting. Skipped where FFmpeg is not installed.
+    #[tokio::test]
+    async fn an_unsized_source_is_probed_against_the_quality_setting() {
+        let (Some(ffmpeg), Some(_)) = (crate::transcode::locate_ffmpeg(), crate::transcode::locate_ffprobe()) else {
+            eprintln!("FFmpeg not installed; skipped");
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("harbor-quality-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let make = |name: &str, size: &str| {
+            let path = dir.join(name);
+            let made = crate::cast_transcode::quiet_command(&ffmpeg)
+                .args(["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i"])
+                .arg(format!("testsrc2=s={size}:d=1"))
+                .args(["-pix_fmt", "yuv420p", "-y"])
+                .arg(&path)
+                .status()
+                .is_ok_and(|s| s.success());
+            made.then(|| path.to_string_lossy().into_owned())
+        };
+        let (Some(full_hd), Some(hd)) = (make("1080.mp4", "1920x1080"), make("720.mp4", "1280x720")) else {
+            eprintln!("FFmpeg could not make the clips; skipped");
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        };
+        let headers = HashMap::new();
+        let at = |quality: &str| CastOptions { quality: quality.into(), ..Default::default() };
+        // Unknown size, 720p chosen: the 1080p clip is probed and converted, its probe kept.
+        let (convert, probe) = quality_converts(&full_hd, &headers, &at("720p"), None).await;
+        assert!(convert, "a 1080p source must not reach the TV past a 720p limit");
+        assert_eq!(probe.and_then(|p| p.video).map(|v| v.height), Some(1080));
+        // A source that fits stays direct.
+        assert!(!quality_converts(&hd, &headers, &at("720p"), None).await.0);
+        assert!(!quality_converts(&full_hd, &headers, &at("1080p"), None).await.0);
+        // A size the player knows decides without a probe.
+        let (convert, probe) = quality_converts(&full_hd, &headers, &at("720p"), Some((1280, 720))).await;
+        assert!(!convert && probe.is_none());
+        // A source nothing can read is handed over as before; "original" never probes.
+        let missing = dir.join("missing.mp4").to_string_lossy().into_owned();
+        assert_eq!(quality_converts(&missing, &headers, &at("720p"), None).await.0, false);
+        let (convert, probe) = quality_converts(&full_hd, &headers, &at("original"), None).await;
+        assert!(!convert && probe.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
